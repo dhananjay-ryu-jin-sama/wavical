@@ -1,0 +1,16 @@
+[package]
+name = "wavical-integration-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+tao = "0.37.1"
+wry = "0.57.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+wavical-shell = { path = "../../crates/wavical-shell" }
+wavical-ipc = { path = "../../crates/wavical-ipc" }
+wavical-protocol = { path = "../../crates/wavical-protocol" }

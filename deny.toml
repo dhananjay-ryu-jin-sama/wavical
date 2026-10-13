@@ -1,0 +1,60 @@
+# cargo-deny configuration for Wavical
+
+[graph]
+targets = []
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+ignore = [
+    # Transitive macro dependency from gtk/glib-macros in wry/tao; unmaintained upstream
+    "RUSTSEC-2024-0370",
+]
+git-fetch-with-cli = true
+
+[licenses]
+# Allow-list for common permissive and weak copyleft open-source licenses
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "0BSD",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+exceptions = []
+
+[licenses.private]
+# Ignore workspace crates that are not published
+ignore = true
+registries = []
+
+[bans]
+# Warn on duplicate crate versions in the dependency tree
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+# Deny dependencies from unknown registries or arbitrary git sources
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

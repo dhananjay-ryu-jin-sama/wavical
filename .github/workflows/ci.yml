@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows (Full Workspace)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check code formatting
+        run: cargo fmt --all --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run unit & property tests
+        run: cargo test --workspace
+
+      - name: Run attack page integration test harness
+        run: cargo run -p wavical-integration-tests
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+  linux:
+    name: "Linux (Pure Crates: IPC & Protocol)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check code formatting
+        run: cargo fmt --all --check
+
+      - name: Run clippy (wavical-ipc & wavical-protocol)
+        run: cargo clippy -p wavical-ipc -p wavical-protocol -- -D warnings
+
+      - name: Run tests (wavical-ipc & wavical-protocol)
+        run: cargo test -p wavical-ipc -p wavical-protocol
+
+      - name: Build pure crates (wavical-ipc & wavical-protocol)
+        run: cargo build -p wavical-ipc -p wavical-protocol
+
+  security:
+    name: Security & Supply Chain (Audit & Deny)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Run cargo audit
+        run: cargo audit
+
+      - name: Run cargo deny check
+        run: cargo deny check

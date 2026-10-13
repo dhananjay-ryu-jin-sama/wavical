@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wavical-ipc",
+    "crates/wavical-protocol",
+    "crates/wavical-shell",
+    "tests/integration",
+]
+exclude = [
+    "fuzz",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false

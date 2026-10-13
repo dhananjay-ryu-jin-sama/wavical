@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wavical — Hello World</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js"></script>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">⚡</div>
+        <h1>Wavical</h1>
+        <p class="subtitle">Loaded securely via custom protocol <code>wavical://</code></p>
+        <div class="status-box">
+            <span class="status-dot"></span>
+            <span>Security Policy Enforced &bull; CSP &bull; Navigation Guard</span>
+        </div>
+        
+        <div class="ipc-section">
+            <div class="section-label">Bridge Capabilities</div>
+            <div class="button-row">
+                <button id="btn-ping" class="btn btn-primary" type="button">
+                    <span class="btn-icon">⚡</span>
+                    Call core.ping (Granted)
+                </button>
+                <button id="btn-echo" class="btn btn-secondary" type="button">
+                    <span class="btn-icon">🛡️</span>
+                    Call core.echo (Ungranted)
+                </button>
+            </div>
+
+            <div class="section-label">Security Restrictions (WP6)</div>
+            <div class="button-row">
+                <button id="btn-nav-external" class="btn btn-warning" type="button">
+                    <span class="btn-icon">🚫</span>
+                    Navigate External (Denied)
+                </button>
+                <button id="btn-popup" class="btn btn-warning" type="button">
+                    <span class="btn-icon">🪟</span>
+                    Open Popup (Denied)
+                </button>
+                <button id="btn-remote-script" class="btn btn-warning" type="button">
+                    <span class="btn-icon">📜</span>
+                    Remote Script (CSP Blocked)
+                </button>
+            </div>
+
+            <div id="ipc-output" class="output-box idle">
+                <span class="placeholder">Click any button above to verify IPC capabilities and security guards.</span>
+            </div>
+        </div>
+
+        <p class="desc">
+            Enforced policies: Strict CSP <code>default-src 'self'</code>, zero inline scripts, origin allowlisted navigation, blocked popups, and devtools restricted to debug builds.
+        </p>
+    </div>
+</body>
+</html>

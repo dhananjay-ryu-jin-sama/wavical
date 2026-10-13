@@ -1,0 +1,31 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Local binaries and tooling
+/agy.exe*
+*.exe
+*.old
+*.dll
+*.pdb
+*.lib
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS / Crash logs
+*.log

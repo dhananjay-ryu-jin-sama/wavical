@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wavical Security Test Bench (Attack Page)</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Wavical Phase 0 Security Test Bench</h1>
+            <div class="subtitle">Adversarial verification of trust boundaries, capabilities, IPC validation, CSP, and origin isolation</div>
+        </header>
+
+        <div id="status-card">
+            <div>
+                <strong>Audit Status:</strong> <span id="summary-text">Executing test attacks...</span>
+            </div>
+            <span id="overall-badge" class="status-badge status-running">RUNNING</span>
+        </div>
+
+        <div id="test-container" class="test-list">
+            <!-- Dynamic Test Cards Injected Here -->
+        </div>
+
+        <h3 style="margin-top: 24px; font-size: 14px; color: var(--text-muted);">Raw Machine-Readable Report:</h3>
+        <pre id="raw-report">Running...</pre>
+    </div>
+
+    <!-- Hidden container for iframe isolation tests -->
+    <div id="sandbox" style="display: none;"></div>
+</body>
+</html>

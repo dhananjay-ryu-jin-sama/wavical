@@ -1,0 +1,31 @@
+[package]
+name = "wavical-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+wavical-ipc = { path = "../crates/wavical-ipc" }
+wavical-protocol = { path = "../crates/wavical-protocol" }
+
+[[bin]]
+name = "parse_message"
+path = "fuzz_targets/parse_message.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "capability_dispatch"
+path = "fuzz_targets/capability_dispatch.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "resolve_path"
+path = "fuzz_targets/resolve_path.rs"
+test = false
+doc = false
