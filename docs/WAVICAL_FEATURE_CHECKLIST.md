@@ -77,15 +77,6 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 - [ ] Portable/zip mode (`wavical build --portable`, no installer)
 - [ ] Real benchmark published: reference app built identically in Wavical, Electron, and Tauri — installer size, on-disk size, idle RAM, cold-start time, time-to-interactive, with benchmark app source published alongside the numbers
 
-## Phase 6 — Enterprise Tier (paid, post-traction)
-
-- [ ] Enterprise audit logger — records capability grants + native API calls, exportable for IT/security review
-- [ ] `wavical audit` — scans a dev's app dependencies for known vulnerabilities
-- [ ] SBOM generation for Wavical's own releases
-- [ ] Hosted/managed update server (so companies don't have to run their own)
-- [ ] Private plugin registry
-- [ ] Licensing/entitlement-check primitive for devs building paid apps on Wavical
-
 ## Ongoing / Ecosystem (not phase-locked, grows over time)
 
 - [ ] Live IPC inspector panel (devtools-style overlay showing every `wavical.*` call in real time) in `wavical dev`
