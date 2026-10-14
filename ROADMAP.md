@@ -38,7 +38,3 @@ Wavical is a lightweight, security-first desktop application framework built wit
 - **Portable Distribution**: Standalone portable archive builds (`wavical build --portable`).
 - **Benchmarks**: Publicly reproducible benchmarks vs Electron and Tauri (size, idle RAM, cold start).
 
-## Phase 6 — Enterprise Tier
-- **Audit Logging**: Structured capability and native API call auditing for enterprise compliance.
-- **Security Audits & SBOM**: Dependency vulnerability scanning (`wavical audit`) and SBOM generation.
-- **Enterprise Services**: Managed update server and private plugin registry.
