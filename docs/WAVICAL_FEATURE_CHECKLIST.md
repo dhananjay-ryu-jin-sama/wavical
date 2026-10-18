@@ -30,6 +30,7 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 - [x] Dev-friendly error messages (no raw Rust panic traces surfaced to the dev; `thiserror`-backed structured error reporting)
 - [x] JSON-schema-backed IntelliSense/autocomplete for `wavical.config.js` in VS Code (JSDoc `@type {import('wavical-config').AppConfig}` type annotation scaffolded by `wavical init`; schema specification in `docs/phase 1/WAVICAL_PHASE_1_CONFIG_SCHEMA.md`)
 
+
 ## Phase 2 — Native Tier 1 APIs (pure Rust, zero Node required)
 
 - [ ] File dialogs (`rfd`)
