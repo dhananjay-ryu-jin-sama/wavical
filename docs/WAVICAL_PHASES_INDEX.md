@@ -193,24 +193,3 @@ wavical/
 
 ---
 
-## Timeline estimate
-
-- **Phase 0:** 1–2 weeks (COMPLETE ✅)
-- **Phase 1:** 2–3 weeks (starting now)
-- **Phase 2:** 2–3 weeks
-- **Phase 3:** 3–4 weeks (more complex)
-- **Phase 4:** 2–3 weeks
-- **Phase 5:** 1–2 weeks (mostly packaging, not new features)
-- **Phase 6:** 2–3 weeks (post-traction, optional)
-
-**Total to v1.0 (Phases 0–5):** ~12–18 weeks part-time with AI assistance.
-
----
-
-## Support and feedback
-
-- **Technical questions:** Refer to the relevant phase's build plan section
-- **Feature scope questions:** Check the feature checklist and the phase's "Out of scope" section
-- **Implementation concerns:** Raise them in the work package acceptance step; don't work around them silently
-
-Good luck building Wavical! 🚀
