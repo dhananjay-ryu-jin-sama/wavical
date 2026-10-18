@@ -4,20 +4,22 @@ Wavical is a lightweight, security-first desktop application framework built wit
 
 ---
 
-## Phase 0 — Foundation Shell *(In Progress)*
+## Phase 0 — Foundation Shell *(Completed)*
 - **Window & Webview**: Native Windows window creation via `tao` (closure event loop) and `wry` (WebView2).
 - **Custom Protocol**: `wavical://` asset handler with strict path traversal sanitization and MIME detection.
 - **Security-First IPC**: JSON-RPC IPC bridge with default-deny capability enforcement and frozen bridge object.
 - **Security Policies**: Strict Content Security Policy (`default-src 'self'`), navigation allowlisting, and popup blocking.
 - **Security Test Bench v1**: Unit tests, property tests (`proptest`), cargo-fuzz harness, and adversarial attack page.
 
-## Phase 1 — Core CLI & Configuration
+## Phase 1 — Core CLI & Configuration *(Completed)*
 - **CLI Tooling**: `wavical` executable with short alias `wca` (`init`, `dev`, `build`).
 - **Configuration**: Single flat `wavical.config.js` file with schema validation and IDE autocomplete.
-- **Capability Declarations**: Declarative security capability manifest in config.
-- **Developer Experience**: Actionable error reporting without raw panic dumps.
+- **Capability Declarations**: Declarative security capability manifest in config; live dynamic updates over stdin.
+- **Asset Bundling**: Recursive copy to `dist/` with NIST FIPS 180-4 SHA-256 asset hash manifest generation.
+- **Developer Experience**: Actionable error reporting without raw panic dumps (`thiserror` enums).
+- **CI / E2E Automation**: End-to-end integration test suite and CI workflow running full CLI lifecycle.
 
-## Phase 2 — Native Tier 1 APIs (Pure Rust)
+## Phase 2 — Native Tier 1 APIs (Pure Rust) *(Next Up)*
 - **Dialogs & Clipboard**: File dialogs (`rfd`) and clipboard integration (`arboard`).
 - **System Integration**: Notifications (`notify-rust`), system tray, and global shortcuts.
 - **Shell UX**: Window state persistence, single-instance lock, native context menus, and crash recovery.

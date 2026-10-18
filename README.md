@@ -11,7 +11,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)
 ![unsafe](https://img.shields.io/badge/unsafe-forbidden-success)
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
-![Status](https://img.shields.io/badge/status-pre--release%20(Phase%200)-yellow)
+![Status](https://img.shields.io/badge/status-pre--release%20(Phase%201%20Ready)-blue)
 
 [Why Wavical](#-why-wavical) •
 [Quick Start](#-quick-start) •
@@ -25,8 +25,8 @@
 
 ---
 
-> [!WARNING]
-> **Wavical is in early pre-release development (Phase 0: Foundation Shell).** The APIs are unstable, there is no CLI yet, and Windows is the only supported platform. Don't use it in production yet. ⭐ Star or watch the repo to follow along.
+> [!NOTE]
+> **Wavical is in active pre-release development (Phase 1: Core CLI & Config complete).** The foundational shell and developer CLI (`wavical` / `wca`) with project scaffolding, live dev server, and build pipeline are operational. Windows is currently the primary supported desktop runtime. ⭐ Star or watch the repo to follow along.
 
 ---
 
@@ -62,11 +62,40 @@ rustup component add rustfmt clippy
 > [!TIP]
 > Restart your terminal after installing so `PATH` updates. If you see `link.exe not found`, the **Desktop development with C++** workload is missing. See [`docs/WAVICAL_SETUP.md`](docs/WAVICAL_SETUP.md) for the full setup guide.
 
-### Run the demo app
+### 1. Using the Developer CLI (`wavical` / `wca`)
+
+Clone and build or install the CLI locally:
 
 ```powershell
 git clone https://github.com/dhananjay-ryu-jin-sama/Wavical.git
 cd Wavical
+
+# Option A: Install CLI tools into your Cargo bin directory
+cargo install --path crates/wavical-cli
+
+# Scaffold a new app (both `wavical` and shorthand `wca` work identically)
+wavical init my-app
+cd my-app
+
+# Start the interactive dev server (watches assets & config with hot-reload)
+wavical dev
+
+# Build production-ready assets with SHA-256 manifest
+wavical build
+```
+
+```powershell
+# Option B: Run commands directly via Cargo without installing
+cargo run -p wavical-cli -- init my-app
+cd my-app
+cargo run -p wavical-cli -- dev
+cargo run -p wavical-cli -- build
+```
+
+### 2. Run the Phase 0 Security Demo App
+
+```powershell
+# From the repository root:
 cargo run -p wavical-shell
 ```
 
@@ -81,7 +110,7 @@ A window opens and loads [`examples/hello`](examples/hello) over the secure `wav
 | **Remote script** from a CDN | 🛡️ Blocked | Content-Security-Policy |
 
 > [!NOTE]
-> Run the command from the repository root. The shell looks for `examples/hello` relative to the current directory. Set `RUST_LOG=debug` to see structured security events in the console.
+> Run `cargo run -p wavical-shell` from the repository root. The shell looks for `examples/hello` relative to the current directory. Set `RUST_LOG=debug` to see structured security events in the console.
 
 ---
 
@@ -96,11 +125,15 @@ flowchart TB
     end
 
     subgraph Host["🦀 Privileged Native Host (Rust)"]
+        CLI["wavical-cli (wavical / wca)<br/>init · dev · build"]
+        Config["wavical-config<br/>Node validator · schema · capabilities"]
         Shell["wavical-shell<br/>tao + wry glue · origin checks<br/>navigation guard · popup blocker · CSP"]
         IPC["wavical-ipc<br/>size/depth limits · strict parsing<br/>default-deny capabilities · dispatch"]
         Proto["wavical-protocol<br/>wavical:// asset resolver<br/>path sanitization · MIME"]
     end
 
+    CLI --> Config
+    CLI --> Shell
     JS -- "IPC (JSON)" --> Shell
     JS -- "wavical://localhost/..." --> Shell
     Shell --> IPC
@@ -113,16 +146,18 @@ flowchart TB
 ```text
 Wavical/
 ├── crates/
+│   ├── wavical-cli/        # Developer CLI (wavical, wca) with init, dev, and build subcommands
+│   ├── wavical-config/     # Node-evaluated config loader, Zod-style validator, capabilities
 │   ├── wavical-ipc/        # Pure: JSON-RPC parsing, limits, capabilities, handler registry
 │   ├── wavical-protocol/   # Pure: wavical:// path sanitization, canonical root checks, MIME
-│   └── wavical-shell/      # Window + webview host (tao/wry), wires everything together
+│   └── wavical-shell/      # Window + webview host (tao/wry), dynamic reloader & IPC bridge
 ├── examples/hello/         # Interactive demo app loaded by the shell
 ├── tests/
 │   ├── attack-page/        # Adversarial HTML/JS that tries to break the sandbox
 │   └── integration/        # Headless-style runner that drives the attack page and reports
 ├── fuzz/                   # cargo-fuzz targets (parse_message, capability_dispatch, resolve_path)
-├── docs/                   # Security model, setup guide, build plan, feature checklist
-├── .github/workflows/      # CI: Windows full workspace, Linux pure crates, supply-chain audit
+├── docs/                   # Security model, setup guide, phase build plans, feature checklist
+├── .github/workflows/      # CI: Windows full workspace, Linux pure + CLI crates, supply-chain audit
 ├── deny.toml               # cargo-deny license / advisory / ban policy
 ├── ROADMAP.md
 └── SECURITY.md
@@ -130,9 +165,12 @@ Wavical/
 
 | Crate | Depends on tao/wry? | Responsibility |
 |---|:-:|---|
+| [`wavical-cli`](crates/wavical-cli) | ❌ | CLI interface (`wavical` & `wca`), project scaffolding (`init`), dev watcher (`dev`), asset packaging (`build`) |
+| [`wavical-config`](crates/wavical-config) | ❌ | Evaluates `wavical.config.js` via Node subprocess, enforces schema, typo suggestions |
 | [`wavical-ipc`](crates/wavical-ipc) | ❌ | Message validation, `Capabilities`, `HandlerRegistry`, `dispatch` |
 | [`wavical-protocol`](crates/wavical-protocol) | ❌ | `sanitize_path_segments`, `resolve_asset_path`, `get_mime_type` |
-| [`wavical-shell`](crates/wavical-shell) | ✅ | `WindowConfig`, origin/navigation/popup policy, CSP headers, event loop |
+| [`wavical-shell`](crates/wavical-shell) | ✅ | `WindowConfig`, origin/navigation/popup policy, CSP headers, event loop, dynamic IPC reload |
+
 
 ---
 
@@ -230,23 +268,46 @@ try {
 | `core.ping` | ✅ granted | `{ message: "pong", version }` |
 | `core.echo` | ❌ denied | The `params` you sent (once granted) |
 
-### Customizing a window from Rust
+### Declarative Configuration (`wavical.config.js`)
+
+Applications are configured using a single flat `wavical.config.js` file at the project root:
+
+```javascript
+/** @type {import('wavical-config').AppConfig} */
+export default {
+  appId: 'my-app',
+  version: '0.1.0',
+  window: {
+    title: 'My App',
+    width: 1200,
+    height: 800,
+  },
+  capabilities: {
+    'core.ping': true,   // Grants core.ping IPC method
+    'core.echo': false,  // Denies core.echo (or omit to default-deny)
+  },
+  dev: {
+    port: 7890,
+  },
+};
+```
+
+The dev server (`wavical dev` / `wca dev`) validates the schema via an isolated Node subprocess, watches `wavical.config.js` and `src/`, and dynamically syncs capability updates into the running shell without restarting.
+
+For programmatic embedding in Rust without the CLI:
 
 ```rust
 use wavical_shell::{run_with_config, WindowConfig};
 use std::path::PathBuf;
 
 fn main() {
-    let mut config = WindowConfig::default();   // grants only core.ping
+    let mut config = WindowConfig::default();   // grants only core.ping by default
     config.capabilities.grant("core.echo");     // opt in explicitly
     config.custom_csp = None;                   // keep the strict default CSP
 
     run_with_config(PathBuf::from("examples/hello"), config);
 }
 ```
-
-> [!NOTE]
-> A declarative `wavical.config.js` and a `wavical` / `wca` CLI are planned for **Phase 1**. Until then, configure windows from Rust as shown above.
 
 ---
 
@@ -304,12 +365,13 @@ cargo deny check
 
 ## ⚙️ Continuous Integration
 
-Every push and pull request to `main` runs three jobs in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+Every push and pull request to `main` runs in [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
 
 | Job | Runner | Checks |
 |---|---|---|
-| **Windows (Full Workspace)** | `windows-latest` | fmt · clippy · tests · attack bench · build |
-| **Linux (Pure Crates)** | `ubuntu-latest` | fmt · clippy · tests · build for `wavical-ipc` and `wavical-protocol` |
+| **Windows (Full Workspace)** | `windows-latest` | fmt · clippy · tests (110 units + props) · attack bench · workspace build |
+| **Linux (Pure & CLI Crates)** | `ubuntu-latest` | fmt · clippy · tests for `wavical-ipc`, `wavical-protocol`, `wavical-config`, and `wavical-cli` |
+| **CLI E2E Workflow** | `windows-latest` | `wavical init` scaffold · build verification · SHA-256 asset manifest validation |
 | **Security & Supply Chain** | `ubuntu-latest` | `cargo audit` · `cargo deny check` |
 
 ---
@@ -318,9 +380,9 @@ Every push and pull request to `main` runs three jobs in [`.github/workflows/ci.
 
 | Phase | Focus | Status |
 |:-:|---|:-:|
-| **0** | Foundation shell: window, `wavical://` protocol, secure IPC, CSP, test bench | 🚧 In progress |
-| **1** | `wavical` / `wca` CLI (`init`, `dev`, `build`), `wavical.config.js`, capability manifest | 📋 Planned |
-| **2** | Native APIs: dialogs, clipboard, notifications, tray, shortcuts, single-instance | 📋 Planned |
+| **0** | Foundation shell: window (`tao`/`wry`), `wavical://` protocol, secure IPC, CSP, attack bench | ✅ Completed |
+| **1** | `wavical` / `wca` CLI (`init`, `dev`, `build`), `wavical.config.js`, hot-reload, SHA-256 manifest | ✅ Completed |
+| **2** | Native APIs: dialogs (`rfd`), clipboard (`arboard`), notifications, tray, shortcuts, single-instance | 🚧 Next up |
 | **3** | **AI-native**: local llama.cpp/GGUF, embedded RAG (`ai.index`, `ai.search`), `wavical model pull` | 📋 Planned |
 | **4** | Opt-in shared Node/Bun runtime, signed delta auto-updates | 📋 Planned |
 | **5** | Installers (`.exe`/`.msi`), code signing, portable builds, public benchmarks | 📋 Planned |
@@ -336,7 +398,7 @@ Contributions, ideas, and security reviews are welcome. Before opening a PR, ple
 
 1. **No `unsafe`.** `#![forbid(unsafe_code)]` stays in place.
 2. **No panics on untrusted input.** Don't use `unwrap()`, `expect()`, or panicking indexing on IPC, URL, path, or JSON data. Use `thiserror`.
-3. **Security logic stays in the pure crates** (`wavical-ipc`, `wavical-protocol`), never in tao/wry glue.
+3. **Security logic stays in the pure crates** (`wavical-ipc`, `wavical-protocol`, `wavical-config`, `wavical-cli`), never in tao/wry glue.
 4. **Generic errors go to the page.** Log details with `tracing`.
 5. **Tests ship with the code.** New security rules need a test that fails without them.
 6. **The quality gate passes**: `fmt`, `clippy -D warnings`, `test`, `build`.
@@ -356,8 +418,11 @@ Please **don't** open public issues for security problems. Use GitHub's **Privat
 |---|---|
 | [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) | Trust boundaries, enforcement layers, logging |
 | [`docs/WAVICAL_SETUP.md`](docs/WAVICAL_SETUP.md) | Full Windows and WSL dev environment setup |
-| [`docs/WAVICAL_PHASE_0_BUILD_PLAN.md`](docs/WAVICAL_PHASE_0_BUILD_PLAN.md) | Phase 0 work packages and scope |
-| [`docs/WAVICAL_FEATURE_CHECKLIST.md`](docs/WAVICAL_FEATURE_CHECKLIST.md) | Overall feature scope |
+| [`docs/phase 0/WAVICAL_PHASE_0_BUILD_PLAN.md`](docs/phase%200/WAVICAL_PHASE_0_BUILD_PLAN.md) | Phase 0 architecture, work packages, and scope |
+| [`docs/phase 1/WAVICAL_PHASE_1_BUILD_PLAN.md`](docs/phase%201/WAVICAL_PHASE_1_BUILD_PLAN.md) | Phase 1 CLI and config architecture and technical plan |
+| [`docs/phase 1/WAVICAL_PHASE_1_CONFIG_SCHEMA.md`](docs/phase%201/WAVICAL_PHASE_1_CONFIG_SCHEMA.md) | Full reference for `wavical.config.js` format and validation rules |
+| [`docs/PHASE_1_README.md`](docs/PHASE_1_README.md) | Phase 1 overview and work packages summary |
+| [`docs/WAVICAL_FEATURE_CHECKLIST.md`](docs/WAVICAL_FEATURE_CHECKLIST.md) | Overall project feature scope & completion checklist |
 | [`ROADMAP.md`](ROADMAP.md) | Phased delivery plan |
 | [`SECURITY.md`](SECURITY.md) | Vulnerability disclosure policy |
 
