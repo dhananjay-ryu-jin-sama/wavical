@@ -93,6 +93,12 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
 pub enum UserEvent {
     /// Safe JavaScript evaluation string delivered to the webview.
     ExecuteScript(String),
+    /// Reload current webview page.
+    Reload,
+    /// Dynamically update granted capabilities without restarting window.
+    UpdateCapabilities(Vec<String>),
+    /// Exit event loop cleanly.
+    Exit,
 }
 
 /// Errors raised when validating incoming IPC message origins.
@@ -116,6 +122,16 @@ pub struct WindowConfig {
     pub capabilities: wavical_ipc::Capabilities,
     /// Optional Content-Security-Policy override. If None, `DEFAULT_CSP` is enforced.
     pub custom_csp: Option<String>,
+    /// Thread-safe dynamic capability storage allowing live capability reloads without restarting the window.
+    pub dynamic_capabilities: Option<std::sync::Arc<std::sync::RwLock<wavical_ipc::Capabilities>>>,
+    /// Optional initial window width.
+    pub initial_width: Option<u32>,
+    /// Optional initial window height.
+    pub initial_height: Option<u32>,
+    /// Optional window title.
+    pub title: Option<String>,
+    /// Whether to listen for dev server control messages on stdin.
+    pub listen_stdin: bool,
 }
 
 impl Default for WindowConfig {
@@ -133,6 +149,11 @@ impl Default for WindowConfig {
             ],
             capabilities,
             custom_csp: None,
+            dynamic_capabilities: None,
+            initial_width: None,
+            initial_height: None,
+            title: None,
+            listen_stdin: false,
         }
     }
 }
@@ -141,6 +162,18 @@ impl WindowConfig {
     /// Return the effective Content-Security-Policy string for this window.
     pub fn effective_csp(&self) -> &str {
         self.custom_csp.as_deref().unwrap_or(DEFAULT_CSP)
+    }
+
+    /// Return the current active capability set, taking into account any dynamic updates.
+    pub fn effective_capabilities(&self) -> wavical_ipc::Capabilities {
+        if let Some(ref dyn_caps) = self.dynamic_capabilities {
+            dyn_caps
+                .read()
+                .map(|c| c.clone())
+                .unwrap_or_else(|_| self.capabilities.clone())
+        } else {
+            self.capabilities.clone()
+        }
     }
 }
 
@@ -288,7 +321,8 @@ pub fn process_ipc_message(
         }
     };
 
-    if !config.capabilities.is_allowed(&request.method) {
+    let active_capabilities = config.effective_capabilities();
+    if !active_capabilities.is_allowed(&request.method) {
         tracing::warn!(
             security_event = "capability_denied",
             window_id = %config.window_id,
@@ -303,7 +337,7 @@ pub fn process_ipc_message(
         )));
     }
 
-    let response = wavical_ipc::dispatch(&request, &config.capabilities, registry);
+    let response = wavical_ipc::dispatch(&request, &active_capabilities, registry);
     Ok(Some(response))
 }
 
@@ -354,9 +388,19 @@ pub fn handle_missing_runtime_and_exit(error_detail: &str) -> ! {
 
 /// Initialize window with tao.
 pub fn create_window(event_loop: &EventLoop<UserEvent>, title: &str) -> Result<Window, String> {
+    create_window_with_size(event_loop, title, 820, 700)
+}
+
+/// Initialize window with custom initial size.
+pub fn create_window_with_size(
+    event_loop: &EventLoop<UserEvent>,
+    title: &str,
+    width: u32,
+    height: u32,
+) -> Result<Window, String> {
     WindowBuilder::new()
         .with_title(title)
-        .with_inner_size(LogicalSize::new(820.0, 700.0))
+        .with_inner_size(LogicalSize::new(width as f64, height as f64))
         .build(event_loop)
         .map_err(|err| err.to_string())
 }
@@ -465,13 +509,72 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     let event_loop: EventLoop<UserEvent> = EventLoopBuilder::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
+    // Ensure dynamic capabilities storage is initialized
+    let dyn_caps = config.dynamic_capabilities.clone().unwrap_or_else(|| {
+        std::sync::Arc::new(std::sync::RwLock::new(config.capabilities.clone()))
+    });
+    let mut config = config;
+    config.dynamic_capabilities = Some(dyn_caps.clone());
+
     // 3. Create host window
-    let window = match create_window(&event_loop, "Wavical") {
+    let win_title = config.title.as_deref().unwrap_or("Wavical");
+    let win_width = config.initial_width.unwrap_or(820);
+    let win_height = config.initial_height.unwrap_or(700);
+
+    let window = match create_window_with_size(&event_loop, win_title, win_width, win_height) {
         Ok(win) => win,
         Err(err) => {
             handle_missing_runtime_and_exit(&format!("Failed to create host window: {err}"));
         }
     };
+
+    if config.listen_stdin {
+        let stdin_proxy = proxy.clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            let reader = stdin.lock();
+            for line in reader.lines() {
+                match line {
+                    Ok(raw) => {
+                        let trimmed = raw.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                            let action = val.get("action").and_then(|a| a.as_str()).unwrap_or("");
+                            match action {
+                                "reload" => {
+                                    let _ = stdin_proxy.send_event(UserEvent::Reload);
+                                }
+                                "update_capabilities" => {
+                                    let caps = val
+                                        .get("capabilities")
+                                        .and_then(|c| c.as_array())
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|i| i.as_str().map(|s| s.to_string()))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    let _ =
+                                        stdin_proxy.send_event(UserEvent::UpdateCapabilities(caps));
+                                }
+                                "exit" => {
+                                    let _ = stdin_proxy.send_event(UserEvent::Exit);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            // When stdin is closed (parent process exited), shut down shell event loop cleanly
+            let _ = stdin_proxy.send_event(UserEvent::Exit);
+        });
+    }
 
     // 4. Initialize handler registry
     let registry = wavical_ipc::HandlerRegistry::with_core_handlers();
@@ -555,6 +658,29 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 if let Err(err) = webview.evaluate_script(&script) {
                     tracing::error!("Failed to evaluate script in webview: {err}");
                 }
+            }
+            Event::UserEvent(UserEvent::Reload) => {
+                tracing::info!("Reload requested via dev server control");
+                if let Err(err) = webview.evaluate_script("location.reload();") {
+                    tracing::error!("Failed to reload webview: {err}");
+                }
+            }
+            Event::UserEvent(UserEvent::UpdateCapabilities(new_caps)) => {
+                tracing::info!(
+                    "Updating capabilities via dev server control: {:?}",
+                    new_caps
+                );
+                if let Ok(mut lock) = dyn_caps.write() {
+                    let mut updated = wavical_ipc::Capabilities::new();
+                    for cap in new_caps {
+                        updated.grant(cap);
+                    }
+                    *lock = updated;
+                }
+            }
+            Event::UserEvent(UserEvent::Exit) => {
+                tracing::info!("Exit requested via dev server control");
+                *control_flow = ControlFlow::Exit;
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -998,5 +1124,70 @@ mod tests {
             .unwrap();
         assert!(!cap_res.ok);
         assert_eq!(cap_res.error.unwrap(), wavical_ipc::GENERIC_METHOD_ERROR);
+    }
+
+    #[test]
+    fn test_dynamic_capabilities_live_update_without_restart() {
+        let dyn_caps =
+            std::sync::Arc::new(std::sync::RwLock::new(wavical_ipc::Capabilities::new()));
+        let config = WindowConfig {
+            dynamic_capabilities: Some(dyn_caps.clone()),
+            capabilities: wavical_ipc::Capabilities::new(),
+            ..Default::default()
+        };
+
+        let registry = wavical_ipc::HandlerRegistry::with_core_handlers();
+        let uri = "http://wavical.localhost/index.html"
+            .parse::<Uri>()
+            .unwrap();
+
+        // Initially no capabilities granted: ping should be denied
+        let res1 = process_ipc_message(
+            &uri,
+            r#"{"id": 1, "method": "core.ping"}"#,
+            &config,
+            &registry,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            res1.error.as_deref(),
+            Some(wavical_ipc::GENERIC_METHOD_ERROR)
+        );
+
+        // Dynamically grant core.ping
+        {
+            let mut lock = dyn_caps.write().unwrap();
+            lock.grant("core.ping");
+        }
+
+        // Now ping should succeed immediately without changing config reference
+        let res2 = process_ipc_message(
+            &uri,
+            r#"{"id": 2, "method": "core.ping"}"#,
+            &config,
+            &registry,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(res2.ok);
+        assert_eq!(res2.result.unwrap().get("message").unwrap(), "pong");
+
+        // Dynamically grant core.echo as well
+        {
+            let mut lock = dyn_caps.write().unwrap();
+            lock.grant("core.echo");
+        }
+
+        let res3 = process_ipc_message(
+            &uri,
+            r#"{"id": 3, "method": "core.echo", "params": "hello"}"#,
+            &config,
+            &registry,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(res3.ok);
+        assert_eq!(res3.result.unwrap(), "hello");
     }
 }

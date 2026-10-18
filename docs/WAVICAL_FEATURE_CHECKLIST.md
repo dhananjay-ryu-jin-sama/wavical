@@ -21,14 +21,14 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 
 ## Phase 1 — Core CLI & Config
 
-- [ ] `wavical init`, `wavical dev`, `wavical build` commands
-- [ ] Short alias `wca` installed alongside `wavical` (same binary behavior, e.g. `wca dev`). Full name stays canonical in docs; `wca` is introduced once as shorthand
-- [ ] Command-name collision check for `wavical` and `wca` on Windows and WSL/Linux before release (`where` / `which`)
-- [ ] Single flat `wavical.config.js` config file (vs. Tauri/Electron's multi-file split)
-- [ ] Config schema validation (zod or equivalent)
-- [ ] Capability declarations live in config (ties into Phase 0's capability model)
-- [ ] Dev-friendly error messages (no raw Rust panic traces surfaced to the dev)
-- [ ] JSON-schema-backed IntelliSense/autocomplete for `wavical.config.js` in VS Code
+- [x] `wavical init`, `wavical dev`, `wavical build` commands (implemented in `crates/wavical-cli`, full lifecycle verified in e2e tests)
+- [x] Short alias `wca` installed alongside `wavical` (same binary behavior, e.g. `wca dev`). Dual binary targets in Cargo.toml routing to identical CLI handler
+- [x] Command-name collision check for `wavical` and `wca` on Windows and WSL/Linux before release (`where.exe` / `which` confirmed clean: 0 collisions on system PATH)
+- [x] Single flat `wavical.config.js` config file (vs. Tauri/Electron's multi-file split)
+- [x] Config schema validation (Node-evaluated subprocess with strict Rust deserialization, timeout kill switch, and typo suggestions)
+- [x] Capability declarations live in config (ties into Phase 0's capability model; dynamic reload via stdin protocol without restart)
+- [x] Dev-friendly error messages (no raw Rust panic traces surfaced to the dev; `thiserror`-backed structured error reporting)
+- [x] JSON-schema-backed IntelliSense/autocomplete for `wavical.config.js` in VS Code (JSDoc `@type {import('wavical-config').AppConfig}` type annotation scaffolded by `wavical init`; schema specification in `docs/phase 1/WAVICAL_PHASE_1_CONFIG_SCHEMA.md`)
 
 ## Phase 2 — Native Tier 1 APIs (pure Rust, zero Node required)
 
@@ -112,9 +112,10 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 
 ## Changed From the Original Build Guide
 
-- [ ] Renamed: "Nova" → ARKA → **Wavical**, with CLI alias **`wca`** (considered and dropped: `wav`, `wv`, `wcl`)
-- [ ] Rejected: bundling Node into every installer (too heavy, breaks the lightweight pitch) — replaced with shared, auto-downloaded, version-pinned runtime cache
-- [ ] Softened: "no Rust required" as the headline differentiator (Tauri 2's official plugins already cover this for most apps) — repositioned AI-native infrastructure as the primary pitch instead
-- [ ] Clarified: the original guide's closure-style event loop is fine with `tao` (wry's recommended crate); only winit moved to `ApplicationHandler`. Pick one windowing crate and don't mix their APIs
+- [x] Renamed: "Nova" → ARKA → **Wavical**, with CLI alias **`wca`** (considered and dropped: `wav`, `wv`, `wcl`)
+- [x] Rejected: bundling Node into every installer (too heavy, breaks the lightweight pitch) — replaced with shared, auto-downloaded, version-pinned runtime cache
+- [x] Softened: "no Rust required" as the headline differentiator (Tauri 2's official plugins already cover this for most apps) — repositioned AI-native infrastructure as the primary pitch instead
+- [x] Clarified: the original guide's closure-style event loop is fine with `tao` (wry's recommended crate); only winit moved to `ApplicationHandler`. Pick one windowing crate and don't mix their APIs
 - [ ] Flagged for verification: assumption that `tao` ships built-in system tray support — may need separate `tray-icon`/`muda`/`global-hotkey` crates
-- [ ] Moved up: security/capability model, originally filed as a "Phase 6 extra," now required in Phase 0
+- [x] Moved up: security/capability model, originally filed as a "Phase 6 extra," now required in Phase 0
+

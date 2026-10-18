@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+﻿#![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -336,6 +336,14 @@ pub fn handle_core_ping(_params: &serde_json::Value) -> Result<serde_json::Value
 /// Built-in handler for `core.echo`: returns its exact parameters.
 pub fn handle_core_echo(params: &serde_json::Value) -> Result<serde_json::Value, String> {
     Ok(params.clone())
+}
+
+/// Standard known capabilities available in wavical-ipc.
+pub const KNOWN_CAPABILITIES: &[&str] = &["core.echo", "core.ping"];
+
+/// Helper function returning the list of valid/known capabilities.
+pub fn known_capabilities() -> Vec<String> {
+    KNOWN_CAPABILITIES.iter().map(|s| s.to_string()).collect()
 }
 
 /// Registry mapping method names to their corresponding handler functions.

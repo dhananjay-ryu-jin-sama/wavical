@@ -38,11 +38,16 @@ jobs:
         run: cargo build --workspace
 
   linux:
-    name: "Linux (Pure Crates: IPC & Protocol)"
+    name: "Linux (IPC, Protocol, Config, CLI)"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -52,14 +57,49 @@ jobs:
       - name: Check code formatting
         run: cargo fmt --all --check
 
-      - name: Run clippy (wavical-ipc & wavical-protocol)
-        run: cargo clippy -p wavical-ipc -p wavical-protocol -- -D warnings
+      - name: Run clippy
+        run: cargo clippy -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli -- -D warnings
 
-      - name: Run tests (wavical-ipc & wavical-protocol)
-        run: cargo test -p wavical-ipc -p wavical-protocol
+      - name: Run tests
+        run: cargo test -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli
 
-      - name: Build pure crates (wavical-ipc & wavical-protocol)
-        run: cargo build -p wavical-ipc -p wavical-protocol
+      - name: Build binaries and crates
+        run: cargo build -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli
+
+  cli-e2e:
+    name: "CLI E2E Workflow & Smoke"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build wavical binaries
+        run: cargo build -p wavical-cli
+
+      - name: Verify help commands exit without panic
+        run: |
+          ./target/debug/wavical --help
+          ./target/debug/wavical init --help
+          ./target/debug/wavical dev --help
+          ./target/debug/wavical build --help
+          ./target/debug/wca --help
+
+      - name: End-to-end init and build workflow
+        run: |
+          ./target/debug/wavical init test-app
+          cd test-app
+          ../target/debug/wavical build
+          test -f dist/index.html
+          test -f dist/styles.css
+          test -f dist/wavical-manifest.json
 
   security:
     name: Security & Supply Chain (Audit & Deny)
