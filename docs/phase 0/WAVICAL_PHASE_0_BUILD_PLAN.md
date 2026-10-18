@@ -7,6 +7,8 @@
 > Estimate: roughly 1–2 weeks part-time with AI-assisted coding. Most of the time goes into reviewing and testing, not generating. Treat that as a guess, not a promise.
 
 ---
+---
+
 
 ## 0. Decision to lock before writing code (correction to earlier advice)
 
