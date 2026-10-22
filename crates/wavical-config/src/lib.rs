@@ -37,6 +37,10 @@ pub struct WindowConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+
+    /// Persist window size, position, and maximized state across sessions (default: true).
+    #[serde(default, rename = "persistState", alias = "persist_state", skip_serializing_if = "Option::is_none")]
+    pub persist_state: Option<bool>,
 }
 
 impl WindowConfig {
@@ -54,6 +58,11 @@ impl WindowConfig {
     pub fn title_or_default<'a>(&'a self, app_id: &'a str) -> &'a str {
         self.title.as_deref().unwrap_or(app_id)
     }
+
+    /// Return whether window state persistence is enabled (default: true).
+    pub fn persist_state_or_default(&self) -> bool {
+        self.persist_state.unwrap_or(true)
+    }
 }
 
 impl Default for WindowConfig {
@@ -62,6 +71,7 @@ impl Default for WindowConfig {
             width: Some(DEFAULT_WINDOW_WIDTH),
             height: Some(DEFAULT_WINDOW_HEIGHT),
             title: None,
+            persist_state: None,
         }
     }
 }
@@ -109,6 +119,10 @@ pub struct AppConfig {
     /// Optional dialog settings (fixed filter specifications).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialog: Option<DialogConfig>,
+
+    /// Optional single-instance lock setting (default: true).
+    #[serde(default, rename = "singleInstance", alias = "single_instance", skip_serializing_if = "Option::is_none")]
+    pub single_instance: Option<bool>,
 }
 
 /// Dialog configuration options defining allowed file filters.
@@ -138,7 +152,21 @@ impl AppConfig {
             capabilities: None,
             dev: None,
             dialog: None,
+            single_instance: None,
         }
+    }
+
+    /// Return whether single-instance lock is enabled (default: true).
+    pub fn single_instance_or_default(&self) -> bool {
+        self.single_instance.unwrap_or(true)
+    }
+
+    /// Return whether window state persistence is enabled (default: true).
+    pub fn persist_window_state(&self) -> bool {
+        self.window
+            .as_ref()
+            .map(|w| w.persist_state_or_default())
+            .unwrap_or(true)
     }
 
     /// Effective application version string (default: "0.1.0").
@@ -934,11 +962,13 @@ mod tests {
                 proptest::option::of(100u32..4000u32),
                 proptest::option::of(100u32..4000u32),
                 proptest::option::of("[a-zA-Z0-9 _-]{1,50}"),
+                proptest::option::of(proptest::bool::ANY),
             )
-                .prop_map(|(w, h, t)| WindowConfig {
+                .prop_map(|(w, h, t, p)| WindowConfig {
                     width: w,
                     height: h,
                     title: t,
+                    persist_state: p,
                 }),
         );
 
@@ -951,6 +981,7 @@ mod tests {
         let dev_strat =
             proptest::option::of((1024u16..65535u16).prop_map(|port| DevConfig { port }));
         let version_strat = proptest::option::of("[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}");
+        let single_instance_strat = proptest::option::of(proptest::bool::ANY);
 
         (
             app_id_strat,
@@ -958,14 +989,16 @@ mod tests {
             window_strat,
             caps_strat,
             dev_strat,
+            single_instance_strat,
         )
-            .prop_map(|(app_id, version, window, capabilities, dev)| AppConfig {
+            .prop_map(|(app_id, version, window, capabilities, dev, single_instance)| AppConfig {
                 app_id,
                 version,
                 window,
                 capabilities,
                 dev,
                 dialog: None,
+                single_instance,
             })
     }
 
@@ -982,6 +1015,7 @@ mod tests {
             prop_assert_eq!(&deserialized.window, &cfg.window);
             prop_assert_eq!(&deserialized.capabilities, &cfg.capabilities);
             prop_assert_eq!(&deserialized.dev, &cfg.dev);
+            prop_assert_eq!(&deserialized.single_instance, &cfg.single_instance);
         }
     }
 }

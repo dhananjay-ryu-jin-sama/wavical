@@ -43,6 +43,7 @@ window: {
   width: 1200,      // pixels (default 1200)
   height: 800,      // pixels (default 800)
   title: 'My App',  // window title (default: appId)
+  persistState: true, // persist position, size and maximized state across runs (default: true)
   resizable: true,  // default true (Phase 2+)
   minWidth: 400,    // minimum width (Phase 2+)
   minHeight: 300,   // minimum height (Phase 2+)

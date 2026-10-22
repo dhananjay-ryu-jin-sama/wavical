@@ -8,6 +8,9 @@ use thiserror::Error;
 pub mod grants;
 pub use grants::*;
 
+pub mod window_state;
+pub use window_state::*;
+
 /// Maximum raw IPC message size in bytes before parsing (1 MB default).
 pub const MAX_MESSAGE_SIZE_BYTES: usize = 1024 * 1024;
 

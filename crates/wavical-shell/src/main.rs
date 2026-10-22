@@ -41,6 +41,14 @@ pub struct ShellCli {
     #[arg(long)]
     pub listen_stdin: bool,
 
+    /// Persist window size, position, and maximized state across sessions
+    #[arg(long, env = "WAVICAL_PERSIST_STATE")]
+    pub persist_state: Option<bool>,
+
+    /// Enforce single-instance application lock
+    #[arg(long, env = "WAVICAL_SINGLE_INSTANCE")]
+    pub single_instance: Option<bool>,
+
     /// Run in development server mode
     #[arg(long)]
     pub dev: bool,
@@ -103,6 +111,8 @@ fn main() {
         initial_height: Some(args.window_height),
         title: Some(title),
         listen_stdin,
+        persist_state: args.persist_state.unwrap_or(true),
+        single_instance: args.single_instance.unwrap_or(true),
     };
 
     run_with_config(asset_root, config);

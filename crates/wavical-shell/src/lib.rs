@@ -97,6 +97,8 @@ pub enum UserEvent {
     Reload,
     /// Dynamically update granted capabilities without restarting window.
     UpdateCapabilities(Vec<String>),
+    /// Focus existing application window upon second instance launch.
+    FocusWindow,
     /// Exit event loop cleanly.
     Exit,
 }
@@ -132,6 +134,10 @@ pub struct WindowConfig {
     pub title: Option<String>,
     /// Whether to listen for dev server control messages on stdin.
     pub listen_stdin: bool,
+    /// Whether to persist window state across sessions (default: true).
+    pub persist_state: bool,
+    /// Whether to enforce single-instance lock (default: true).
+    pub single_instance: bool,
 }
 
 impl Default for WindowConfig {
@@ -154,6 +160,8 @@ impl Default for WindowConfig {
             initial_height: None,
             title: None,
             listen_stdin: false,
+            persist_state: true,
+            single_instance: true,
         }
     }
 }
@@ -502,6 +510,31 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     };
     tracing::info!("Detected WebView2 runtime version: {webview_version}");
 
+    // Single-instance enforcement
+    let mut single_instance_server = None;
+    if config.single_instance {
+        let args: Vec<String> = std::env::args().collect();
+        match wavical_native::check_single_instance(&config.window_id, &args) {
+            Ok(wavical_native::SingleInstance::Secondary) => {
+                tracing::info!(
+                    "Secondary instance launched; forwarded arguments to primary instance. Exiting with code 0."
+                );
+                std::process::exit(0);
+            }
+            Ok(wavical_native::SingleInstance::Primary(server)) => {
+                single_instance_server = Some(server);
+            }
+            Ok(wavical_native::SingleInstance::Disabled) => {
+                tracing::warn!(
+                    "Single-instance enforcement disabled or unavailable; proceeding normally"
+                );
+            }
+            Err(err) => {
+                tracing::warn!("Single-instance check failed ({err}); proceeding normally");
+            }
+        }
+    }
+
     let effective_csp = config.effective_csp().to_string();
     tracing::info!(
         "Window '{}' configured allowed origins: {:?}, capabilities count: {}",
@@ -513,6 +546,15 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     // 2. Initialize tao event loop with typed UserEvent
     let event_loop: EventLoop<UserEvent> = EventLoopBuilder::with_user_event().build();
     let proxy = event_loop.create_proxy();
+
+    // Spawn single-instance background listener to focus window on second launch
+    if let Some(ref mut server) = single_instance_server {
+        let focus_proxy = proxy.clone();
+        server.spawn_listener(move |args| {
+            tracing::info!("Received forwarded arguments from secondary instance: {:?}", args);
+            let _ = focus_proxy.send_event(UserEvent::FocusWindow);
+        });
+    }
 
     // Ensure dynamic capabilities storage is initialized
     let dyn_caps = config.dynamic_capabilities.clone().unwrap_or_else(|| {
@@ -532,6 +574,37 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
             handle_missing_runtime_and_exit(&format!("Failed to create host window: {err}"));
         }
     };
+
+    // Restore saved window layout state if persistence is enabled
+    if config.persist_state {
+        if let Ok(state_path) = wavical_native::get_window_state_path(&config.window_id) {
+            if let Ok(raw_json) = std::fs::read_to_string(&state_path) {
+                let screens: Vec<wavical_ipc::ScreenBounds> = event_loop
+                    .available_monitors()
+                    .map(|m| {
+                        let p = m.position();
+                        let s = m.size();
+                        wavical_ipc::ScreenBounds::new(p.x, p.y, s.width, s.height)
+                    })
+                    .collect();
+
+                let resolved = wavical_ipc::resolve_window_state(
+                    &raw_json,
+                    win_width,
+                    win_height,
+                    &screens,
+                );
+
+                window.set_inner_size(tao::dpi::PhysicalSize::new(resolved.width, resolved.height));
+                if let (Some(x), Some(y)) = (resolved.x, resolved.y) {
+                    window.set_outer_position(tao::dpi::PhysicalPosition::new(x, y));
+                }
+                if resolved.maximized {
+                    window.set_maximized(true);
+                }
+            }
+        }
+    }
 
     if config.listen_stdin {
         let stdin_proxy = proxy.clone();
@@ -656,9 +729,35 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
         }
     };
 
+    // Helper to persist current window state if enabled
+    let save_window_state_helper = |win: &Window, win_id: &str, persist: bool| {
+        if !persist {
+            return;
+        }
+        if let Ok(path) = wavical_native::get_window_state_path(win_id) {
+            let pos = win.outer_position().ok();
+            let size = win.inner_size();
+            let maximized = win.is_maximized();
+            let state = wavical_ipc::WindowState {
+                x: pos.map(|p| p.x),
+                y: pos.map(|p| p.y),
+                width: size.width,
+                height: size.height,
+                maximized,
+            };
+            if let Err(e) = wavical_native::save_window_state(&path, &state) {
+                tracing::warn!("Failed to save window state: {e}");
+            }
+        }
+    };
+
+    let persist_state = config.persist_state;
+    let _retained_server = single_instance_server;
+
     // 6. Run tao closure event loop
     tracing::info!("Entering event loop");
     event_loop.run(move |event, _, control_flow| {
+        let _ = &_retained_server;
         *control_flow = ControlFlow::Wait;
 
         match event {
@@ -667,6 +766,11 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 if let Err(err) = webview.evaluate_script(&script) {
                     tracing::error!("Failed to evaluate script in webview: {err}");
                 }
+            }
+            Event::UserEvent(UserEvent::FocusWindow) => {
+                tracing::info!("FocusWindow event received; restoring and focusing window");
+                window.set_minimized(false);
+                window.set_focus();
             }
             Event::UserEvent(UserEvent::Reload) => {
                 tracing::info!("Reload requested via dev server control");
@@ -689,6 +793,7 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
             }
             Event::UserEvent(UserEvent::Exit) => {
                 tracing::info!("Exit requested via dev server control");
+                save_window_state_helper(&window, &loop_window_id, persist_state);
                 loop_native_service.clear_window(&loop_window_id);
                 *control_flow = ControlFlow::Exit;
             }
@@ -696,7 +801,8 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                tracing::info!("Window close requested; clearing grants and exiting cleanly");
+                tracing::info!("Window close requested; saving state, clearing grants and exiting cleanly");
+                save_window_state_helper(&window, &loop_window_id, persist_state);
                 loop_native_service.clear_window(&loop_window_id);
                 *control_flow = ControlFlow::Exit;
             }

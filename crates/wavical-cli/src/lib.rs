@@ -370,8 +370,8 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     let caps_json =
         serde_json::to_string(&config.granted_capabilities()).unwrap_or_else(|_| "[]".to_string());
 
-    let mut child = Command::new(&shell_bin)
-        .arg("--app-id")
+    let mut cmd = Command::new(&shell_bin);
+    cmd.arg("--app-id")
         .arg(&config.app_id)
         .arg("--window-title")
         .arg(config.window_title())
@@ -384,7 +384,16 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
         .arg("--asset-root")
         .arg(&src_dir)
         .arg("--dev")
-        .arg("--listen-stdin")
+        .arg("--listen-stdin");
+
+    if !config.persist_window_state() {
+        cmd.arg("--persist-state").arg("false");
+    }
+    if !config.single_instance_or_default() {
+        cmd.arg("--single-instance").arg("false");
+    }
+
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

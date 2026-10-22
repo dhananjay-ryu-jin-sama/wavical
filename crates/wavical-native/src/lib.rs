@@ -7,7 +7,14 @@ use wavical_ipc::{
     SaveFileDialogParams, WriteGrantedParams, MAX_READ_GRANTED_BYTES, MAX_WRITE_GRANTED_BYTES,
 };
 
+pub mod single_instance;
+pub use single_instance::*;
+
+pub mod window_state;
+pub use window_state::*;
+
 static GLOBAL_GRANT_TABLE: OnceLock<Arc<GrantTable>> = OnceLock::new();
+#[cfg(test)]
 static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn default_grant_table() -> Arc<GrantTable> {
@@ -165,7 +172,6 @@ impl NativeService {
         _params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        let _lock = CLIPBOARD_LOCK.lock().unwrap();
         let mut clipboard = arboard::Clipboard::new().map_err(|e| {
             tracing::error!("Failed to initialize clipboard: {e}");
             wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
@@ -193,7 +199,6 @@ impl NativeService {
         let text = wavical_ipc::validate_clipboard_write(params)
             .map_err(|err| err.to_string())?;
 
-        let _lock = CLIPBOARD_LOCK.lock().unwrap();
         let mut clipboard = arboard::Clipboard::new().map_err(|e| {
             tracing::error!("Failed to initialize clipboard: {e}");
             wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
@@ -495,6 +500,7 @@ mod tests {
 
     #[test]
     fn test_native_service_clipboard_roundtrip() {
+        let _test_lock = CLIPBOARD_LOCK.lock().unwrap();
         let service = NativeService::new();
         let window_id = "test-window";
 
@@ -559,6 +565,7 @@ mod tests {
 
     #[test]
     fn test_native_service_dispatched_via_ipc_pipeline() {
+        let _test_lock = CLIPBOARD_LOCK.lock().unwrap();
         let service = NativeService::new();
         let mut caps = Capabilities::new();
         caps.grant("clipboard.write");
