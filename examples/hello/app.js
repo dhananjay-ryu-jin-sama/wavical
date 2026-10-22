@@ -51,6 +51,75 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const btnCopy = document.getElementById('btn-copy');
+    const btnPaste = document.getElementById('btn-paste');
+    const btnNotify = document.getElementById('btn-notify');
+    const clipboardInput = document.getElementById('clipboard-input');
+
+    // WP3: Invoke clipboard.write
+    if (btnCopy) {
+        btnCopy.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            const textToCopy = clipboardInput ? clipboardInput.value : "Hello from Wavical!";
+            output.textContent = 'Calling clipboard.write via window.wavical.invoke()...';
+            try {
+                const res = await window.wavical.invoke('clipboard.write', { text: textToCopy });
+                output.className = 'output-box success';
+                output.innerHTML = `
+                    <div class="output-title">✔ clipboard.write succeeded:</div>
+                    <div class="note">Copied text (${textToCopy.length} bytes) to system clipboard.</div>
+                `;
+            } catch (err) {
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">✖ clipboard.write failed:</div><div>${err.message}</div>`;
+            }
+        });
+    }
+
+    // WP3: Invoke clipboard.read
+    if (btnPaste) {
+        btnPaste.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Calling clipboard.read via window.wavical.invoke()...';
+            try {
+                const res = await window.wavical.invoke('clipboard.read');
+                output.className = 'output-box success';
+                if (clipboardInput && res && typeof res.text === 'string') {
+                    clipboardInput.value = res.text;
+                }
+                output.innerHTML = `
+                    <div class="output-title">✔ clipboard.read succeeded:</div>
+                    <pre class="json-display">${JSON.stringify(res, null, 2)}</pre>
+                `;
+            } catch (err) {
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">✖ clipboard.read failed:</div><div>${err.message}</div>`;
+            }
+        });
+    }
+
+    // WP3: Invoke notify.send
+    if (btnNotify) {
+        btnNotify.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Calling notify.send via window.wavical.invoke()...';
+            try {
+                const res = await window.wavical.invoke('notify.send', {
+                    title: 'Wavical Notification',
+                    body: 'Hello from native desktop notification!'
+                });
+                output.className = 'output-box success';
+                output.innerHTML = `
+                    <div class="output-title">✔ notify.send succeeded:</div>
+                    <pre class="json-display">${JSON.stringify(res, null, 2)}</pre>
+                `;
+            } catch (err) {
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">✖ notify.send failed:</div><div>${err.message}</div>`;
+            }
+        });
+    }
+
     // 3. Test External Navigation (Blocked by Navigation Handler)
     if (btnNavExternal) {
         btnNavExternal.addEventListener('click', () => {

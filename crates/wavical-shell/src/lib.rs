@@ -337,7 +337,12 @@ pub fn process_ipc_message(
         )));
     }
 
-    let response = wavical_ipc::dispatch(&request, &active_capabilities, registry);
+    let response = if wavical_ipc::is_native_method(&request.method) {
+        let native_service = wavical_native::NativeService::new();
+        wavical_ipc::dispatch_native(&request, &config.window_id, &active_capabilities, &native_service)
+    } else {
+        wavical_ipc::dispatch(&request, &active_capabilities, registry)
+    };
     Ok(Some(response))
 }
 
@@ -577,7 +582,9 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     }
 
     // 4. Initialize handler registry
-    let registry = wavical_ipc::HandlerRegistry::with_core_handlers();
+    let mut registry = wavical_ipc::HandlerRegistry::with_core_handlers();
+    let native_service = std::sync::Arc::new(wavical_native::NativeService::new());
+    registry.register_native(native_service, &config.window_id);
 
     // 5. Build the webview with custom protocol, CSP, navigation guard, popup blocker, and IPC handler
     let devtools = is_devtools_enabled();

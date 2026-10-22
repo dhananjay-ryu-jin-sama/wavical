@@ -250,3 +250,28 @@ h1 {
 .desc code {
     color: #cbd5e1;
 }
+
+.input-row {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 0.65rem;
+}
+
+.text-input {
+    width: 100%;
+    max-width: 440px;
+    padding: 0.55rem 0.85rem;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 0.5rem;
+    color: #f8fafc;
+    font-size: 0.85rem;
+    outline: none;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
+}
+
+.text-input:focus {
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}

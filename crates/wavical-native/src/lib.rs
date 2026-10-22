@@ -17,30 +17,84 @@ impl NativeService {
     }
 
     /// Read text from clipboard (WP3).
+    ///
+    /// Non-text data or oversize clipboard content (>1 MB) returns a generic error.
+    /// Never returns truncated values.
     pub fn clipboard_read(
         &self,
         _params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("clipboard.read not implemented yet".to_string())
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| {
+            tracing::error!("Failed to initialize clipboard: {e}");
+            wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
+        })?;
+
+        let text = clipboard.get_text().map_err(|e| {
+            tracing::warn!("Failed to get clipboard text (may be non-text): {e}");
+            wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
+        })?;
+
+        let valid_text = wavical_ipc::validate_clipboard_read(&text)
+            .map_err(|err| err.to_string())?;
+
+        Ok(serde_json::json!({
+            "text": valid_text
+        }))
     }
 
     /// Write text to clipboard (WP3).
+    ///
+    /// Validates payload format (text only, <=1 MB) and writes to OS clipboard.
+    /// Reject non-text and oversize payloads with a generic error.
     pub fn clipboard_write(
         &self,
-        _params: &serde_json::Value,
+        params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("clipboard.write not implemented yet".to_string())
+        let text = wavical_ipc::validate_clipboard_write(params)
+            .map_err(|err| err.to_string())?;
+
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| {
+            tracing::error!("Failed to initialize clipboard: {e}");
+            wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
+        })?;
+
+        clipboard.set_text(text).map_err(|e| {
+            tracing::error!("Failed to set clipboard text: {e}");
+            wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
+        })?;
+
+        Ok(serde_json::json!({
+            "success": true
+        }))
     }
 
     /// Show desktop notification (WP3).
+    ///
+    /// Enforces title (128 chars) and body (1024 chars) limits as named constants.
+    /// Rejects actions, URLs, or invalid payloads with a generic error.
     pub fn notify_send(
         &self,
-        _params: &serde_json::Value,
+        params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("notify.send not implemented yet".to_string())
+        let payload = wavical_ipc::validate_notify_send(params)
+            .map_err(|err| err.to_string())?;
+
+        notify_rust::Notification::new()
+            .appname("Wavical")
+            .summary(payload.title)
+            .body(payload.body)
+            .show()
+            .map_err(|e| {
+                tracing::warn!("Failed to dispatch notification: {e}");
+                wavical_ipc::GENERIC_NOTIFICATION_ERROR.to_string()
+            })?;
+
+        Ok(serde_json::json!({
+            "success": true
+        }))
     }
 
     /// Show open file dialog and return scoped grant (WP4).
@@ -143,16 +197,27 @@ impl NativeHandler for NativeService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wavical_ipc::{dispatch_native, Capabilities, Request, NATIVE_METHOD_NAMES};
+    use wavical_ipc::{dispatch_native, Capabilities, Request};
 
     #[test]
-    fn test_native_service_empty_handlers_return_not_implemented() {
+    fn test_native_service_unimplemented_handlers_return_not_implemented() {
         let service = NativeService::new();
         let window_id = "test-window";
 
-        for &method in NATIVE_METHOD_NAMES {
+        let remaining_unimplemented = [
+            "dialog.openFile",
+            "dialog.saveFile",
+            "fs.readGranted",
+            "fs.writeGranted",
+            "menu.showContextMenu",
+            "tray.set",
+            "shortcut.register",
+            "badge.set",
+        ];
+
+        for &method in &remaining_unimplemented {
             let res = service.handle_native(method, &serde_json::Value::Null, window_id);
-            assert!(res.is_err(), "Empty handler for '{method}' should return Err");
+            assert!(res.is_err(), "Handler for '{method}' should return Err");
             let err = res.unwrap_err();
             assert!(
                 err.contains("not implemented yet"),
@@ -162,20 +227,87 @@ mod tests {
     }
 
     #[test]
-    fn test_native_service_dispatched_via_ipc() {
+    fn test_native_service_clipboard_roundtrip() {
+        let service = NativeService::new();
+        let window_id = "test-window";
+
+        let test_text = "Hello from Wavical native clipboard test!";
+        let write_res = service.clipboard_write(
+            &serde_json::json!({"text": test_text}),
+            window_id,
+        );
+
+        if let Ok(resp) = write_res {
+            assert_eq!(resp, serde_json::json!({"success": true}));
+
+            let read_res = service.clipboard_read(&serde_json::Value::Null, window_id);
+            assert!(read_res.is_ok());
+            let read_val = read_res.unwrap();
+            assert_eq!(read_val["text"], test_text);
+        } else {
+            // In headless/container environments where clipboard is unavailable, verify error is generic
+            assert_eq!(
+                write_res.unwrap_err(),
+                wavical_ipc::GENERIC_CLIPBOARD_ERROR
+            );
+        }
+    }
+
+    #[test]
+    fn test_native_service_clipboard_oversize_rejected() {
+        let service = NativeService::new();
+        let window_id = "test-window";
+
+        let huge_text = "x".repeat(wavical_ipc::MAX_CLIPBOARD_TEXT_BYTES + 10);
+        let write_res = service.clipboard_write(
+            &serde_json::json!({"text": huge_text}),
+            window_id,
+        );
+        assert!(write_res.is_err());
+        assert_eq!(write_res.unwrap_err(), wavical_ipc::GENERIC_CLIPBOARD_ERROR);
+    }
+
+    #[test]
+    fn test_native_service_notify_send_limits_rejected() {
+        let service = NativeService::new();
+        let window_id = "test-window";
+
+        // Oversize title > 128
+        let huge_title = "T".repeat(129);
+        let bad_title = service.notify_send(
+            &serde_json::json!({"title": huge_title, "body": "msg"}),
+            window_id,
+        );
+        assert!(bad_title.is_err());
+        assert_eq!(bad_title.unwrap_err(), wavical_ipc::GENERIC_NOTIFICATION_ERROR);
+
+        // Disallowed url parameter
+        let bad_url = service.notify_send(
+            &serde_json::json!({"title": "Test", "body": "msg", "url": "https://example.com"}),
+            window_id,
+        );
+        assert!(bad_url.is_err());
+        assert_eq!(bad_url.unwrap_err(), wavical_ipc::GENERIC_NOTIFICATION_ERROR);
+    }
+
+    #[test]
+    fn test_native_service_dispatched_via_ipc_pipeline() {
         let service = NativeService::new();
         let mut caps = Capabilities::new();
-        caps.grant("clipboard.read");
+        caps.grant("clipboard.write");
 
         let req = Request {
             id: 1,
-            method: "clipboard.read".to_string(),
-            params: serde_json::Value::Null,
+            method: "clipboard.write".to_string(),
+            params: serde_json::json!({"text": "test dispatch"}),
         };
 
         let resp = dispatch_native(&req, "main-win", &caps, &service);
-        assert!(!resp.ok);
-        // Error from empty handler should be captured in response
-        assert!(resp.error.unwrap().contains("clipboard.read not implemented yet"));
+        // Either succeeds with true, or fails with generic error if headless OS clipboard is locked
+        if resp.ok {
+            assert_eq!(resp.result, Some(serde_json::json!({"success": true})));
+        } else {
+            assert_eq!(resp.error.as_deref(), Some(wavical_ipc::GENERIC_CLIPBOARD_ERROR));
+        }
     }
 }

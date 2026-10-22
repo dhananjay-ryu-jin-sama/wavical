@@ -385,6 +385,106 @@ pub fn is_native_method(method: &str) -> bool {
     NATIVE_METHOD_NAMES.contains(&method)
 }
 
+/// Maximum clipboard text payload size in bytes (1 MB named constant).
+pub const MAX_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
+
+/// Generic error message for clipboard operation rejections.
+pub const GENERIC_CLIPBOARD_ERROR: &str = "Clipboard operation failed";
+
+/// Maximum notification title length in Unicode characters (128 chars named constant).
+pub const MAX_NOTIFICATION_TITLE_CHARS: usize = 128;
+
+/// Maximum notification body length in Unicode characters (1024 chars named constant).
+pub const MAX_NOTIFICATION_BODY_CHARS: usize = 1024;
+
+/// Generic error message for notification operation rejections.
+pub const GENERIC_NOTIFICATION_ERROR: &str = "Notification operation failed";
+
+/// Validated payload for `notify.send`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationPayload<'a> {
+    pub title: &'a str,
+    pub body: &'a str,
+}
+
+/// Pure validation for clipboard write payload.
+///
+/// Accepts:
+/// - A JSON string directly (`"hello"`)
+/// - An object containing a `"text"` string property (`{"text": "hello"}`)
+///
+/// Rejects:
+/// - Non-text types (numbers, booleans, arrays, null, or objects without `"text"`)
+/// - Payloads exceeding `MAX_CLIPBOARD_TEXT_BYTES` (1 MB)
+pub fn validate_clipboard_write(params: &serde_json::Value) -> Result<&str, &'static str> {
+    let text = match params {
+        serde_json::Value::String(s) => s.as_str(),
+        serde_json::Value::Object(map) => match map.get("text") {
+            Some(serde_json::Value::String(s)) => s.as_str(),
+            _ => return Err(GENERIC_CLIPBOARD_ERROR),
+        },
+        _ => return Err(GENERIC_CLIPBOARD_ERROR),
+    };
+
+    if text.len() > MAX_CLIPBOARD_TEXT_BYTES {
+        return Err(GENERIC_CLIPBOARD_ERROR);
+    }
+
+    Ok(text)
+}
+
+/// Pure validation for clipboard read text.
+///
+/// Ensures text read from the system clipboard does not exceed `MAX_CLIPBOARD_TEXT_BYTES`.
+/// Oversize values are rejected with `GENERIC_CLIPBOARD_ERROR` rather than returning a truncated string.
+pub fn validate_clipboard_read(text: &str) -> Result<&str, &'static str> {
+    if text.len() > MAX_CLIPBOARD_TEXT_BYTES {
+        return Err(GENERIC_CLIPBOARD_ERROR);
+    }
+    Ok(text)
+}
+
+/// Pure validation for `notify.send` parameters.
+///
+/// Accepts an object containing:
+/// - `title`: required string up to `MAX_NOTIFICATION_TITLE_CHARS` (128 characters)
+/// - `body`: optional string up to `MAX_NOTIFICATION_BODY_CHARS` (1024 characters), defaults to `""`
+///
+/// Security constraints for v1:
+/// - Strict: no URLs, no actions, and no unrecognized fields are allowed.
+pub fn validate_notify_send<'a>(params: &'a serde_json::Value) -> Result<NotificationPayload<'a>, &'static str> {
+    let serde_json::Value::Object(map) = params else {
+        return Err(GENERIC_NOTIFICATION_ERROR);
+    };
+
+    // V1 restriction: no actions, no URLs, no extraneous fields
+    for key in map.keys() {
+        if key != "title" && key != "body" {
+            return Err(GENERIC_NOTIFICATION_ERROR);
+        }
+    }
+
+    let Some(serde_json::Value::String(title)) = map.get("title") else {
+        return Err(GENERIC_NOTIFICATION_ERROR);
+    };
+
+    if title.chars().count() > MAX_NOTIFICATION_TITLE_CHARS {
+        return Err(GENERIC_NOTIFICATION_ERROR);
+    }
+
+    let body = match map.get("body") {
+        Some(serde_json::Value::String(b)) => b.as_str(),
+        None => "",
+        _ => return Err(GENERIC_NOTIFICATION_ERROR),
+    };
+
+    if body.chars().count() > MAX_NOTIFICATION_BODY_CHARS {
+        return Err(GENERIC_NOTIFICATION_ERROR);
+    }
+
+    Ok(NotificationPayload { title, body })
+}
+
 /// Default placeholder handler for unimplemented native methods.
 pub fn handle_native_unimplemented(_params: &serde_json::Value) -> Result<serde_json::Value, String> {
     Err("Native feature not implemented yet".to_string())
@@ -1229,6 +1329,235 @@ mod tests {
         assert!(!resp.ok);
         assert_eq!(resp.error.as_deref(), Some(GENERIC_HANDLER_ERROR));
         assert!(!resp.error.unwrap().contains("C:\\"));
+    }
+
+    // ==========================================
+    // WP3 BOUNDARY LIMIT & CAPABILITY DENIAL TESTS
+    // ==========================================
+
+    #[test]
+    fn test_clipboard_write_boundary_limits() {
+        // 1. Exactly 1 MB passes
+        let exact_1mb = "a".repeat(MAX_CLIPBOARD_TEXT_BYTES);
+        let param_obj = serde_json::json!({"text": exact_1mb});
+        assert_eq!(
+            validate_clipboard_write(&param_obj).expect("exact 1 MB should pass"),
+            exact_1mb.as_str()
+        );
+
+        let param_str = serde_json::Value::String(exact_1mb.clone());
+        assert_eq!(
+            validate_clipboard_write(&param_str).expect("raw string exact 1 MB should pass"),
+            exact_1mb.as_str()
+        );
+
+        // 2. Exactly 1 MB + 1 byte fails
+        let over_1mb = "a".repeat(MAX_CLIPBOARD_TEXT_BYTES + 1);
+        let over_param_obj = serde_json::json!({"text": over_1mb});
+        assert_eq!(
+            validate_clipboard_write(&over_param_obj).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+        let over_param_str = serde_json::Value::String(over_1mb);
+        assert_eq!(
+            validate_clipboard_write(&over_param_str).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+
+        // 3. Non-text types fail with generic error
+        assert_eq!(
+            validate_clipboard_write(&serde_json::json!(12345)).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+        assert_eq!(
+            validate_clipboard_write(&serde_json::json!(true)).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+        assert_eq!(
+            validate_clipboard_write(&serde_json::Value::Null).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+        assert_eq!(
+            validate_clipboard_write(&serde_json::json!(["hello"])).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+        assert_eq!(
+            validate_clipboard_write(&serde_json::json!({"wrong_key": "text"})).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+        assert_eq!(
+            validate_clipboard_write(&serde_json::json!({"text": 42})).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+    }
+
+    #[test]
+    fn test_clipboard_read_boundary_limits() {
+        // 1. Exactly 1 MB passes
+        let exact_1mb = "b".repeat(MAX_CLIPBOARD_TEXT_BYTES);
+        assert_eq!(
+            validate_clipboard_read(&exact_1mb).expect("exact 1 MB read should pass"),
+            exact_1mb.as_str()
+        );
+
+        // 2. Exactly 1 MB + 1 byte fails with generic error (never truncated)
+        let over_1mb = "b".repeat(MAX_CLIPBOARD_TEXT_BYTES + 1);
+        assert_eq!(
+            validate_clipboard_read(&over_1mb).unwrap_err(),
+            GENERIC_CLIPBOARD_ERROR
+        );
+    }
+
+    #[test]
+    fn test_notify_send_boundary_limits() {
+        // 1. Title exactly 128 Unicode characters passes
+        let title_128 = "🦀".repeat(64); // 64 crab emojis = 64 Unicode chars (256 bytes)
+        assert_eq!(title_128.chars().count(), 64);
+        let title_exact_128 = "A".repeat(128);
+        assert_eq!(title_exact_128.chars().count(), 128);
+
+        let body_exact_1024 = "B".repeat(1024);
+        assert_eq!(body_exact_1024.chars().count(), 1024);
+
+        let valid_payload = serde_json::json!({
+            "title": title_exact_128,
+            "body": body_exact_1024,
+        });
+        let parsed = validate_notify_send(&valid_payload).expect("exact boundary payload should pass");
+        assert_eq!(parsed.title, title_exact_128.as_str());
+        assert_eq!(parsed.body, body_exact_1024.as_str());
+
+        // 2. Title exactly 129 characters fails
+        let title_129 = "A".repeat(129);
+        let invalid_title_payload = serde_json::json!({
+            "title": title_129,
+            "body": "Normal body",
+        });
+        assert_eq!(
+            validate_notify_send(&invalid_title_payload).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+
+        // 3. Body exactly 1025 characters fails
+        let body_1025 = "B".repeat(1025);
+        let invalid_body_payload = serde_json::json!({
+            "title": "Normal title",
+            "body": body_1025,
+        });
+        assert_eq!(
+            validate_notify_send(&invalid_body_payload).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+
+        // 4. Unicode multibyte boundary checks
+        let unicode_title_128 = "🦀".repeat(128);
+        assert_eq!(unicode_title_128.chars().count(), 128);
+        let ok_unicode = serde_json::json!({
+            "title": unicode_title_128,
+            "body": "ok",
+        });
+        assert!(validate_notify_send(&ok_unicode).is_ok());
+
+        let unicode_title_129 = "🦀".repeat(129);
+        assert_eq!(unicode_title_129.chars().count(), 129);
+        let bad_unicode = serde_json::json!({
+            "title": unicode_title_129,
+            "body": "ok",
+        });
+        assert_eq!(
+            validate_notify_send(&bad_unicode).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+
+        // 5. Body is optional (defaults to empty string)
+        let title_only = serde_json::json!({"title": "Only title"});
+        let parsed_title_only = validate_notify_send(&title_only).expect("title only should pass");
+        assert_eq!(parsed_title_only.title, "Only title");
+        assert_eq!(parsed_title_only.body, "");
+    }
+
+    #[test]
+    fn test_notify_send_rejects_actions_and_urls() {
+        // v1 restriction: no actions, no URLs
+        let with_url = serde_json::json!({
+            "title": "Hello",
+            "body": "World",
+            "url": "https://example.com"
+        });
+        assert_eq!(
+            validate_notify_send(&with_url).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+
+        let with_action = serde_json::json!({
+            "title": "Hello",
+            "body": "World",
+            "action": "open"
+        });
+        assert_eq!(
+            validate_notify_send(&with_action).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+
+        let with_actions = serde_json::json!({
+            "title": "Hello",
+            "body": "World",
+            "actions": ["yes", "no"]
+        });
+        assert_eq!(
+            validate_notify_send(&with_actions).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+
+        // Non-object rejection
+        assert_eq!(
+            validate_notify_send(&serde_json::json!("title and body")).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+        assert_eq!(
+            validate_notify_send(&serde_json::Value::Null).unwrap_err(),
+            GENERIC_NOTIFICATION_ERROR
+        );
+    }
+
+    #[test]
+    fn test_capability_denial_for_clipboard_and_notify() {
+        let handler = CountingNativeHandler::new();
+        let window_id = "win-denial";
+        let empty_caps = Capabilities::new();
+
+        // 1. clipboard.read denied
+        let req_read = Request {
+            id: 1,
+            method: "clipboard.read".to_string(),
+            params: serde_json::Value::Null,
+        };
+        let resp_read = dispatch_native(&req_read, window_id, &empty_caps, &handler);
+        assert!(!resp_read.ok);
+        assert_eq!(resp_read.error.as_deref(), Some(GENERIC_METHOD_ERROR));
+        assert_eq!(handler.count(), 0);
+
+        // 2. clipboard.write denied
+        let req_write = Request {
+            id: 2,
+            method: "clipboard.write".to_string(),
+            params: serde_json::json!({"text": "hello"}),
+        };
+        let resp_write = dispatch_native(&req_write, window_id, &empty_caps, &handler);
+        assert!(!resp_write.ok);
+        assert_eq!(resp_write.error.as_deref(), Some(GENERIC_METHOD_ERROR));
+        assert_eq!(handler.count(), 0);
+
+        // 3. notify.send denied
+        let req_notify = Request {
+            id: 3,
+            method: "notify.send".to_string(),
+            params: serde_json::json!({"title": "Test", "body": "Msg"}),
+        };
+        let resp_notify = dispatch_native(&req_notify, window_id, &empty_caps, &handler);
+        assert!(!resp_notify.ok);
+        assert_eq!(resp_notify.error.as_deref(), Some(GENERIC_METHOD_ERROR));
+        assert_eq!(handler.count(), 0);
     }
 
     // Property-based test suite (10,000 cases each)
