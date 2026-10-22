@@ -149,7 +149,7 @@ fn hex_digit_val(c: u8) -> Option<u8> {
 
 /// Checks if a component matches a Windows reserved device name (CON, PRN, AUX, NUL, COM0-9, LPT0-9).
 /// Uses prefix matching rather than byte slicing to avoid non-ASCII char boundary panics.
-fn is_windows_reserved_device(segment: &str) -> bool {
+pub fn is_windows_reserved_device(segment: &str) -> bool {
     let base = segment.split('.').next().unwrap_or(segment).trim();
     let base_upper = base.to_ascii_uppercase();
 

@@ -584,7 +584,9 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     // 4. Initialize handler registry
     let mut registry = wavical_ipc::HandlerRegistry::with_core_handlers();
     let native_service = std::sync::Arc::new(wavical_native::NativeService::new());
-    registry.register_native(native_service, &config.window_id);
+    registry.register_native(native_service.clone(), &config.window_id);
+    let loop_native_service = native_service.clone();
+    let loop_window_id = config.window_id.clone();
 
     // 5. Build the webview with custom protocol, CSP, navigation guard, popup blocker, and IPC handler
     let devtools = is_devtools_enabled();
@@ -687,13 +689,15 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
             }
             Event::UserEvent(UserEvent::Exit) => {
                 tracing::info!("Exit requested via dev server control");
+                loop_native_service.clear_window(&loop_window_id);
                 *control_flow = ControlFlow::Exit;
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                tracing::info!("Window close requested; exiting cleanly");
+                tracing::info!("Window close requested; clearing grants and exiting cleanly");
+                loop_native_service.clear_window(&loop_window_id);
                 *control_flow = ControlFlow::Exit;
             }
             _ => {}

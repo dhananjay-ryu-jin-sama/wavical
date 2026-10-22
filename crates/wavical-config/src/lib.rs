@@ -105,6 +105,27 @@ pub struct AppConfig {
     /// Optional development server settings (port).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev: Option<DevConfig>,
+
+    /// Optional dialog settings (fixed filter specifications).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dialog: Option<DialogConfig>,
+}
+
+/// Dialog configuration options defining allowed file filters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DialogConfig {
+    /// Fixed list of allowed file filters mapped by filter ID.
+    #[serde(default)]
+    pub filters: HashMap<String, DialogFilterConfig>,
+}
+
+/// Filter specification with human-readable name and list of allowed file extensions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DialogFilterConfig {
+    pub name: String,
+    pub extensions: Vec<String>,
 }
 
 impl AppConfig {
@@ -116,6 +137,7 @@ impl AppConfig {
             window: None,
             capabilities: None,
             dev: None,
+            dialog: None,
         }
     }
 
@@ -943,6 +965,7 @@ mod tests {
                 window,
                 capabilities,
                 dev,
+                dialog: None,
             })
     }
 

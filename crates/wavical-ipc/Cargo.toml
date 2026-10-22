@@ -10,6 +10,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.21"
 tracing = "0.1.44"
+getrandom = "0.3"
 
 [dev-dependencies]
 proptest = "1.11.0"

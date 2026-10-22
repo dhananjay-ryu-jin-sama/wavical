@@ -9,6 +9,16 @@ export default {
     'core.ping': true,
     'clipboard.read': true,
     'clipboard.write': true,
-    'notify.send': true
+    'notify.send': true,
+    'dialog.openFile': true,
+    'dialog.saveFile': true,
+    'fs.readGranted': true,
+    'fs.writeGranted': true
+  },
+  dialog: {
+    filters: {
+      text: { name: 'Text Documents', extensions: ['txt', 'md', 'json'] },
+      all: { name: 'All Files', extensions: ['*'] }
+    }
   }
 };

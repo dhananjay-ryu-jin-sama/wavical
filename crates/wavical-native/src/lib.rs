@@ -1,30 +1,171 @@
 #![forbid(unsafe_code)]
 
-use wavical_ipc::NativeHandler;
+use std::io::Read;
+use std::sync::{Arc, OnceLock};
+use wavical_ipc::{
+    GrantEntry, GrantTable, NativeHandler, OpenFileDialogParams, ReadGrantedParams,
+    SaveFileDialogParams, WriteGrantedParams, MAX_READ_GRANTED_BYTES, MAX_WRITE_GRANTED_BYTES,
+};
+
+static GLOBAL_GRANT_TABLE: OnceLock<Arc<GrantTable>> = OnceLock::new();
+static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn default_grant_table() -> Arc<GrantTable> {
+    GLOBAL_GRANT_TABLE
+        .get_or_init(|| Arc::new(GrantTable::new()))
+        .clone()
+}
+
+/// Resolve a filter ID into a human-readable title and allowed file extensions.
+/// Returns None if the filter ID is not recognized.
+fn resolve_filter_id(filter_id: &str) -> Option<(&'static str, &'static [&'static str])> {
+    match filter_id {
+        "text" => Some(("Text Documents", &["txt", "md", "json", "csv", "log"])),
+        "images" | "image" => Some(("Images", &["png", "jpg", "jpeg", "gif", "webp", "svg"])),
+        "documents" | "document" => Some(("Documents", &["txt", "md", "pdf", "docx"])),
+        "all" => Some(("All Files", &["*"])),
+        _ => None,
+    }
+}
+
+/// Validate all security rules for a granted path at use time.
+///
+/// Rules:
+/// 1. Path must not contain null bytes.
+/// 2. Path must not contain alternate data stream syntax (colon after drive prefix).
+/// 3. Path components must not match Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9).
+/// 4. Path components must not end in trailing dot or space.
+/// 5. If `must_exist` is true, the target path must exist on disk.
+/// 6. Path must not be a symlink or junction.
+/// 7. Path must be a regular file (not directory, device, socket, etc.).
+/// 8. Current canonical path must match the canonical path recorded at grant time.
+fn validate_granted_target(entry: &GrantEntry, must_exist: bool) -> Result<(), &'static str> {
+    let path = &entry.path;
+
+    // 1. Null byte check
+    if path.to_string_lossy().contains('\0') {
+        return Err("Null byte detected in path");
+    }
+
+    // 2. Alternate data stream check (no colon after drive prefix)
+    let path_str = path.to_string_lossy();
+    let bytes = path_str.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b':' {
+            // Allow Windows drive letter like C: at index 1
+            if i == 1 && bytes[0].is_ascii_alphabetic() {
+                continue;
+            }
+            return Err("Alternate data streams are not permitted");
+        }
+    }
+
+    // 3. Reserved Windows device names & 4. Trailing dot or space
+    for comp in path.components() {
+        let seg = comp.as_os_str().to_string_lossy();
+        if wavical_protocol::is_windows_reserved_device(&seg) {
+            return Err("Target path contains reserved Windows device name");
+        }
+        if seg.ends_with('.') || seg.ends_with(' ') {
+            return Err("Target path segment contains trailing dot or space");
+        }
+    }
+
+    // 5. Existence check
+    if must_exist && !path.exists() {
+        return Err("Granted file does not exist");
+    }
+
+    // If target exists, verify regular file and symlink status
+    if path.exists() {
+        // 6. Symlink / junction check
+        let symlink_meta = std::fs::symlink_metadata(path)
+            .map_err(|_| "Failed to read file metadata")?;
+        if symlink_meta.is_symlink() {
+            return Err("Symlinks and junctions are strictly forbidden");
+        }
+
+        // 7. Regular file check
+        let meta = std::fs::metadata(path)
+            .map_err(|_| "Failed to read file metadata")?;
+        if !meta.is_file() {
+            return Err("Target is not a regular file");
+        }
+
+        // 8. Canonical path comparison
+        let current_canonical = path.canonicalize()
+            .map_err(|_| "Failed to canonicalize path")?;
+        if let Some(ref orig_canonical) = entry.canonical_path {
+            if &current_canonical != orig_canonical {
+                return Err("Canonical path mismatch: target was replaced or moved");
+            }
+        }
+    } else if let Some(parent) = path.parent() {
+        // If file does not exist yet (e.g. newly created file in save dialog):
+        // Ensure parent directory exists, is not a symlink, and canonical parent matches expected parent
+        if !parent.exists() {
+            return Err("Parent directory does not exist");
+        }
+        let parent_symlink_meta = std::fs::symlink_metadata(parent)
+            .map_err(|_| "Failed to read parent directory metadata")?;
+        if parent_symlink_meta.is_symlink() {
+            return Err("Symlink parent directories are strictly forbidden");
+        }
+        let current_parent_canonical = parent.canonicalize()
+            .map_err(|_| "Failed to canonicalize parent directory")?;
+        if let (Some(orig_canonical), Some(file_name)) = (&entry.canonical_path, path.file_name()) {
+            let expected = current_parent_canonical.join(file_name);
+            if orig_canonical != &expected {
+                return Err("Canonical path mismatch: parent directory was replaced or moved");
+            }
+        }
+    }
+
+    Ok(())
+}
 
 /// Native service implementing the IPC `NativeHandler` trait.
-///
-/// In WP2, all handlers are empty/stubbed out and return "Not implemented" errors.
-/// Feature-specific functionality is implemented in subsequent work packages
-/// (WP3: clipboard & notifications, WP4: dialogs & fs grants, WP7: menus & tray, WP8: shortcuts & badges).
-#[derive(Debug, Default, Clone)]
-pub struct NativeService;
+#[derive(Debug, Clone)]
+pub struct NativeService {
+    grant_table: Arc<GrantTable>,
+}
+
+impl Default for NativeService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl NativeService {
-    /// Create a new native service instance.
+    /// Create a new native service instance using the shared grant table.
     pub fn new() -> Self {
-        Self
+        Self {
+            grant_table: default_grant_table(),
+        }
+    }
+
+    /// Create a native service instance using an isolated grant table (useful for tests).
+    pub fn with_grant_table(grant_table: Arc<GrantTable>) -> Self {
+        Self { grant_table }
+    }
+
+    /// Access the underlying grant table.
+    pub fn grant_table(&self) -> &Arc<GrantTable> {
+        &self.grant_table
+    }
+
+    /// Clear all grants for the given window ID.
+    pub fn clear_window(&self, window_id: &str) {
+        self.grant_table.clear_window(window_id);
     }
 
     /// Read text from clipboard (WP3).
-    ///
-    /// Non-text data or oversize clipboard content (>1 MB) returns a generic error.
-    /// Never returns truncated values.
     pub fn clipboard_read(
         &self,
         _params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
+        let _lock = CLIPBOARD_LOCK.lock().unwrap();
         let mut clipboard = arboard::Clipboard::new().map_err(|e| {
             tracing::error!("Failed to initialize clipboard: {e}");
             wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
@@ -44,9 +185,6 @@ impl NativeService {
     }
 
     /// Write text to clipboard (WP3).
-    ///
-    /// Validates payload format (text only, <=1 MB) and writes to OS clipboard.
-    /// Reject non-text and oversize payloads with a generic error.
     pub fn clipboard_write(
         &self,
         params: &serde_json::Value,
@@ -55,6 +193,7 @@ impl NativeService {
         let text = wavical_ipc::validate_clipboard_write(params)
             .map_err(|err| err.to_string())?;
 
+        let _lock = CLIPBOARD_LOCK.lock().unwrap();
         let mut clipboard = arboard::Clipboard::new().map_err(|e| {
             tracing::error!("Failed to initialize clipboard: {e}");
             wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
@@ -71,9 +210,6 @@ impl NativeService {
     }
 
     /// Show desktop notification (WP3).
-    ///
-    /// Enforces title (128 chars) and body (1024 chars) limits as named constants.
-    /// Rejects actions, URLs, or invalid payloads with a generic error.
     pub fn notify_send(
         &self,
         params: &serde_json::Value,
@@ -98,39 +234,173 @@ impl NativeService {
     }
 
     /// Show open file dialog and return scoped grant (WP4).
+    ///
+    /// The page receives only an opaque grant ID, NEVER the raw file path.
+    /// Cancelled dialog returns `{"cancelled": true}`, not an error.
     pub fn dialog_open_file(
         &self,
-        _params: &serde_json::Value,
-        _window_id: &str,
+        params: &serde_json::Value,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("dialog.openFile not implemented yet".to_string())
+        let parsed: OpenFileDialogParams = serde_json::from_value(params.clone())
+            .map_err(|e| format!("Invalid open file dialog parameters: {e}"))?;
+
+        let mut dialog = rfd::FileDialog::new();
+
+        if let Some(ref title) = parsed.title {
+            dialog = dialog.set_title(title);
+        }
+
+        if let Some(ref filter_id) = parsed.filter_id {
+            let (filter_name, extensions) = resolve_filter_id(filter_id)
+                .ok_or_else(|| format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected."))?;
+            dialog = dialog.add_filter(filter_name, extensions);
+        }
+
+        let chosen_path = dialog.pick_file();
+
+        match chosen_path {
+            Some(path) => {
+                let grant_id = self.grant_table.insert(window_id, path)
+                    .map_err(|e| format!("Failed to record file grant: {e}"))?;
+                Ok(serde_json::json!({
+                    "cancelled": false,
+                    "grantId": grant_id,
+                }))
+            }
+            None => {
+                Ok(serde_json::json!({
+                    "cancelled": true
+                }))
+            }
+        }
     }
 
     /// Show save file dialog and return scoped grant (WP4).
+    ///
+    /// The page receives only an opaque grant ID, NEVER the raw file path.
+    /// Cancelled dialog returns `{"cancelled": true}`, not an error.
     pub fn dialog_save_file(
         &self,
-        _params: &serde_json::Value,
-        _window_id: &str,
+        params: &serde_json::Value,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("dialog.saveFile not implemented yet".to_string())
+        let parsed: SaveFileDialogParams = serde_json::from_value(params.clone())
+            .map_err(|e| format!("Invalid save file dialog parameters: {e}"))?;
+
+        let mut dialog = rfd::FileDialog::new();
+
+        if let Some(ref title) = parsed.title {
+            dialog = dialog.set_title(title);
+        }
+
+        if let Some(ref default_name) = parsed.default_name {
+            dialog = dialog.set_file_name(default_name);
+        }
+
+        if let Some(ref filter_id) = parsed.filter_id {
+            let (filter_name, extensions) = resolve_filter_id(filter_id)
+                .ok_or_else(|| format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected."))?;
+            dialog = dialog.add_filter(filter_name, extensions);
+        }
+
+        let chosen_path = dialog.save_file();
+
+        match chosen_path {
+            Some(path) => {
+                let grant_id = self.grant_table.insert(window_id, path)
+                    .map_err(|e| format!("Failed to record file grant: {e}"))?;
+                Ok(serde_json::json!({
+                    "cancelled": false,
+                    "grantId": grant_id,
+                }))
+            }
+            None => {
+                Ok(serde_json::json!({
+                    "cancelled": true
+                }))
+            }
+        }
     }
 
     /// Read file content via scoped grant (WP4).
+    ///
+    /// Takes only a grant ID (never a path).
+    /// Re-checks at use time: exists, regular file, canonical path still matches,
+    /// not a reserved device name, no alternate data streams, and enforces 10 MB limit.
     pub fn fs_read_granted(
         &self,
-        _params: &serde_json::Value,
-        _window_id: &str,
+        params: &serde_json::Value,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("fs.readGranted not implemented yet".to_string())
+        let parsed: ReadGrantedParams = serde_json::from_value(params.clone())
+            .map_err(|e| format!("Invalid read parameters: {e}"))?;
+
+        let entry = self.grant_table.get(&parsed.grant_id, window_id)
+            .map_err(|_| "Grant not found or not owned by this window".to_string())?;
+
+        validate_granted_target(&entry, true)
+            .map_err(|err| err.to_string())?;
+
+        let meta = std::fs::metadata(&entry.path)
+            .map_err(|e| format!("Failed to read metadata: {e}"))?;
+
+        if meta.len() > MAX_READ_GRANTED_BYTES as u64 {
+            return Err("File size exceeds 10 MB limit".to_string());
+        }
+
+        let mut file = std::fs::File::open(&entry.path)
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+
+        let mut buffer = Vec::new();
+        let bytes_read = file
+            .by_ref()
+            .take(MAX_READ_GRANTED_BYTES as u64 + 1)
+            .read_to_end(&mut buffer)
+            .map_err(|e| format!("Failed to read file: {e}"))?;
+
+        if bytes_read > MAX_READ_GRANTED_BYTES {
+            return Err("File size exceeds 10 MB limit".to_string());
+        }
+
+        let content = String::from_utf8(buffer)
+            .map_err(|_| "File contains invalid UTF-8 data".to_string())?;
+
+        Ok(serde_json::json!({
+            "content": content
+        }))
     }
 
     /// Write file content via scoped grant (WP4).
+    ///
+    /// Takes only a grant ID (never a path).
+    /// Re-checks at use time: not a reserved device name, no alternate data streams,
+    /// canonical path matches, and enforces 10 MB payload limit.
     pub fn fs_write_granted(
         &self,
-        _params: &serde_json::Value,
-        _window_id: &str,
+        params: &serde_json::Value,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("fs.writeGranted not implemented yet".to_string())
+        let parsed: WriteGrantedParams = serde_json::from_value(params.clone())
+            .map_err(|e| format!("Invalid write parameters: {e}"))?;
+
+        if parsed.content.len() > MAX_WRITE_GRANTED_BYTES {
+            return Err("Payload exceeds 10 MB limit".to_string());
+        }
+
+        let entry = self.grant_table.get(&parsed.grant_id, window_id)
+            .map_err(|_| "Grant not found or not owned by this window".to_string())?;
+
+        validate_granted_target(&entry, false)
+            .map_err(|err| err.to_string())?;
+
+        std::fs::write(&entry.path, parsed.content.as_bytes())
+            .map_err(|e| format!("Failed to write file: {e}"))?;
+
+        Ok(serde_json::json!({
+            "success": true,
+            "bytesWritten": parsed.content.len()
+        }))
     }
 
     /// Show window context menu (WP7).
@@ -197,6 +467,7 @@ impl NativeHandler for NativeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use wavical_ipc::{dispatch_native, Capabilities, Request};
 
     #[test]
@@ -205,10 +476,6 @@ mod tests {
         let window_id = "test-window";
 
         let remaining_unimplemented = [
-            "dialog.openFile",
-            "dialog.saveFile",
-            "fs.readGranted",
-            "fs.writeGranted",
             "menu.showContextMenu",
             "tray.set",
             "shortcut.register",
@@ -309,5 +576,384 @@ mod tests {
         } else {
             assert_eq!(resp.error.as_deref(), Some(wavical_ipc::GENERIC_CLIPBOARD_ERROR));
         }
+    }
+
+    // =========================================================================
+    // Work Package 4 Tests (Required - Each must fail if the rule is removed)
+    // =========================================================================
+
+    // Test 1: Forged grant ID is rejected.
+    #[test]
+    fn test_wp4_forged_grant_id_rejected() {
+        let service = NativeService::with_grant_table(Arc::new(GrantTable::new()));
+        let window_id = "window-A";
+
+        // Attempt read with forged, random grant ID
+        let res = service.fs_read_granted(
+            &serde_json::json!({"grantId": "0123456789abcdef0123456789abcdef"}),
+            window_id,
+        );
+        assert!(res.is_err(), "Forged grant ID must be rejected");
+        assert!(res.unwrap_err().contains("Grant not found"));
+
+        // Attempt write with forged grant ID
+        let res_write = service.fs_write_granted(
+            &serde_json::json!({
+                "grantId": "0123456789abcdef0123456789abcdef",
+                "content": "malicious data"
+            }),
+            window_id,
+        );
+        assert!(res_write.is_err(), "Forged grant ID must be rejected on write");
+        assert!(res_write.unwrap_err().contains("Grant not found"));
+    }
+
+    // Test 2: Grant from window A is rejected for window B.
+    #[test]
+    fn test_wp4_cross_window_grant_rejected() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let file_path = temp_dir.path().join("secret.txt");
+        std::fs::write(&file_path, "confidential window A data").expect("write file");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+
+        // Create grant for Window A
+        let grant_id = grant_table
+            .insert("window-A", &file_path)
+            .expect("grant insertion should succeed");
+
+        // Window A can read it successfully
+        let read_a = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            "window-A",
+        );
+        assert!(read_a.is_ok(), "Window A should read its own grant");
+        assert_eq!(read_a.unwrap()["content"], "confidential window A data");
+
+        // Window B attempts to use Window A's grant ID -> MUST be treated as not found
+        let read_b = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            "window-B",
+        );
+        assert!(read_b.is_err(), "Window B must not access Window A's grant");
+        assert!(read_b.unwrap_err().contains("Grant not found"));
+
+        // Window B attempts write -> MUST be rejected
+        let write_b = service.fs_write_granted(
+            &serde_json::json!({"grantId": grant_id, "content": "hijacked"}),
+            "window-B",
+        );
+        assert!(write_b.is_err(), "Window B must not write to Window A's grant");
+        assert!(write_b.unwrap_err().contains("Grant not found"));
+    }
+
+    // Test 3: Grants are gone after the window closes.
+    #[test]
+    fn test_wp4_grants_cleared_on_window_close() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let file_path = temp_dir.path().join("closing.txt");
+        std::fs::write(&file_path, "temporary window data").expect("write file");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-closing";
+
+        let grant_id = grant_table
+            .insert(window_id, &file_path)
+            .expect("insert grant");
+
+        // Verify grant works initially
+        let before_close = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            window_id,
+        );
+        assert!(before_close.is_ok());
+
+        // Simulate window close
+        service.clear_window(window_id);
+
+        // After window closes, grant is GONE
+        let after_close = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            window_id,
+        );
+        assert!(after_close.is_err(), "Grant must be gone after window closes");
+        assert!(after_close.unwrap_err().contains("Grant not found"));
+    }
+
+    // Test 4: Grant count limit: 65th grant fails.
+    #[test]
+    fn test_wp4_grant_count_limit_65th_fails() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let grant_table = Arc::new(GrantTable::new());
+        let window_id = "window-limit";
+
+        // Insert exactly 64 grants (all succeed)
+        for i in 0..wavical_ipc::MAX_GRANTS_PER_WINDOW {
+            let file_path = temp_dir.path().join(format!("file_{i}.txt"));
+            std::fs::write(&file_path, format!("content {i}")).expect("write file");
+            let res = grant_table.insert(window_id, file_path);
+            assert!(res.is_ok(), "Grant {i} within limit of 64 should succeed");
+        }
+
+        assert_eq!(grant_table.count_for_window(window_id), 64);
+
+        // Attempt 65th grant -> MUST fail with LimitReached
+        let file_65 = temp_dir.path().join("file_65.txt");
+        std::fs::write(&file_65, "content 65").expect("write file");
+        let res_65 = grant_table.insert(window_id, file_65);
+        assert!(res_65.is_err(), "65th grant must fail with limit reached");
+        assert_eq!(res_65.unwrap_err(), wavical_ipc::GrantError::LimitReached);
+
+        // Another window can still create grants independently
+        let other_window_res = grant_table.insert("window-other", temp_dir.path().join("other.txt"));
+        assert!(other_window_res.is_ok(), "Different window limit is separate");
+    }
+
+    // Test 5: A granted path replaced by a symlink or junction after the grant is rejected.
+    #[test]
+    fn test_wp4_granted_path_replaced_by_symlink_rejected() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let real_file = temp_dir.path().join("real.txt");
+        let secret_file = temp_dir.path().join("secret.txt");
+
+        std::fs::write(&real_file, "real content").expect("write real file");
+        std::fs::write(&secret_file, "sensitive secret data").expect("write secret file");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-symlink";
+
+        // Create grant while real_file is a normal file
+        let grant_id = grant_table
+            .insert(window_id, &real_file)
+            .expect("insert grant");
+
+        // Verify read succeeds initially
+        let initial_read = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            window_id,
+        );
+        assert!(initial_read.is_ok());
+        assert_eq!(initial_read.unwrap()["content"], "real content");
+
+        // Remove real_file
+        std::fs::remove_file(&real_file).expect("remove real file");
+
+        // Attempt to create symlink at real_file pointing to secret_file
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_file(&secret_file, &real_file);
+        #[cfg(not(windows))]
+        let symlink_result = std::os::unix::fs::symlink(&secret_file, &real_file);
+
+        match symlink_result {
+            Ok(_) => {
+                // Symlink was created; re-check at use time MUST detect and reject it!
+                let symlink_read = service.fs_read_granted(
+                    &serde_json::json!({"grantId": grant_id}),
+                    window_id,
+                );
+                assert!(
+                    symlink_read.is_err(),
+                    "Path replaced by symlink must be rejected at use time"
+                );
+                let err = symlink_read.unwrap_err();
+                assert!(
+                    err.contains("Symlinks and junctions are strictly forbidden")
+                        || err.contains("Canonical path mismatch"),
+                    "Unexpected error: {err}"
+                );
+            }
+            Err(err) => {
+                // On Windows without Developer Mode / Admin rights, OS blocks symlink creation.
+                println!(
+                    "Skipping symlink test: OS blocks creating symlink (privilege not held): {err}"
+                );
+            }
+        }
+    }
+
+    // Test 6: Over-limit read and write fail.
+    #[test]
+    fn test_wp4_over_limit_read_and_write_fail() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-limits";
+
+        // 6a: Over-limit read (>10 MB)
+        let huge_file = temp_dir.path().join("huge.bin");
+        {
+            let mut f = std::fs::File::create(&huge_file).expect("create file");
+            // Write 10 MB + 1 byte
+            let chunk = vec![b'A'; 1024 * 1024]; // 1 MB
+            for _ in 0..10 {
+                f.write_all(&chunk).expect("write chunk");
+            }
+            f.write_all(b"!").expect("write extra byte");
+        }
+
+        let read_grant = grant_table
+            .insert(window_id, &huge_file)
+            .expect("insert grant");
+
+        let read_res = service.fs_read_granted(
+            &serde_json::json!({"grantId": read_grant}),
+            window_id,
+        );
+        assert!(read_res.is_err(), "Read over 10 MB limit must fail");
+        assert!(read_res.unwrap_err().contains("10 MB limit"));
+
+        // 6b: Over-limit write (>10 MB)
+        let write_file = temp_dir.path().join("target_write.txt");
+        std::fs::write(&write_file, "init").expect("init file");
+        let write_grant = grant_table
+            .insert(window_id, &write_file)
+            .expect("insert grant");
+
+        let huge_payload = "X".repeat(MAX_WRITE_GRANTED_BYTES + 1);
+        let write_res = service.fs_write_granted(
+            &serde_json::json!({"grantId": write_grant, "content": huge_payload}),
+            window_id,
+        );
+        assert!(write_res.is_err(), "Write over 10 MB limit must fail");
+        assert!(write_res.unwrap_err().contains("10 MB limit"));
+    }
+
+    // Test 7: Page-supplied path strings fail to deserialize (deny_unknown_fields).
+    #[test]
+    fn test_wp4_page_supplied_paths_fail_deserialization() {
+        let service = NativeService::new();
+        let window_id = "window-path-injection";
+
+        // Attack 1: Injected "path" in fs.readGranted
+        let bad_read = service.fs_read_granted(
+            &serde_json::json!({
+                "grantId": "0123456789abcdef0123456789abcdef",
+                "path": "C:\\Windows\\System32\\drivers\\etc\\hosts"
+            }),
+            window_id,
+        );
+        assert!(bad_read.is_err(), "fs.readGranted must reject injected 'path'");
+        assert!(bad_read.unwrap_err().contains("unknown field `path`"));
+
+        // Attack 2: Injected "path" in fs.writeGranted
+        let bad_write = service.fs_write_granted(
+            &serde_json::json!({
+                "grantId": "0123456789abcdef0123456789abcdef",
+                "content": "hacked",
+                "path": "C:\\Windows\\System32\\drivers\\etc\\hosts"
+            }),
+            window_id,
+        );
+        assert!(bad_write.is_err(), "fs.writeGranted must reject injected 'path'");
+        assert!(bad_write.unwrap_err().contains("unknown field `path`"));
+
+        // Attack 3: Injected "path" in dialog.openFile
+        let bad_open = service.dialog_open_file(
+            &serde_json::json!({
+                "path": "C:\\Windows\\System32\\notepad.exe"
+            }),
+            window_id,
+        );
+        assert!(bad_open.is_err(), "dialog.openFile must reject injected 'path'");
+        assert!(bad_open.unwrap_err().contains("unknown field `path`"));
+
+        // Attack 4: Raw filter string in dialog.openFile
+        let bad_filter = service.dialog_open_file(
+            &serde_json::json!({
+                "filter": "*.txt"
+            }),
+            window_id,
+        );
+        assert!(bad_filter.is_err(), "dialog.openFile must reject raw 'filter'");
+        assert!(bad_filter.unwrap_err().contains("unknown field `filter`"));
+
+        // Attack 5: Unknown filterId in dialog.openFile
+        let bad_filter_id = service.dialog_open_file(
+            &serde_json::json!({
+                "filterId": "custom_arbitrary_unapproved"
+            }),
+            window_id,
+        );
+        assert!(bad_filter_id.is_err(), "dialog.openFile must reject unknown filterId");
+        assert!(bad_filter_id.unwrap_err().contains("Unknown dialog filter ID"));
+    }
+
+    #[test]
+    fn test_wp4_alternate_data_stream_rejected() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let ads_path = temp_dir.path().join("normal.txt:hidden_stream");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-ads";
+
+        // Even if an entry with colon is somehow inserted
+        let grant_id = grant_table.insert(window_id, ads_path).expect("insert");
+
+        let res = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            window_id,
+        );
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("Alternate data streams are not permitted"));
+    }
+
+    #[test]
+    fn test_wp4_reserved_windows_device_rejected() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let reserved_path = temp_dir.path().join("CON.txt");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-reserved";
+
+        let grant_id = grant_table.insert(window_id, reserved_path).expect("insert");
+
+        let res = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            window_id,
+        );
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("reserved Windows device name"));
+    }
+
+    #[test]
+    fn test_wp4_normal_file_read_and_write_roundtrip() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let test_file = temp_dir.path().join("test_roundtrip.txt");
+        std::fs::write(&test_file, "Initial content 12345").expect("write file");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-roundtrip";
+
+        let grant_id = grant_table.insert(window_id, &test_file).expect("insert");
+
+        // Read initial content
+        let read_res = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            window_id,
+        ).expect("read should succeed");
+        assert_eq!(read_res["content"], "Initial content 12345");
+
+        // Write new content
+        let write_res = service.fs_write_granted(
+            &serde_json::json!({
+                "grantId": grant_id,
+                "content": "Updated content successfully written!"
+            }),
+            window_id,
+        ).expect("write should succeed");
+        assert_eq!(write_res["success"], true);
+
+        // Read updated content
+        let read_updated = service.fs_read_granted(
+            &serde_json::json!({"grantId": grant_id}),
+            window_id,
+        ).expect("read should succeed");
+        assert_eq!(read_updated["content"], "Updated content successfully written!");
     }
 }

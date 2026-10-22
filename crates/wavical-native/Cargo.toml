@@ -13,3 +13,8 @@ thiserror = "2.0.21"
 tracing = "0.1.44"
 arboard = "3.7.0"
 notify-rust = "4.18.2"
+rfd = "0.17.2"
+wavical-protocol = { version = "0.1.0", path = "../wavical-protocol" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

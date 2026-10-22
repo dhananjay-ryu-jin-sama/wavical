@@ -49,6 +49,29 @@
                 </button>
             </div>
 
+            <div class="section-label">Scoped File Access (WP4)</div>
+            <div class="input-row">
+                <input id="file-content-input" class="text-input" type="text" placeholder="Content to write or display..." value="Wavical scoped file storage test content.">
+            </div>
+            <div class="button-row">
+                <button id="btn-open-file" class="btn btn-primary" type="button">
+                    <span class="btn-icon">📂</span>
+                    Open & Read (dialog.openFile + fs.readGranted)
+                </button>
+                <button id="btn-save-file" class="btn btn-primary" type="button">
+                    <span class="btn-icon">💾</span>
+                    Save File (dialog.saveFile + fs.writeGranted)
+                </button>
+                <button id="btn-cancel-dialog" class="btn btn-secondary" type="button">
+                    <span class="btn-icon">✖️</span>
+                    Cancel Test (Cancel dialog)
+                </button>
+                <button id="btn-attack-path" class="btn btn-warning" type="button">
+                    <span class="btn-icon">🛡️</span>
+                    Send Raw Path (Attack - Denied)
+                </button>
+            </div>
+
             <div class="section-label">Security Restrictions (WP6)</div>
             <div class="button-row">
                 <button id="btn-nav-external" class="btn btn-warning" type="button">
