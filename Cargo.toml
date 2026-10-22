@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 resolver = "2"
 members = [
     "crates/wavical-ipc",
@@ -6,6 +6,7 @@ members = [
     "crates/wavical-shell",
     "crates/wavical-config",
     "crates/wavical-cli",
+    "crates/wavical-native",
     "tests/integration",
 ]
 exclude = [

@@ -1,4 +1,4 @@
-﻿#![forbid(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -338,12 +338,89 @@ pub fn handle_core_echo(params: &serde_json::Value) -> Result<serde_json::Value,
     Ok(params.clone())
 }
 
-/// Standard known capabilities available in wavical-ipc.
-pub const KNOWN_CAPABILITIES: &[&str] = &["core.echo", "core.ping"];
+/// Standard known native method names exposed by wavical-native (sorted alphabetically).
+pub const NATIVE_METHOD_NAMES: &[&str] = &[
+    "badge.set",
+    "clipboard.read",
+    "clipboard.write",
+    "dialog.openFile",
+    "dialog.saveFile",
+    "fs.readGranted",
+    "fs.writeGranted",
+    "menu.showContextMenu",
+    "notify.send",
+    "shortcut.register",
+    "tray.set",
+];
+
+/// Standard known capabilities available in wavical-ipc (Phase 0 core + Phase 2 native tier 1, sorted).
+pub const KNOWN_CAPABILITIES: &[&str] = &[
+    "badge.set",
+    "clipboard.read",
+    "clipboard.write",
+    "core.echo",
+    "core.ping",
+    "dialog.openFile",
+    "dialog.saveFile",
+    "fs.readGranted",
+    "fs.writeGranted",
+    "menu.showContextMenu",
+    "notify.send",
+    "shortcut.register",
+    "tray.set",
+];
 
 /// Helper function returning the list of valid/known capabilities.
 pub fn known_capabilities() -> Vec<String> {
     KNOWN_CAPABILITIES.iter().map(|s| s.to_string()).collect()
+}
+
+/// Helper function returning the list of registered native methods in sorted order.
+pub fn registered_native_methods() -> Vec<String> {
+    NATIVE_METHOD_NAMES.iter().map(|s| s.to_string()).collect()
+}
+
+/// Check if a method name corresponds to a registered native method.
+pub fn is_native_method(method: &str) -> bool {
+    NATIVE_METHOD_NAMES.contains(&method)
+}
+
+/// Default placeholder handler for unimplemented native methods.
+pub fn handle_native_unimplemented(_params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    Err("Native feature not implemented yet".to_string())
+}
+
+/// Trait implemented by native API handlers (e.g. `wavical-native`).
+pub trait NativeHandler: Send + Sync {
+    /// Handle a native method invocation for a specific window.
+    fn handle_native(
+        &self,
+        method: &str,
+        params: &serde_json::Value,
+        window_id: &str,
+    ) -> Result<serde_json::Value, String>;
+}
+
+impl<T: NativeHandler + ?Sized> NativeHandler for Arc<T> {
+    fn handle_native(
+        &self,
+        method: &str,
+        params: &serde_json::Value,
+        window_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        (**self).handle_native(method, params, window_id)
+    }
+}
+
+impl<T: NativeHandler + ?Sized> NativeHandler for &T {
+    fn handle_native(
+        &self,
+        method: &str,
+        params: &serde_json::Value,
+        window_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        (**self).handle_native(method, params, window_id)
+    }
 }
 
 /// Registry mapping method names to their corresponding handler functions.
@@ -366,6 +443,32 @@ impl HandlerRegistry {
         registry.register("core.ping", handle_core_ping);
         registry.register("core.echo", handle_core_echo);
         registry
+    }
+
+    /// Create a registry pre-populated with all registered methods (core methods and native method stubs).
+    pub fn with_all_registered_methods() -> Self {
+        let mut registry = Self::with_core_handlers();
+        for &method in NATIVE_METHOD_NAMES {
+            registry.register(method, handle_native_unimplemented);
+        }
+        registry
+    }
+
+    /// Register all native methods with a given native handler implementation for a window.
+    pub fn register_native<H: NativeHandler + 'static>(
+        &mut self,
+        native_handler: Arc<H>,
+        window_id: impl Into<String>,
+    ) {
+        let wid = Arc::new(window_id.into());
+        for &method in NATIVE_METHOD_NAMES {
+            let h = Arc::clone(&native_handler);
+            let m = method.to_string();
+            let w = Arc::clone(&wid);
+            self.register(method, move |params| {
+                h.handle_native(&m, params, &w)
+            });
+        }
     }
 
     /// Register a method handler.
@@ -446,6 +549,94 @@ pub fn dispatch(
             Response::error(request.id, safe_err)
         }
     }
+}
+
+/// Route and dispatch a native IPC `Request` against a window's `Capabilities` and a `NativeHandler`.
+///
+/// Order of operations:
+/// 1. Emits a `tracing` event with `method`, `window_id`, and `granted` ("yes"/"no"), with NO payload.
+/// 2. Capability check first: Checks whether `capabilities.is_allowed(&request.method)`.
+/// 3. If ungranted: returns `GENERIC_METHOD_ERROR` without invoking the handler.
+/// 4. Unknown check: If the method is not a registered native method (`is_native_method`),
+///    returns `GENERIC_METHOD_ERROR` without invoking the handler.
+/// 5. Handler invocation: calls `handler.handle_native(&request.method, &request.params, window_id)`.
+/// 6. Error sanitization: If the handler returns an error containing paths or system tokens,
+///    sanitizes it to `GENERIC_HANDLER_ERROR`.
+pub fn dispatch_native(
+    request: &Request,
+    window_id: &str,
+    capabilities: &Capabilities,
+    handler: &(impl NativeHandler + ?Sized),
+) -> Response {
+    let is_granted = capabilities.is_allowed(&request.method);
+    let granted_str = if is_granted { "yes" } else { "no" };
+
+    // Task 4: Each native call emits a tracing event with: method name, window id, granted yes/no. No payloads.
+    tracing::info!(
+        method = %request.method,
+        window_id = %window_id,
+        granted = %granted_str,
+        "Native IPC call"
+    );
+
+    if !is_granted {
+        tracing::warn!(
+            id = request.id,
+            method = %request.method,
+            window_id = %window_id,
+            "Native capability denied: method is not in the allowed capability set"
+        );
+        return Response::error(request.id, GENERIC_METHOD_ERROR);
+    }
+
+    if !is_native_method(&request.method) {
+        tracing::warn!(
+            id = request.id,
+            method = %request.method,
+            window_id = %window_id,
+            "Native unknown method: method is granted by capability but not registered as a native method"
+        );
+        return Response::error(request.id, GENERIC_METHOD_ERROR);
+    }
+
+    match handler.handle_native(&request.method, &request.params, window_id) {
+        Ok(result) => {
+            tracing::debug!(
+                id = request.id,
+                method = %request.method,
+                window_id = %window_id,
+                "Native handler execution succeeded"
+            );
+            Response::success(request.id, result)
+        }
+        Err(err) => {
+            tracing::error!(
+                id = request.id,
+                method = %request.method,
+                window_id = %window_id,
+                error = %err,
+                "Native handler execution failed"
+            );
+            let safe_err = if err.contains('/') || err.contains('\\') || err.contains(':') {
+                GENERIC_HANDLER_ERROR.to_string()
+            } else {
+                err
+            };
+            Response::error(request.id, safe_err)
+        }
+    }
+}
+
+/// Complete end-to-end processing pipeline for native calls:
+/// validates raw message, parses request, checks capabilities, and dispatches to handler.
+pub fn dispatch_native_raw(
+    raw: &str,
+    window_id: &str,
+    capabilities: &Capabilities,
+    handler: &(impl NativeHandler + ?Sized),
+) -> Result<Response, IpcError> {
+    let request = parse_request(raw)?;
+    Ok(dispatch_native(&request, window_id, capabilities, handler))
 }
 
 /// Complete end-to-end processing pipeline: validates, parses, checks capabilities, and dispatches.
@@ -762,7 +953,7 @@ mod tests {
         assert_eq!(resp.result.unwrap()["message"], "pong");
     }
 
-    /// SECRETS AND PRIVILEGED HANDLES SECURITY RULE (WP7 Task 1):
+    /// SECRETS AND PRIVILEGED HANDLES SECURITY RULE (WP7 Task 1 / Phase 2 WP2):
     /// No method exposed via the IPC bridge may ever return secrets (passwords, tokens, keys)
     /// or raw internal OS handles / pointers to the webview context.
     ///
@@ -770,16 +961,249 @@ mod tests {
     /// audited change. This test strictly verifies the exact enumeration of methods exposed.
     #[test]
     fn test_registered_methods_exact_allowlist() {
-        let registry = HandlerRegistry::with_core_handlers();
+        let registry = HandlerRegistry::with_all_registered_methods();
         let methods = registry.registered_methods();
 
-        // Exact expected method list for Phase 0
-        let expected = vec!["core.echo".to_string(), "core.ping".to_string()];
+        // Exact expected method list for Phase 2 (all registered methods: core + native)
+        let expected = vec![
+            "badge.set".to_string(),
+            "clipboard.read".to_string(),
+            "clipboard.write".to_string(),
+            "core.echo".to_string(),
+            "core.ping".to_string(),
+            "dialog.openFile".to_string(),
+            "dialog.saveFile".to_string(),
+            "fs.readGranted".to_string(),
+            "fs.writeGranted".to_string(),
+            "menu.showContextMenu".to_string(),
+            "notify.send".to_string(),
+            "shortcut.register".to_string(),
+            "tray.set".to_string(),
+        ];
 
         assert_eq!(
             methods, expected,
             "Exposed method list mismatch! Adding or removing an IPC method must be a deliberate, audited change."
         );
+    }
+
+    #[test]
+    fn test_registered_native_methods_exact_allowlist() {
+        let methods = registered_native_methods();
+
+        // Exact expected method list for Phase 2 native methods (section 0.2)
+        let expected = vec![
+            "badge.set".to_string(),
+            "clipboard.read".to_string(),
+            "clipboard.write".to_string(),
+            "dialog.openFile".to_string(),
+            "dialog.saveFile".to_string(),
+            "fs.readGranted".to_string(),
+            "fs.writeGranted".to_string(),
+            "menu.showContextMenu".to_string(),
+            "notify.send".to_string(),
+            "shortcut.register".to_string(),
+            "tray.set".to_string(),
+        ];
+
+        assert_eq!(
+            methods, expected,
+            "Exposed native method list mismatch! Section 0.2 methods must match exactly."
+        );
+    }
+
+    #[test]
+    fn test_registered_core_methods_exact_allowlist() {
+        let registry = HandlerRegistry::with_core_handlers();
+        let methods = registry.registered_methods();
+
+        let expected = vec!["core.echo".to_string(), "core.ping".to_string()];
+
+        assert_eq!(
+            methods, expected,
+            "Core handlers must strictly expose core.echo and core.ping."
+        );
+    }
+
+    struct CountingNativeHandler {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingNativeHandler {
+        fn new() -> Self {
+            Self {
+                call_count: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn count(&self) -> usize {
+            self.call_count.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl NativeHandler for CountingNativeHandler {
+        fn handle_native(
+            &self,
+            _method: &str,
+            _params: &serde_json::Value,
+            _window_id: &str,
+        ) -> Result<serde_json::Value, String> {
+            self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(serde_json::json!({"status": "ok"}))
+        }
+    }
+
+    /// Task 3 Acceptance Test:
+    /// Proves that an ungranted native method NEVER calls the handler.
+    #[test]
+    fn test_counting_handler_proves_ungranted_methods_never_reach_handler() {
+        let handler = CountingNativeHandler::new();
+        let window_id = "test-window-main";
+
+        // 1. Default-deny capabilities: empty capability set
+        let empty_caps = Capabilities::new();
+
+        // Prove all 11 native methods are blocked and handler count remains ZERO
+        for &method in NATIVE_METHOD_NAMES {
+            let req = Request {
+                id: 100,
+                method: method.to_string(),
+                params: serde_json::json!({"payload": "should_not_reach_handler"}),
+            };
+            let resp = dispatch_native(&req, window_id, &empty_caps, &handler);
+            assert!(!resp.ok);
+            assert_eq!(resp.error.as_deref(), Some(GENERIC_METHOD_ERROR));
+            assert_eq!(
+                handler.count(),
+                0,
+                "Handler was reached for ungranted native method '{method}'!"
+            );
+        }
+
+        // 2. Unknown method with empty capabilities
+        let unknown_req = Request {
+            id: 200,
+            method: "totally.unknown.method".to_string(),
+            params: serde_json::Value::Null,
+        };
+        let resp = dispatch_native(&unknown_req, window_id, &empty_caps, &handler);
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_deref(), Some(GENERIC_METHOD_ERROR));
+        assert_eq!(handler.count(), 0);
+
+        // 3. Unknown method even when granted
+        let mut caps_with_unknown = Capabilities::new();
+        caps_with_unknown.grant("totally.unknown.method");
+        let resp = dispatch_native(&unknown_req, window_id, &caps_with_unknown, &handler);
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_deref(), Some(GENERIC_METHOD_ERROR));
+        assert_eq!(
+            handler.count(),
+            0,
+            "Handler was reached for unknown method despite capability grant!"
+        );
+
+        // 4. Core method called via dispatch_native even when granted
+        let mut caps_with_core = Capabilities::new();
+        caps_with_core.grant("core.ping");
+        let core_req = Request {
+            id: 300,
+            method: "core.ping".to_string(),
+            params: serde_json::Value::Null,
+        };
+        let resp = dispatch_native(&core_req, window_id, &caps_with_core, &handler);
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_deref(), Some(GENERIC_METHOD_ERROR));
+        assert_eq!(
+            handler.count(),
+            0,
+            "Handler was reached for core method via native dispatch!"
+        );
+
+        // 5. Grant each native method one by one and prove handler is called exactly once per granted call
+        let mut expected_calls = 0;
+        for &method in NATIVE_METHOD_NAMES {
+            let mut single_cap = Capabilities::new();
+            single_cap.grant(method);
+
+            let req = Request {
+                id: 400 + expected_calls as u64,
+                method: method.to_string(),
+                params: serde_json::json!({}),
+            };
+            let resp = dispatch_native(&req, window_id, &single_cap, &handler);
+            assert!(resp.ok, "Granted native call '{method}' failed unexpectedly");
+            assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
+
+            expected_calls += 1;
+            assert_eq!(
+                handler.count(),
+                expected_calls,
+                "Handler call count did not increment by 1 for granted method '{method}'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dispatch_native_sanitizes_errors() {
+        struct FailingNativeHandler;
+        impl NativeHandler for FailingNativeHandler {
+            fn handle_native(
+                &self,
+                _method: &str,
+                _params: &serde_json::Value,
+                _window_id: &str,
+            ) -> Result<serde_json::Value, String> {
+                Err("IO error at C:\\Users\\Private\\key.pem: forbidden".to_string())
+            }
+        }
+
+        let mut caps = Capabilities::new();
+        caps.grant("clipboard.read");
+
+        let req = Request {
+            id: 99,
+            method: "clipboard.read".to_string(),
+            params: serde_json::Value::Null,
+        };
+
+        let resp = dispatch_native(&req, "win-1", &caps, &FailingNativeHandler);
+        assert!(!resp.ok);
+        assert_eq!(resp.error.as_deref(), Some(GENERIC_HANDLER_ERROR));
+        assert!(!resp.error.unwrap().contains("C:\\"));
+    }
+
+    #[test]
+    fn test_dispatch_native_raw_pipeline() {
+        let handler = CountingNativeHandler::new();
+        let mut caps = Capabilities::new();
+        caps.grant("notify.send");
+
+        let json = r#"{"id": 12, "method": "notify.send", "params": {"title": "hi"}}"#;
+        let resp = dispatch_native_raw(json, "win-main", &caps, &handler).expect("raw dispatch ok");
+        assert_eq!(resp.id, 12);
+        assert!(resp.ok);
+        assert_eq!(handler.count(), 1);
+    }
+
+    #[test]
+    fn test_handler_registry_register_native() {
+        let handler = Arc::new(CountingNativeHandler::new());
+        let mut registry = HandlerRegistry::with_core_handlers();
+        registry.register_native(Arc::clone(&handler), "win-test");
+
+        let mut caps = Capabilities::new();
+        caps.grant("clipboard.write");
+
+        let req = Request {
+            id: 55,
+            method: "clipboard.write".to_string(),
+            params: serde_json::json!({"text": "abc"}),
+        };
+
+        let resp = dispatch(&req, &caps, &registry);
+        assert!(resp.ok);
+        assert_eq!(handler.count(), 1);
     }
 
     /// ZERO INFORMATION LEAKAGE TEST (WP8 Self-Review):

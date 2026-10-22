@@ -2789,6 +2789,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wavical-native"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "wavical-ipc",
+]
+
+[[package]]
 name = "wavical-protocol"
 version = "0.1.0"
 dependencies = [

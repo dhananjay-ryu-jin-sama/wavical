@@ -655,9 +655,96 @@ mod tests {
                 assert_eq!(err.suggestion(), None);
                 let msg = err.to_string();
                 assert!(msg.contains("unknown capability 'nonexistent.capability.xyz'"));
-                assert!(msg.contains("known: core.echo, core.ping"));
+                assert!(msg.contains("known: badge.set, clipboard.read"));
+                assert!(msg.contains("core.ping"));
+                assert!(msg.contains("tray.set"));
             }
             other => panic!("Expected UnknownCapability, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_phase2_all_native_capabilities_accepted() {
+        let json = r#"{
+            "appId": "test-native-caps",
+            "capabilities": {
+                "core.ping": true,
+                "core.echo": true,
+                "badge.set": true,
+                "clipboard.read": true,
+                "clipboard.write": true,
+                "dialog.openFile": true,
+                "dialog.saveFile": true,
+                "fs.readGranted": true,
+                "fs.writeGranted": true,
+                "menu.showContextMenu": true,
+                "notify.send": true,
+                "shortcut.register": true,
+                "tray.set": true
+            }
+        }"#;
+
+        let config = parse_config_json(json).expect("all Phase 2 capabilities must be accepted");
+        assert_eq!(config.app_id, "test-native-caps");
+
+        let expected_caps = [
+            "badge.set",
+            "clipboard.read",
+            "clipboard.write",
+            "core.echo",
+            "core.ping",
+            "dialog.openFile",
+            "dialog.saveFile",
+            "fs.readGranted",
+            "fs.writeGranted",
+            "menu.showContextMenu",
+            "notify.send",
+            "shortcut.register",
+            "tray.set",
+        ];
+
+        for cap in expected_caps {
+            assert!(
+                config.is_capability_granted(cap),
+                "Capability '{cap}' should be granted"
+            );
+        }
+    }
+
+    #[test]
+    fn test_phase2_unknown_capability_typo_suggestions() {
+        let test_cases = [
+            ("clipboard.red", "clipboard.read"),
+            ("clipboard.writte", "clipboard.write"),
+            ("notify.snd", "notify.send"),
+            ("dialog.openFil", "dialog.openFile"),
+            ("dialog.saveFil", "dialog.saveFile"),
+            ("fs.readGrantd", "fs.readGranted"),
+            ("fs.writeGrantd", "fs.writeGranted"),
+            ("menu.showContextMen", "menu.showContextMenu"),
+            ("tray.sett", "tray.set"),
+            ("shortcut.registar", "shortcut.register"),
+            ("badge.sett", "badge.set"),
+        ];
+
+        for (typo, expected_suggestion) in test_cases {
+            let json = format!(r#"{{"appId": "test", "capabilities": {{"{typo}": true}}}}"#);
+            let err = parse_config_json(&json).expect_err(&format!("typo '{typo}' should be rejected"));
+            match err {
+                ValidationError::UnknownCapability(ref cap, _) => {
+                    assert_eq!(cap, typo);
+                    assert_eq!(
+                        err.suggestion(),
+                        Some(expected_suggestion),
+                        "Expected suggestion '{expected_suggestion}' for typo '{typo}'"
+                    );
+                    assert!(
+                        err.to_string().contains(&format!("did you mean '{expected_suggestion}'?")),
+                        "Error string should contain suggestion for '{typo}'"
+                    );
+                }
+                other => panic!("Expected UnknownCapability for '{typo}', got: {other:?}"),
+            }
         }
     }
 
