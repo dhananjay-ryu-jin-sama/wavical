@@ -99,6 +99,8 @@ pub enum UserEvent {
     UpdateCapabilities(Vec<String>),
     /// Focus existing application window upon second instance launch.
     FocusWindow,
+    /// WebView2 renderer process failure / crash event with reason code.
+    RendererProcessFailed(i32),
     /// Exit event loop cleanly.
     Exit,
 }
@@ -379,7 +381,7 @@ pub fn check_webview2_runtime_with_override(
     wry::webview_version().map_err(|err| err.to_string())
 }
 
-/// Print a user-friendly diagnostic message and exit with a non-zero code.
+/// Log detail with tracing, display friendly native message box, and exit with a non-zero code.
 pub fn handle_missing_runtime_and_exit(error_detail: &str) -> ! {
     tracing::error!("WebView2 runtime unavailable: {error_detail}");
     eprintln!(
@@ -396,6 +398,9 @@ pub fn handle_missing_runtime_and_exit(error_detail: &str) -> ! {
               winget install --id Microsoft.EdgeWebView2Runtime -e\n\
          ====================================================================\n"
     );
+    if std::env::var("WAVICAL_HEADLESS_TEST").is_err() {
+        wavical_native::show_missing_webview2_dialog();
+    }
     process::exit(1);
 }
 
@@ -576,33 +581,32 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     };
 
     // Restore saved window layout state if persistence is enabled
-    if config.persist_state {
-        if let Ok(state_path) = wavical_native::get_window_state_path(&config.window_id) {
-            if let Ok(raw_json) = std::fs::read_to_string(&state_path) {
-                let screens: Vec<wavical_ipc::ScreenBounds> = event_loop
-                    .available_monitors()
-                    .map(|m| {
-                        let p = m.position();
-                        let s = m.size();
-                        wavical_ipc::ScreenBounds::new(p.x, p.y, s.width, s.height)
-                    })
-                    .collect();
+    if config.persist_state
+        && let Ok(state_path) = wavical_native::get_window_state_path(&config.window_id)
+        && let Ok(raw_json) = std::fs::read_to_string(&state_path)
+    {
+        let screens: Vec<wavical_ipc::ScreenBounds> = event_loop
+            .available_monitors()
+            .map(|m| {
+                let p = m.position();
+                let s = m.size();
+                wavical_ipc::ScreenBounds::new(p.x, p.y, s.width, s.height)
+            })
+            .collect();
 
-                let resolved = wavical_ipc::resolve_window_state(
-                    &raw_json,
-                    win_width,
-                    win_height,
-                    &screens,
-                );
+        let resolved = wavical_ipc::resolve_window_state(
+            &raw_json,
+            win_width,
+            win_height,
+            &screens,
+        );
 
-                window.set_inner_size(tao::dpi::PhysicalSize::new(resolved.width, resolved.height));
-                if let (Some(x), Some(y)) = (resolved.x, resolved.y) {
-                    window.set_outer_position(tao::dpi::PhysicalPosition::new(x, y));
-                }
-                if resolved.maximized {
-                    window.set_maximized(true);
-                }
-            }
+        window.set_inner_size(tao::dpi::PhysicalSize::new(resolved.width, resolved.height));
+        if let (Some(x), Some(y)) = (resolved.x, resolved.y) {
+            window.set_outer_position(tao::dpi::PhysicalPosition::new(x, y));
+        }
+        if resolved.maximized {
+            window.set_maximized(true);
         }
     }
 
@@ -729,6 +733,14 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
         }
     };
 
+    // Attach renderer crash handler to detect process-gone events (WP6)
+    let crash_proxy = proxy.clone();
+    if let Err(err) = wavical_native::attach_renderer_crash_handler(&webview, move |reason_code| {
+        let _ = crash_proxy.send_event(UserEvent::RendererProcessFailed(reason_code));
+    }) {
+        tracing::warn!("Failed to attach renderer crash handler: {err}");
+    }
+
     // Helper to persist current window state if enabled
     let save_window_state_helper = |win: &Window, win_id: &str, persist: bool| {
         if !persist {
@@ -753,6 +765,7 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
 
     let persist_state = config.persist_state;
     let _retained_server = single_instance_server;
+    let mut crash_history: Vec<std::time::Instant> = Vec::new();
 
     // 6. Run tao closure event loop
     tracing::info!("Entering event loop");
@@ -765,6 +778,36 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 tracing::debug!("Evaluating response script in webview");
                 if let Err(err) = webview.evaluate_script(&script) {
                     tracing::error!("Failed to evaluate script in webview: {err}");
+                }
+            }
+            Event::UserEvent(UserEvent::RendererProcessFailed(reason_code)) => {
+                tracing::warn!(
+                    window_id = %loop_window_id,
+                    reason_code = reason_code,
+                    "WebView2 renderer process gone event received"
+                );
+
+                let now = std::time::Instant::now();
+                match wavical_ipc::decide_crash_recovery(&crash_history, now) {
+                    wavical_ipc::CrashRecoveryDecision::Retry => {
+                        crash_history.push(now);
+                        tracing::info!("Reloading page once following renderer process failure");
+                        if let Err(err) = webview.load_url("wavical://localhost/index.html") {
+                            tracing::error!("Failed to reload page following crash: {err}");
+                        }
+                    }
+                    wavical_ipc::CrashRecoveryDecision::GiveUp => {
+                        tracing::error!(
+                            window_id = %loop_window_id,
+                            "Renderer process crashed repeatedly within 30 seconds; stopping retry"
+                        );
+                        if std::env::var("WAVICAL_HEADLESS_TEST").is_err() {
+                            wavical_native::show_renderer_crashed_dialog();
+                        }
+                        save_window_state_helper(&window, &loop_window_id, persist_state);
+                        loop_native_service.clear_window(&loop_window_id);
+                        *control_flow = ControlFlow::Exit;
+                    }
                 }
             }
             Event::UserEvent(UserEvent::FocusWindow) => {

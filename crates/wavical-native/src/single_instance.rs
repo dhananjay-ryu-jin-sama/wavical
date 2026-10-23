@@ -134,14 +134,14 @@ pub fn check_single_instance(app_id: &str, args: &[String]) -> Result<SingleInst
                             return Ok(SingleInstance::Secondary);
                         } else {
                             tracing::warn!("Failed to write args to existing instance; starting normally");
-                            return Ok(SingleInstance::Disabled);
+                            Ok(SingleInstance::Disabled)
                         }
                     }
                     Err(connect_err) => {
                         tracing::warn!(
                             "Existing socket found but failed to connect ({connect_err}); starting normally"
                         );
-                        return Ok(SingleInstance::Disabled);
+                        Ok(SingleInstance::Disabled)
                     }
                 }
             } else {

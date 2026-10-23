@@ -3546,6 +3546,8 @@ dependencies = [
  "tracing",
  "wavical-ipc",
  "wavical-protocol",
+ "webview2-com",
+ "wry",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
@@ -12,6 +12,9 @@ pub use single_instance::*;
 
 pub mod window_state;
 pub use window_state::*;
+
+pub mod crash_recovery;
+pub use crash_recovery::*;
 
 static GLOBAL_GRANT_TABLE: OnceLock<Arc<GrantTable>> = OnceLock::new();
 #[cfg(test)]
@@ -102,10 +105,10 @@ fn validate_granted_target(entry: &GrantEntry, must_exist: bool) -> Result<(), &
         // 8. Canonical path comparison
         let current_canonical = path.canonicalize()
             .map_err(|_| "Failed to canonicalize path")?;
-        if let Some(ref orig_canonical) = entry.canonical_path {
-            if &current_canonical != orig_canonical {
-                return Err("Canonical path mismatch: target was replaced or moved");
-            }
+        if let Some(ref orig_canonical) = entry.canonical_path
+            && &current_canonical != orig_canonical
+        {
+            return Err("Canonical path mismatch: target was replaced or moved");
         }
     } else if let Some(parent) = path.parent() {
         // If file does not exist yet (e.g. newly created file in save dialog):
