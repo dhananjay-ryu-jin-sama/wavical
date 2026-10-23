@@ -33,6 +33,7 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
 
     const pending = new Map();
     let nextId = 1;
+    const menuListeners = new Set();
 
     function receiveResponse(response) {
         if (!response || typeof response.id !== 'number') return;
@@ -46,8 +47,28 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         }
     }
 
+    function dispatchMenuEvent(itemId) {
+        if (typeof itemId !== 'string') return;
+        const event = new CustomEvent('wavical:menu', { detail: { id: itemId } });
+        window.dispatchEvent(event);
+        for (const listener of menuListeners) {
+            try {
+                listener(itemId);
+            } catch (err) {
+                console.error("Error in menu listener:", err);
+            }
+        }
+    }
+
     Object.defineProperty(window, '__wavical_receive__', {
         value: Object.freeze(receiveResponse),
+        writable: false,
+        configurable: false,
+        enumerable: false,
+    });
+
+    Object.defineProperty(window, '__wavical_event__', {
+        value: Object.freeze(dispatchMenuEvent),
         writable: false,
         configurable: false,
         enumerable: false,
@@ -75,8 +96,17 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         });
     }
 
+    function onMenu(callback) {
+        if (typeof callback !== 'function') {
+            throw new TypeError("Callback must be a function");
+        }
+        menuListeners.add(callback);
+        return () => menuListeners.delete(callback);
+    }
+
     const wavicalApi = Object.freeze({
         invoke: Object.freeze(invoke),
+        onMenu: Object.freeze(onMenu),
     });
 
     Object.defineProperty(window, 'wavical', {
@@ -101,6 +131,15 @@ pub enum UserEvent {
     FocusWindow,
     /// WebView2 renderer process failure / crash event with reason code.
     RendererProcessFailed(i32),
+    /// Display native context menu at cursor position (WP7).
+    ShowContextMenu(Vec<wavical_ipc::MenuItem>),
+    /// Set system tray icon, tooltip, and menu items (WP7).
+    SetTray {
+        tooltip: Option<String>,
+        items: Vec<wavical_ipc::MenuItem>,
+    },
+    /// Menu item clicked from either tray or context menu (WP7).
+    MenuClicked(String),
     /// Exit event loop cleanly.
     Exit,
 }
@@ -140,6 +179,8 @@ pub struct WindowConfig {
     pub persist_state: bool,
     /// Whether to enforce single-instance lock (default: true).
     pub single_instance: bool,
+    /// Optional relative path to tray icon inside src/ from app config (WP7).
+    pub tray_icon: Option<String>,
 }
 
 impl Default for WindowConfig {
@@ -164,6 +205,7 @@ impl Default for WindowConfig {
             listen_stdin: false,
             persist_state: true,
             single_instance: true,
+            tray_icon: None,
         }
     }
 }
@@ -285,6 +327,12 @@ pub fn build_delivery_script(
     Ok(format!(
         "window.__wavical_receive__(JSON.parse({escaped_js_literal}));"
     ))
+}
+
+/// Helper to serialize a menu item click event into JavaScript evaluation code.
+pub fn build_menu_event_script(item_id: &str) -> String {
+    let escaped_id = serde_json::to_string(item_id).unwrap_or_else(|_| "\"\"".to_string());
+    format!("if (typeof window.__wavical_event__ === 'function') {{ window.__wavical_event__({escaped_id}); }}")
 }
 
 /// Process an incoming raw IPC message against window origin allowlist and capabilities.
@@ -660,10 +708,48 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
 
     // 4. Initialize handler registry
     let mut registry = wavical_ipc::HandlerRegistry::with_core_handlers();
-    let native_service = std::sync::Arc::new(wavical_native::NativeService::new());
+
+    struct ShellMenuProvider {
+        proxy: tao::event_loop::EventLoopProxy<UserEvent>,
+    }
+
+    impl wavical_native::MenuProvider for ShellMenuProvider {
+        fn show_context_menu(
+            &self,
+            _window_id: &str,
+            items: Vec<wavical_ipc::MenuItem>,
+        ) -> Result<(), String> {
+            self.proxy
+                .send_event(UserEvent::ShowContextMenu(items))
+                .map_err(|e| format!("Failed to send ShowContextMenu event: {e}"))
+        }
+
+        fn set_tray(
+            &self,
+            tooltip: Option<String>,
+            items: Vec<wavical_ipc::MenuItem>,
+        ) -> Result<(), String> {
+            self.proxy
+                .send_event(UserEvent::SetTray { tooltip, items })
+                .map_err(|e| format!("Failed to send SetTray event: {e}"))
+        }
+    }
+
+    let menu_provider = std::sync::Arc::new(ShellMenuProvider {
+        proxy: proxy.clone(),
+    });
+    let native_service = std::sync::Arc::new(
+        wavical_native::NativeService::new().with_menu_provider(menu_provider)
+    );
     registry.register_native(native_service.clone(), &config.window_id);
     let loop_native_service = native_service.clone();
     let loop_window_id = config.window_id.clone();
+
+    // Hook muda MenuEvent to forward all tray and context menu item clicks to UI loop
+    let menu_proxy = proxy.clone();
+    muda::MenuEvent::set_event_handler(Some(move |event: muda::MenuEvent| {
+        let _ = menu_proxy.send_event(UserEvent::MenuClicked(event.id.0));
+    }));
 
     // 5. Build the webview with custom protocol, CSP, navigation guard, popup blocker, and IPC handler
     let devtools = is_devtools_enabled();
@@ -764,8 +850,10 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     };
 
     let persist_state = config.persist_state;
+    let config_tray_icon = config.tray_icon.clone();
     let _retained_server = single_instance_server;
     let mut crash_history: Vec<std::time::Instant> = Vec::new();
+    let mut active_tray: Option<tray_icon::TrayIcon> = None;
 
     // 6. Run tao closure event loop
     tracing::info!("Entering event loop");
@@ -814,6 +902,69 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 tracing::info!("FocusWindow event received; restoring and focusing window");
                 window.set_minimized(false);
                 window.set_focus();
+            }
+            Event::UserEvent(UserEvent::ShowContextMenu(items)) => {
+                tracing::info!(count = items.len(), "Displaying native context menu at cursor");
+                let menu = wavical_native::build_muda_menu(&items);
+                #[cfg(windows)]
+                {
+                    use tao::platform::windows::WindowExtWindows;
+                    let hwnd = window.hwnd() as isize;
+                    wavical_native::show_context_menu_for_hwnd(&menu, hwnd);
+                }
+            }
+            Event::UserEvent(UserEvent::SetTray { tooltip, items }) => {
+                tracing::info!(count = items.len(), "Updating system tray icon and menu");
+                let menu = wavical_native::build_muda_menu(&items);
+                let icon_opt = config_tray_icon.as_deref().and_then(|rel_path| {
+                    match wavical_native::resolve_tray_icon_path(&asset_root, rel_path) {
+                        Ok(p) => wavical_native::load_tray_icon(&p).ok(),
+                        Err(e) => {
+                            tracing::warn!("Failed to resolve tray icon path: {e}");
+                            None
+                        }
+                    }
+                }).or_else(|| {
+                    // Safe fallback default 32x32 blue icon if none specified in config
+                    let mut rgba = Vec::with_capacity(32 * 32 * 4);
+                    for _ in 0..(32 * 32) {
+                        rgba.extend_from_slice(&[41, 98, 255, 255]);
+                    }
+                    tray_icon::Icon::from_rgba(rgba, 32, 32).ok()
+                });
+
+                if let Some(ref mut existing) = active_tray {
+                    existing.set_menu(Some(Box::new(menu)));
+                    if let Some(ref tip) = tooltip {
+                        let _ = existing.set_tooltip(Some(tip.clone()));
+                    }
+                    if let Some(icon) = icon_opt {
+                        let _ = existing.set_icon(Some(icon));
+                    }
+                } else {
+                    let mut builder = tray_icon::TrayIconBuilder::new().with_menu(Box::new(menu));
+                    if let Some(ref tip) = tooltip {
+                        builder = builder.with_tooltip(tip.clone());
+                    }
+                    if let Some(icon) = icon_opt {
+                        builder = builder.with_icon(icon);
+                    }
+                    match builder.build() {
+                        Ok(t) => {
+                            active_tray = Some(t);
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to build system tray icon: {e}");
+                        }
+                    }
+                }
+            }
+            Event::UserEvent(UserEvent::MenuClicked(item_id)) => {
+                tracing::info!(item_id = %item_id, "Menu item clicked; dispatching generic event to webview");
+                let script = build_menu_event_script(&item_id);
+                if let Err(err) = webview.evaluate_script(&script) {
+                    tracing::error!("Failed to evaluate menu event script in webview: {err}");
+                }
             }
             Event::UserEvent(UserEvent::Reload) => {
                 tracing::info!("Reload requested via dev server control");
@@ -1349,5 +1500,14 @@ mod tests {
         .unwrap();
         assert!(res3.ok);
         assert_eq!(res3.result.unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_build_menu_event_script_format() {
+        let script = build_menu_event_script("item.open");
+        assert!(script.contains("__wavical_event__(\"item.open\")"));
+
+        let script_escaped = build_menu_event_script("item\"with'quotes");
+        assert!(script_escaped.contains(r#"item\"with'quotes"#));
     }
 }

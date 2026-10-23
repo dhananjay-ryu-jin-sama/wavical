@@ -57,10 +57,10 @@ impl SingleInstanceServer {
                                 // Max 1 MB for command line arguments payload
                                 if len <= 1024 * 1024 {
                                     let mut buf = vec![0u8; len];
-                                    if stream.read_exact(&mut buf).is_ok() {
-                                        if let Ok(args) = serde_json::from_slice::<Vec<String>>(&buf) {
-                                            on_new_instance(args);
-                                        }
+                                    if stream.read_exact(&mut buf).is_ok()
+                                        && let Ok(args) = serde_json::from_slice::<Vec<String>>(&buf)
+                                    {
+                                        on_new_instance(args);
                                     }
                                 }
                             }
@@ -131,7 +131,7 @@ pub fn check_single_instance(app_id: &str, args: &[String]) -> Result<SingleInst
                             && stream.write_all(&payload).is_ok()
                             && stream.flush().is_ok()
                         {
-                            return Ok(SingleInstance::Secondary);
+                            Ok(SingleInstance::Secondary)
                         } else {
                             tracing::warn!("Failed to write args to existing instance; starting normally");
                             Ok(SingleInstance::Disabled)

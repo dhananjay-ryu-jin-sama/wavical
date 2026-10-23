@@ -16,6 +16,9 @@ pub use window_state::*;
 pub mod crash_recovery;
 pub use crash_recovery::*;
 
+pub mod tray;
+pub use tray::*;
+
 static GLOBAL_GRANT_TABLE: OnceLock<Arc<GrantTable>> = OnceLock::new();
 #[cfg(test)]
 static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -134,10 +137,26 @@ fn validate_granted_target(entry: &GrantEntry, must_exist: bool) -> Result<(), &
     Ok(())
 }
 
+/// Delegate trait providing UI-thread menu display and tray updating.
+pub trait MenuProvider: Send + Sync {
+    fn show_context_menu(&self, window_id: &str, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String>;
+    fn set_tray(&self, tooltip: Option<String>, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String>;
+}
+
 /// Native service implementing the IPC `NativeHandler` trait.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NativeService {
     grant_table: Arc<GrantTable>,
+    menu_provider: Option<Arc<dyn MenuProvider>>,
+}
+
+impl std::fmt::Debug for NativeService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeService")
+            .field("grant_table", &self.grant_table)
+            .field("has_menu_provider", &self.menu_provider.is_some())
+            .finish()
+    }
 }
 
 impl Default for NativeService {
@@ -151,12 +170,22 @@ impl NativeService {
     pub fn new() -> Self {
         Self {
             grant_table: default_grant_table(),
+            menu_provider: None,
         }
     }
 
     /// Create a native service instance using an isolated grant table (useful for tests).
     pub fn with_grant_table(grant_table: Arc<GrantTable>) -> Self {
-        Self { grant_table }
+        Self {
+            grant_table,
+            menu_provider: None,
+        }
+    }
+
+    /// Attach a menu provider delegate for UI-thread menu and tray execution.
+    pub fn with_menu_provider(mut self, menu_provider: Arc<dyn MenuProvider>) -> Self {
+        self.menu_provider = Some(menu_provider);
+        self
     }
 
     /// Access the underlying grant table.
@@ -414,19 +443,39 @@ impl NativeService {
     /// Show window context menu (WP7).
     pub fn menu_show_context_menu(
         &self,
-        _params: &serde_json::Value,
-        _window_id: &str,
+        params: &serde_json::Value,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("menu.showContextMenu not implemented yet".to_string())
+        let parsed = wavical_ipc::parse_and_validate_context_menu_params(params)
+            .map_err(|err| {
+                tracing::warn!("menu.showContextMenu validation failed: {err}");
+                wavical_ipc::GENERIC_MENU_ERROR.to_string()
+            })?;
+
+        if let Some(ref provider) = self.menu_provider {
+            provider.show_context_menu(window_id, parsed.items)?;
+        }
+
+        Ok(serde_json::json!({ "success": true }))
     }
 
     /// Update system tray icon, tooltip, and menu (WP7).
     pub fn tray_set(
         &self,
-        _params: &serde_json::Value,
+        params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("tray.set not implemented yet".to_string())
+        let parsed = wavical_ipc::parse_and_validate_tray_params(params)
+            .map_err(|err| {
+                tracing::warn!("tray.set validation failed: {err}");
+                wavical_ipc::GENERIC_MENU_ERROR.to_string()
+            })?;
+
+        if let Some(ref provider) = self.menu_provider {
+            provider.set_tray(parsed.tooltip, parsed.items)?;
+        }
+
+        Ok(serde_json::json!({ "success": true }))
     }
 
     /// Register global hotkey shortcut (WP8).
@@ -484,8 +533,6 @@ mod tests {
         let window_id = "test-window";
 
         let remaining_unimplemented = [
-            "menu.showContextMenu",
-            "tray.set",
             "shortcut.register",
             "badge.set",
         ];
@@ -965,5 +1012,146 @@ mod tests {
             window_id,
         ).expect("read should succeed");
         assert_eq!(read_updated["content"], "Updated content successfully written!");
+    }
+
+    // =========================================================================
+    // Work Package 7 Tests (Tray and Context Menu)
+    // =========================================================================
+
+    #[test]
+    fn test_wp7_menu_show_context_menu_success() {
+        let service = NativeService::new();
+        let params = serde_json::json!({
+            "items": [
+                {"id": "cut", "label": "Cut"},
+                {"id": "copy", "label": "Copy"},
+                {"id": "paste", "label": "Paste", "enabled": false}
+            ]
+        });
+        let res = service.menu_show_context_menu(&params, "win-1").expect("should succeed");
+        assert_eq!(res["success"], true);
+    }
+
+    #[test]
+    fn test_wp7_menu_show_context_menu_201_items_rejected() {
+        let service = NativeService::new();
+        let items: Vec<serde_json::Value> = (0..201)
+            .map(|i| serde_json::json!({"id": format!("item_{i}"), "label": format!("Item {i}")}))
+            .collect();
+        let params = serde_json::json!({"items": items});
+
+        let res = service.menu_show_context_menu(&params, "win-1");
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), wavical_ipc::GENERIC_MENU_ERROR);
+    }
+
+    #[test]
+    fn test_wp7_menu_show_context_menu_empty_rejected() {
+        let service = NativeService::new();
+        let params = serde_json::json!({"items": []});
+
+        let res = service.menu_show_context_menu(&params, "win-1");
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), wavical_ipc::GENERIC_MENU_ERROR);
+    }
+
+    #[test]
+    fn test_wp7_menu_show_context_menu_bad_chars_rejected() {
+        let service = NativeService::new();
+        let params = serde_json::json!({
+            "items": [{"id": "ItemBadUpper", "label": "Label"}]
+        });
+
+        let res = service.menu_show_context_menu(&params, "win-1");
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), wavical_ipc::GENERIC_MENU_ERROR);
+    }
+
+    #[test]
+    fn test_wp7_menu_show_context_menu_duplicate_ids_rejected() {
+        let service = NativeService::new();
+        let params = serde_json::json!({
+            "items": [
+                {"id": "item.one", "label": "First"},
+                {"id": "item.one", "label": "Duplicate"}
+            ]
+        });
+
+        let res = service.menu_show_context_menu(&params, "win-1");
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), wavical_ipc::GENERIC_MENU_ERROR);
+    }
+
+    #[test]
+    fn test_wp7_tray_set_success() {
+        let service = NativeService::new();
+        let params = serde_json::json!({
+            "tooltip": "Wavical App",
+            "items": [
+                {"id": "open", "label": "Open Window"},
+                {"id": "quit", "label": "Quit"}
+            ]
+        });
+
+        let res = service.tray_set(&params, "win-1").expect("should succeed");
+        assert_eq!(res["success"], true);
+    }
+
+    #[test]
+    fn test_wp7_tray_set_oversized_tooltip_rejected() {
+        let service = NativeService::new();
+        let params = serde_json::json!({
+            "tooltip": "T".repeat(129),
+            "items": [{"id": "open", "label": "Open"}]
+        });
+
+        let res = service.tray_set(&params, "win-1");
+        assert!(res.is_err());
+        assert_eq!(res.unwrap_err(), wavical_ipc::GENERIC_MENU_ERROR);
+    }
+
+    struct MockMenuProvider {
+        context_menu_shown: std::sync::atomic::AtomicBool,
+        tray_set_called: std::sync::atomic::AtomicBool,
+    }
+
+    impl MenuProvider for MockMenuProvider {
+        fn show_context_menu(&self, _window_id: &str, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String> {
+            self.context_menu_shown.store(true, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(items.len(), 1);
+            Ok(())
+        }
+
+        fn set_tray(&self, tooltip: Option<String>, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String> {
+            self.tray_set_called.store(true, std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(tooltip.as_deref(), Some("Test Tray"));
+            assert_eq!(items.len(), 1);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_wp7_menu_provider_called() {
+        let provider = Arc::new(MockMenuProvider {
+            context_menu_shown: std::sync::atomic::AtomicBool::new(false),
+            tray_set_called: std::sync::atomic::AtomicBool::new(false),
+        });
+
+        let service = NativeService::new().with_menu_provider(provider.clone());
+
+        service.menu_show_context_menu(
+            &serde_json::json!({"items": [{"id": "item.1", "label": "Item"}]}),
+            "win-1",
+        ).expect("context menu success");
+        assert!(provider.context_menu_shown.load(std::sync::atomic::Ordering::SeqCst));
+
+        service.tray_set(
+            &serde_json::json!({
+                "tooltip": "Test Tray",
+                "items": [{"id": "tray.1", "label": "Tray Item"}]
+            }),
+            "win-1",
+        ).expect("tray set success");
+        assert!(provider.tray_set_called.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

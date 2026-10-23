@@ -13,7 +13,12 @@ export default {
     'dialog.openFile': true,
     'dialog.saveFile': true,
     'fs.readGranted': true,
-    'fs.writeGranted': true
+    'fs.writeGranted': true,
+    'tray.set': true,
+    'menu.showContextMenu': true
+  },
+  tray: {
+    icon: 'icon.png'
   },
   dialog: {
     filters: {

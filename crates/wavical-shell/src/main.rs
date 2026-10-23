@@ -49,6 +49,10 @@ pub struct ShellCli {
     #[arg(long, env = "WAVICAL_SINGLE_INSTANCE")]
     pub single_instance: Option<bool>,
 
+    /// Relative path inside src/ to tray icon file (WP7)
+    #[arg(long, env = "WAVICAL_TRAY_ICON")]
+    pub tray_icon: Option<String>,
+
     /// Run in development server mode
     #[arg(long)]
     pub dev: bool,
@@ -113,6 +117,7 @@ fn main() {
         listen_stdin,
         persist_state: args.persist_state.unwrap_or(true),
         single_instance: args.single_instance.unwrap_or(true),
+        tray_icon: args.tray_icon,
     };
 
     run_with_config(asset_root, config);

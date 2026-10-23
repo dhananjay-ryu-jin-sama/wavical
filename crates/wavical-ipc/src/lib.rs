@@ -14,6 +14,9 @@ pub use window_state::*;
 pub mod crash_recovery;
 pub use crash_recovery::*;
 
+pub mod menu;
+pub use menu::*;
+
 /// Maximum raw IPC message size in bytes before parsing (1 MB default).
 pub const MAX_MESSAGE_SIZE_BYTES: usize = 1024 * 1024;
 

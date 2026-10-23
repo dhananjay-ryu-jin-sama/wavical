@@ -392,6 +392,9 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     if !config.single_instance_or_default() {
         cmd.arg("--single-instance").arg("false");
     }
+    if let Some(tray_icon) = config.tray_icon() {
+        cmd.arg("--tray-icon").arg(tray_icon);
+    }
 
     let mut child = cmd
         .stdin(Stdio::piped())

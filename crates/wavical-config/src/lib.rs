@@ -123,6 +123,19 @@ pub struct AppConfig {
     /// Optional single-instance lock setting (default: true).
     #[serde(default, rename = "singleInstance", alias = "single_instance", skip_serializing_if = "Option::is_none")]
     pub single_instance: Option<bool>,
+
+    /// Optional system tray configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tray: Option<TrayConfig>,
+}
+
+/// System tray configuration options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrayConfig {
+    /// Relative path inside src/ to the tray icon file (e.g. "icon.png").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Dialog configuration options defining allowed file filters.
@@ -153,7 +166,13 @@ impl AppConfig {
             dev: None,
             dialog: None,
             single_instance: None,
+            tray: None,
         }
+    }
+
+    /// Return the configured tray icon path relative to src/, if specified.
+    pub fn tray_icon(&self) -> Option<&str> {
+        self.tray.as_ref().and_then(|t| t.icon.as_deref())
     }
 
     /// Return whether single-instance lock is enabled (default: true).
@@ -999,7 +1018,36 @@ mod tests {
                 dev,
                 dialog: None,
                 single_instance,
+                tray: None,
             })
+    }
+
+    #[test]
+    fn test_tray_config_parsing_and_deny_unknown_fields() {
+        let json = r#"{
+            "appId": "test-tray",
+            "tray": {
+                "icon": "assets/tray.ico"
+            }
+        }"#;
+        let config = parse_config_json(json).expect("valid tray config should parse");
+        assert_eq!(config.tray_icon(), Some("assets/tray.ico"));
+
+        // Unknown field inside tray rejected
+        let bad_json = r#"{
+            "appId": "test-tray",
+            "tray": {
+                "icon": "assets/tray.ico",
+                "unknownField": 123
+            }
+        }"#;
+        let err = parse_config_json(bad_json).expect_err("unknown field in tray must be rejected");
+        match err {
+            ValidationError::MalformedJson(msg) => {
+                assert!(msg.contains("unknown field `unknownField`"));
+            }
+            other => panic!("Unexpected error: {other:?}"),
+        }
     }
 
     proptest! {

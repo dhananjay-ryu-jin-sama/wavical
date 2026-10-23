@@ -17,6 +17,8 @@ rfd = "0.17.2"
 wavical-protocol = { version = "0.1.0", path = "../wavical-protocol" }
 interprocess = "2.2"
 wry = "0.57.0"
+muda = "0.21.2"
+tray-icon = "0.26.1"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39.1"

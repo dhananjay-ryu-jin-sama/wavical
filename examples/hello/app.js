@@ -346,4 +346,111 @@ document.addEventListener('DOMContentLoaded', () => {
             document.head.appendChild(script);
         });
     }
+
+    // =========================================================================
+    // WP7: Tray, Context Menu, and Event Reception
+    // =========================================================================
+
+    // Generic menu click event listener
+    function handleMenuClick(itemId) {
+        output.className = 'output-box success';
+        output.innerHTML = `
+            <div class="output-title">🎯 Received Menu Click Event:</div>
+            <div class="note">Item ID received from Rust: <strong>${escapeHtml(itemId)}</strong></div>
+            <div class="note">No raw pointers or handles were exposed to the frontend.</div>
+        `;
+    }
+
+    window.addEventListener('wavical:menu', (e) => {
+        const itemId = e.detail && e.detail.id ? e.detail.id : e.detail;
+        if (itemId) {
+            handleMenuClick(itemId);
+        }
+    });
+
+    if (window.wavical && typeof window.wavical.onMenu === 'function') {
+        window.wavical.onMenu((itemId) => {
+            handleMenuClick(itemId);
+        });
+    }
+
+    const btnSetTray = document.getElementById('btn-set-tray');
+    if (btnSetTray) {
+        btnSetTray.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Setting system tray icon, tooltip, and menu items...';
+            try {
+                await window.wavical.invoke('tray.set', {
+                    tooltip: 'Wavical Hello Application',
+                    items: [
+                        { id: 'tray.ping', label: 'Ping Application' },
+                        { id: 'tray.say_hello', label: 'Say Hello' },
+                        { id: 'tray.status', label: 'Check Status' }
+                    ]
+                });
+                output.className = 'output-box success';
+                output.innerHTML = `
+                    <div class="output-title">✔ System Tray Configured:</div>
+                    <div class="note">Check your Windows taskbar system tray. Hover for tooltip and click items.</div>
+                `;
+            } catch (err) {
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">✖ tray.set failed:</div><div>${escapeHtml(err.message)}</div>`;
+            }
+        });
+    }
+
+    const btnShowContext = document.getElementById('btn-show-context');
+    async function triggerContextMenu() {
+        output.className = 'output-box running';
+        output.textContent = 'Displaying native context menu at cursor...';
+        try {
+            await window.wavical.invoke('menu.showContextMenu', {
+                items: [
+                    { id: 'menu.inspect', label: 'Inspect Selection' },
+                    { id: 'menu.copy_link', label: 'Copy Action' },
+                    { id: 'menu.help', label: 'Get Help' }
+                ]
+            });
+        } catch (err) {
+            output.className = 'output-box error';
+            output.innerHTML = `<div class="output-title">✖ menu.showContextMenu failed:</div><div>${escapeHtml(err.message)}</div>`;
+        }
+    }
+
+    if (btnShowContext) {
+        btnShowContext.addEventListener('click', () => {
+            triggerContextMenu();
+        });
+    }
+
+    // Native contextmenu on right-click anywhere in document
+    document.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        triggerContextMenu();
+    });
+
+    const btnMenu201 = document.getElementById('btn-menu-201');
+    if (btnMenu201) {
+        btnMenu201.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Sending 201-item menu (exceeds MAX_MENU_ITEMS limit of 200)...';
+            const items = [];
+            for (let i = 0; i < 201; i++) {
+                items.push({ id: `item_${i}`, label: `Item ${i}` });
+            }
+            try {
+                await window.wavical.invoke('menu.showContextMenu', { items });
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">✖ Unexpected success: 201-item menu was accepted!</div>`;
+            } catch (err) {
+                output.className = 'output-box expected-rejection';
+                output.innerHTML = `
+                    <div class="output-title">🛡️ 201-Item Menu Rejected as Expected:</div>
+                    <div class="error-msg">${escapeHtml(err.message)}</div>
+                    <div class="note">Rust pure validator blocked the menu and returned generic error without showing menu.</div>
+                `;
+            }
+        });
+    }
 });
