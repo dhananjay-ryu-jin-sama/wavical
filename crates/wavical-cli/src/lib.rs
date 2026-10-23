@@ -354,14 +354,21 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     let config =
         wavical_config::validate_config(&project_root).map_err(CliError::ConfigValidation)?;
 
-    // 2. Ensure src/ directory exists
-    let src_dir = project_root.join("src");
-    if !src_dir.exists() {
-        std::fs::create_dir_all(&src_dir).map_err(|e| CliError::CreateDirFailed {
-            path: src_dir.clone(),
-            source: e,
-        })?;
-    }
+    // 2. Ensure asset directory exists (prefer src/ if index.html exists, fallback to project_root if index.html is there)
+    let src_dir = if project_root.join("src").join("index.html").is_file() {
+        project_root.join("src")
+    } else if project_root.join("index.html").is_file() {
+        project_root.clone()
+    } else {
+        let dir = project_root.join("src");
+        if !dir.exists() {
+            std::fs::create_dir_all(&dir).map_err(|e| CliError::CreateDirFailed {
+                path: dir.clone(),
+                source: e,
+            })?;
+        }
+        dir
+    };
 
     // 3. Locate wavical-shell
     let shell_bin = find_wavical_shell()?;

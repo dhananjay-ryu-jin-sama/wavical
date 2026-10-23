@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wavical — Hello World</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="app.js"></script>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">⚡</div>
+        <h1>Wavical</h1>
+        <p class="subtitle">Loaded securely via custom protocol <code>wavical://</code></p>
+        <div class="status-box">
+            <span class="status-dot"></span>
+            <span>Security Policy Enforced &bull; CSP &bull; Navigation Guard</span>
+        </div>
+        
+        <div class="ipc-section">
+            <div class="section-label">Bridge Capabilities</div>
+            <div class="button-row">
+                <button id="btn-ping" class="btn btn-primary" type="button">
+                    <span class="btn-icon">⚡</span>
+                    Call core.ping (Granted)
+                </button>
+                <button id="btn-echo" class="btn btn-secondary" type="button">
+                    <span class="btn-icon">🛡️</span>
+                    Call core.echo (Ungranted)
+                </button>
+            </div>
+
+            <div class="section-label">Native Features (WP3)</div>
+            <div class="input-row">
+                <input id="clipboard-input" class="text-input" type="text" placeholder="Type text here to copy..." value="Hello from Wavical native clipboard!">
+            </div>
+            <div class="button-row">
+                <button id="btn-copy" class="btn btn-primary" type="button">
+                    <span class="btn-icon">📋</span>
+                    Copy (clipboard.write)
+                </button>
+                <button id="btn-paste" class="btn btn-secondary" type="button">
+                    <span class="btn-icon">📥</span>
+                    Paste (clipboard.read)
+                </button>
+                <button id="btn-notify" class="btn btn-primary" type="button">
+                    <span class="btn-icon">🔔</span>
+                    Notify (notify.send)
+                </button>
+            </div>
+
+            <div class="section-label">Scoped File Access (WP4)</div>
+            <div class="input-row">
+                <input id="file-content-input" class="text-input" type="text" placeholder="Content to write or display..." value="Wavical scoped file storage test content.">
+            </div>
+            <div class="button-row">
+                <button id="btn-open-file" class="btn btn-primary" type="button">
+                    <span class="btn-icon">📂</span>
+                    Open & Read (dialog.openFile + fs.readGranted)
+                </button>
+                <button id="btn-save-file" class="btn btn-primary" type="button">
+                    <span class="btn-icon">💾</span>
+                    Save File (dialog.saveFile + fs.writeGranted)
+                </button>
+                <button id="btn-cancel-dialog" class="btn btn-secondary" type="button">
+                    <span class="btn-icon">✖️</span>
+                    Cancel Test (Cancel dialog)
+                </button>
+                <button id="btn-attack-path" class="btn btn-warning" type="button">
+                    <span class="btn-icon">🛡️</span>
+                    Send Raw Path (Attack - Denied)
+                </button>
+            </div>
+
+            <div class="section-label">Tray & Context Menu (WP7)</div>
+            <div class="button-row">
+                <button id="btn-set-tray" class="btn btn-primary" type="button">
+                    <span class="btn-icon">📥</span>
+                    Set Tray Menu (tray.set)
+                </button>
+                <button id="btn-show-context" class="btn btn-secondary" type="button">
+                    <span class="btn-icon">📋</span>
+                    Show Context Menu (Right-Click also works)
+                </button>
+                <button id="btn-menu-201" class="btn btn-warning" type="button">
+                    <span class="btn-icon">🚫</span>
+                    Send 201 Items (Denied)
+                </button>
+            </div>
+
+            <div class="section-label">Security Restrictions (WP6)</div>
+            <div class="button-row">
+                <button id="btn-nav-external" class="btn btn-warning" type="button">
+                    <span class="btn-icon">🚫</span>
+                    Navigate External (Denied)
+                </button>
+                <button id="btn-popup" class="btn btn-warning" type="button">
+                    <span class="btn-icon">🪟</span>
+                    Open Popup (Denied)
+                </button>
+                <button id="btn-remote-script" class="btn btn-warning" type="button">
+                    <span class="btn-icon">📜</span>
+                    Remote Script (CSP Blocked)
+                </button>
+            </div>
+
+            <div id="ipc-output" class="output-box idle">
+                <span class="placeholder">Click any button above to verify IPC capabilities and security guards.</span>
+            </div>
+        </div>
+
+        <p class="desc">
+            Enforced policies: Strict CSP <code>default-src 'self'</code>, zero inline scripts, origin allowlisted navigation, blocked popups, and devtools restricted to debug builds.
+        </p>
+    </div>
+</body>
+</html>
