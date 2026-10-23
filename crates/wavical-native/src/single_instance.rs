@@ -12,8 +12,8 @@
 use interprocess::local_socket::traits::{ListenerExt, Stream as StreamTrait};
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream, ToNsName};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Role determined for the current process upon single-instance evaluation.
 pub enum SingleInstance {
@@ -58,7 +58,8 @@ impl SingleInstanceServer {
                                 if len <= 1024 * 1024 {
                                     let mut buf = vec![0u8; len];
                                     if stream.read_exact(&mut buf).is_ok()
-                                        && let Ok(args) = serde_json::from_slice::<Vec<String>>(&buf)
+                                        && let Ok(args) =
+                                            serde_json::from_slice::<Vec<String>>(&buf)
                                     {
                                         on_new_instance(args);
                                     }
@@ -133,7 +134,9 @@ pub fn check_single_instance(app_id: &str, args: &[String]) -> Result<SingleInst
                         {
                             Ok(SingleInstance::Secondary)
                         } else {
-                            tracing::warn!("Failed to write args to existing instance; starting normally");
+                            tracing::warn!(
+                                "Failed to write args to existing instance; starting normally"
+                            );
                             Ok(SingleInstance::Disabled)
                         }
                     }
@@ -145,9 +148,7 @@ pub fn check_single_instance(app_id: &str, args: &[String]) -> Result<SingleInst
                     }
                 }
             } else {
-                tracing::warn!(
-                    "Single-instance lock check failed ({err}); starting normally"
-                );
+                tracing::warn!("Single-instance lock check failed ({err}); starting normally");
                 Ok(SingleInstance::Disabled)
             }
         }

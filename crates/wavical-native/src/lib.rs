@@ -3,8 +3,8 @@
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
 use wavical_ipc::{
-    GrantEntry, GrantTable, NativeHandler, OpenFileDialogParams, ReadGrantedParams,
-    SaveFileDialogParams, WriteGrantedParams, MAX_READ_GRANTED_BYTES, MAX_WRITE_GRANTED_BYTES,
+    GrantEntry, GrantTable, MAX_READ_GRANTED_BYTES, MAX_WRITE_GRANTED_BYTES, NativeHandler,
+    OpenFileDialogParams, ReadGrantedParams, SaveFileDialogParams, WriteGrantedParams,
 };
 
 pub mod single_instance;
@@ -18,6 +18,9 @@ pub use crash_recovery::*;
 
 pub mod tray;
 pub use tray::*;
+
+pub mod shortcut;
+pub use shortcut::*;
 
 static GLOBAL_GRANT_TABLE: OnceLock<Arc<GrantTable>> = OnceLock::new();
 #[cfg(test)]
@@ -92,21 +95,21 @@ fn validate_granted_target(entry: &GrantEntry, must_exist: bool) -> Result<(), &
     // If target exists, verify regular file and symlink status
     if path.exists() {
         // 6. Symlink / junction check
-        let symlink_meta = std::fs::symlink_metadata(path)
-            .map_err(|_| "Failed to read file metadata")?;
+        let symlink_meta =
+            std::fs::symlink_metadata(path).map_err(|_| "Failed to read file metadata")?;
         if symlink_meta.is_symlink() {
             return Err("Symlinks and junctions are strictly forbidden");
         }
 
         // 7. Regular file check
-        let meta = std::fs::metadata(path)
-            .map_err(|_| "Failed to read file metadata")?;
+        let meta = std::fs::metadata(path).map_err(|_| "Failed to read file metadata")?;
         if !meta.is_file() {
             return Err("Target is not a regular file");
         }
 
         // 8. Canonical path comparison
-        let current_canonical = path.canonicalize()
+        let current_canonical = path
+            .canonicalize()
             .map_err(|_| "Failed to canonicalize path")?;
         if let Some(ref orig_canonical) = entry.canonical_path
             && &current_canonical != orig_canonical
@@ -124,7 +127,8 @@ fn validate_granted_target(entry: &GrantEntry, must_exist: bool) -> Result<(), &
         if parent_symlink_meta.is_symlink() {
             return Err("Symlink parent directories are strictly forbidden");
         }
-        let current_parent_canonical = parent.canonicalize()
+        let current_parent_canonical = parent
+            .canonicalize()
             .map_err(|_| "Failed to canonicalize parent directory")?;
         if let (Some(orig_canonical), Some(file_name)) = (&entry.canonical_path, path.file_name()) {
             let expected = current_parent_canonical.join(file_name);
@@ -139,8 +143,25 @@ fn validate_granted_target(entry: &GrantEntry, must_exist: bool) -> Result<(), &
 
 /// Delegate trait providing UI-thread menu display and tray updating.
 pub trait MenuProvider: Send + Sync {
-    fn show_context_menu(&self, window_id: &str, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String>;
-    fn set_tray(&self, tooltip: Option<String>, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String>;
+    fn show_context_menu(
+        &self,
+        window_id: &str,
+        items: Vec<wavical_ipc::MenuItem>,
+    ) -> Result<(), String>;
+    fn set_tray(
+        &self,
+        tooltip: Option<String>,
+        items: Vec<wavical_ipc::MenuItem>,
+    ) -> Result<(), String>;
+}
+
+/// Delegate trait providing UI-thread global shortcut registration.
+pub trait ShortcutProvider: Send + Sync {
+    fn register_shortcuts(
+        &self,
+        window_id: &str,
+        shortcuts: Vec<wavical_ipc::ParsedShortcut>,
+    ) -> Result<(), String>;
 }
 
 /// Native service implementing the IPC `NativeHandler` trait.
@@ -148,6 +169,7 @@ pub trait MenuProvider: Send + Sync {
 pub struct NativeService {
     grant_table: Arc<GrantTable>,
     menu_provider: Option<Arc<dyn MenuProvider>>,
+    shortcut_provider: Option<Arc<dyn ShortcutProvider>>,
 }
 
 impl std::fmt::Debug for NativeService {
@@ -155,6 +177,7 @@ impl std::fmt::Debug for NativeService {
         f.debug_struct("NativeService")
             .field("grant_table", &self.grant_table)
             .field("has_menu_provider", &self.menu_provider.is_some())
+            .field("has_shortcut_provider", &self.shortcut_provider.is_some())
             .finish()
     }
 }
@@ -171,6 +194,7 @@ impl NativeService {
         Self {
             grant_table: default_grant_table(),
             menu_provider: None,
+            shortcut_provider: None,
         }
     }
 
@@ -179,12 +203,19 @@ impl NativeService {
         Self {
             grant_table,
             menu_provider: None,
+            shortcut_provider: None,
         }
     }
 
     /// Attach a menu provider delegate for UI-thread menu and tray execution.
     pub fn with_menu_provider(mut self, menu_provider: Arc<dyn MenuProvider>) -> Self {
         self.menu_provider = Some(menu_provider);
+        self
+    }
+
+    /// Attach a shortcut provider delegate for UI-thread global shortcut registration.
+    pub fn with_shortcut_provider(mut self, shortcut_provider: Arc<dyn ShortcutProvider>) -> Self {
+        self.shortcut_provider = Some(shortcut_provider);
         self
     }
 
@@ -214,8 +245,8 @@ impl NativeService {
             wavical_ipc::GENERIC_CLIPBOARD_ERROR.to_string()
         })?;
 
-        let valid_text = wavical_ipc::validate_clipboard_read(&text)
-            .map_err(|err| err.to_string())?;
+        let valid_text =
+            wavical_ipc::validate_clipboard_read(&text).map_err(|err| err.to_string())?;
 
         Ok(serde_json::json!({
             "text": valid_text
@@ -228,8 +259,7 @@ impl NativeService {
         params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        let text = wavical_ipc::validate_clipboard_write(params)
-            .map_err(|err| err.to_string())?;
+        let text = wavical_ipc::validate_clipboard_write(params).map_err(|err| err.to_string())?;
 
         let mut clipboard = arboard::Clipboard::new().map_err(|e| {
             tracing::error!("Failed to initialize clipboard: {e}");
@@ -252,8 +282,7 @@ impl NativeService {
         params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        let payload = wavical_ipc::validate_notify_send(params)
-            .map_err(|err| err.to_string())?;
+        let payload = wavical_ipc::validate_notify_send(params).map_err(|err| err.to_string())?;
 
         notify_rust::Notification::new()
             .appname("Wavical")
@@ -289,8 +318,9 @@ impl NativeService {
         }
 
         if let Some(ref filter_id) = parsed.filter_id {
-            let (filter_name, extensions) = resolve_filter_id(filter_id)
-                .ok_or_else(|| format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected."))?;
+            let (filter_name, extensions) = resolve_filter_id(filter_id).ok_or_else(|| {
+                format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected.")
+            })?;
             dialog = dialog.add_filter(filter_name, extensions);
         }
 
@@ -298,18 +328,18 @@ impl NativeService {
 
         match chosen_path {
             Some(path) => {
-                let grant_id = self.grant_table.insert(window_id, path)
+                let grant_id = self
+                    .grant_table
+                    .insert(window_id, path)
                     .map_err(|e| format!("Failed to record file grant: {e}"))?;
                 Ok(serde_json::json!({
                     "cancelled": false,
                     "grantId": grant_id,
                 }))
             }
-            None => {
-                Ok(serde_json::json!({
-                    "cancelled": true
-                }))
-            }
+            None => Ok(serde_json::json!({
+                "cancelled": true
+            })),
         }
     }
 
@@ -336,8 +366,9 @@ impl NativeService {
         }
 
         if let Some(ref filter_id) = parsed.filter_id {
-            let (filter_name, extensions) = resolve_filter_id(filter_id)
-                .ok_or_else(|| format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected."))?;
+            let (filter_name, extensions) = resolve_filter_id(filter_id).ok_or_else(|| {
+                format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected.")
+            })?;
             dialog = dialog.add_filter(filter_name, extensions);
         }
 
@@ -345,18 +376,18 @@ impl NativeService {
 
         match chosen_path {
             Some(path) => {
-                let grant_id = self.grant_table.insert(window_id, path)
+                let grant_id = self
+                    .grant_table
+                    .insert(window_id, path)
                     .map_err(|e| format!("Failed to record file grant: {e}"))?;
                 Ok(serde_json::json!({
                     "cancelled": false,
                     "grantId": grant_id,
                 }))
             }
-            None => {
-                Ok(serde_json::json!({
-                    "cancelled": true
-                }))
-            }
+            None => Ok(serde_json::json!({
+                "cancelled": true
+            })),
         }
     }
 
@@ -373,21 +404,22 @@ impl NativeService {
         let parsed: ReadGrantedParams = serde_json::from_value(params.clone())
             .map_err(|e| format!("Invalid read parameters: {e}"))?;
 
-        let entry = self.grant_table.get(&parsed.grant_id, window_id)
+        let entry = self
+            .grant_table
+            .get(&parsed.grant_id, window_id)
             .map_err(|_| "Grant not found or not owned by this window".to_string())?;
 
-        validate_granted_target(&entry, true)
-            .map_err(|err| err.to_string())?;
+        validate_granted_target(&entry, true).map_err(|err| err.to_string())?;
 
-        let meta = std::fs::metadata(&entry.path)
-            .map_err(|e| format!("Failed to read metadata: {e}"))?;
+        let meta =
+            std::fs::metadata(&entry.path).map_err(|e| format!("Failed to read metadata: {e}"))?;
 
         if meta.len() > MAX_READ_GRANTED_BYTES as u64 {
             return Err("File size exceeds 10 MB limit".to_string());
         }
 
-        let mut file = std::fs::File::open(&entry.path)
-            .map_err(|e| format!("Failed to open file: {e}"))?;
+        let mut file =
+            std::fs::File::open(&entry.path).map_err(|e| format!("Failed to open file: {e}"))?;
 
         let mut buffer = Vec::new();
         let bytes_read = file
@@ -425,11 +457,12 @@ impl NativeService {
             return Err("Payload exceeds 10 MB limit".to_string());
         }
 
-        let entry = self.grant_table.get(&parsed.grant_id, window_id)
+        let entry = self
+            .grant_table
+            .get(&parsed.grant_id, window_id)
             .map_err(|_| "Grant not found or not owned by this window".to_string())?;
 
-        validate_granted_target(&entry, false)
-            .map_err(|err| err.to_string())?;
+        validate_granted_target(&entry, false).map_err(|err| err.to_string())?;
 
         std::fs::write(&entry.path, parsed.content.as_bytes())
             .map_err(|e| format!("Failed to write file: {e}"))?;
@@ -446,8 +479,8 @@ impl NativeService {
         params: &serde_json::Value,
         window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        let parsed = wavical_ipc::parse_and_validate_context_menu_params(params)
-            .map_err(|err| {
+        let parsed =
+            wavical_ipc::parse_and_validate_context_menu_params(params).map_err(|err| {
                 tracing::warn!("menu.showContextMenu validation failed: {err}");
                 wavical_ipc::GENERIC_MENU_ERROR.to_string()
             })?;
@@ -465,11 +498,10 @@ impl NativeService {
         params: &serde_json::Value,
         _window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        let parsed = wavical_ipc::parse_and_validate_tray_params(params)
-            .map_err(|err| {
-                tracing::warn!("tray.set validation failed: {err}");
-                wavical_ipc::GENERIC_MENU_ERROR.to_string()
-            })?;
+        let parsed = wavical_ipc::parse_and_validate_tray_params(params).map_err(|err| {
+            tracing::warn!("tray.set validation failed: {err}");
+            wavical_ipc::GENERIC_MENU_ERROR.to_string()
+        })?;
 
         if let Some(ref provider) = self.menu_provider {
             provider.set_tray(parsed.tooltip, parsed.items)?;
@@ -481,19 +513,49 @@ impl NativeService {
     /// Register global hotkey shortcut (WP8).
     pub fn shortcut_register(
         &self,
-        _params: &serde_json::Value,
-        _window_id: &str,
+        params: &serde_json::Value,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("shortcut.register not implemented yet".to_string())
+        let parsed =
+            wavical_ipc::parse_and_validate_shortcut_params(Some(params)).map_err(|err| {
+                tracing::warn!("shortcut.register validation failed: {err}");
+                format!("Shortcut validation failed: {err}")
+            })?;
+
+        if let Some(ref provider) = self.shortcut_provider {
+            provider.register_shortcuts(window_id, parsed.clone())?;
+        }
+
+        let canonical_list: Vec<String> = parsed.into_iter().map(|s| s.canonical).collect();
+        Ok(serde_json::json!({
+            "success": true,
+            "registered": canonical_list
+        }))
     }
 
     /// Set taskbar overlay badge (WP8).
+    ///
+    /// Validates count range (0-99, 99+ overflow, 0 clears, negative rejected).
+    /// Returns a generic error and logs a tracing event per Phase 2 decision
+    /// (avoiding unverified unsafe COM calls).
     pub fn badge_set(
         &self,
-        _params: &serde_json::Value,
-        _window_id: &str,
+        params: &serde_json::Value,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
-        Err("badge.set not implemented yet".to_string())
+        let badge_value =
+            wavical_ipc::parse_and_validate_badge_params(Some(params)).map_err(|err| {
+                tracing::warn!("badge.set validation failed: {err}");
+                format!("Badge parameter validation failed: {err}")
+            })?;
+
+        tracing::warn!(
+            window_id = %window_id,
+            badge = ?badge_value,
+            "badge.set requested but taskbar overlay badge is not supported without unsafe COM; returning generic error"
+        );
+
+        Err("Taskbar overlay badge is not supported on this platform".to_string())
     }
 }
 
@@ -525,27 +587,16 @@ impl NativeHandler for NativeService {
 mod tests {
     use super::*;
     use std::io::Write;
-    use wavical_ipc::{dispatch_native, Capabilities, Request};
+    use wavical_ipc::{Capabilities, Request, dispatch_native};
 
     #[test]
-    fn test_native_service_unimplemented_handlers_return_not_implemented() {
+    fn test_native_service_unknown_methods_rejected() {
         let service = NativeService::new();
         let window_id = "test-window";
 
-        let remaining_unimplemented = [
-            "shortcut.register",
-            "badge.set",
-        ];
-
-        for &method in &remaining_unimplemented {
-            let res = service.handle_native(method, &serde_json::Value::Null, window_id);
-            assert!(res.is_err(), "Handler for '{method}' should return Err");
-            let err = res.unwrap_err();
-            assert!(
-                err.contains("not implemented yet"),
-                "Error for '{method}' was: {err}"
-            );
-        }
+        let res = service.handle_native("unknown.method", &serde_json::Value::Null, window_id);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("Unknown native method"));
     }
 
     #[test]
@@ -555,10 +606,7 @@ mod tests {
         let window_id = "test-window";
 
         let test_text = "Hello from Wavical native clipboard test!";
-        let write_res = service.clipboard_write(
-            &serde_json::json!({"text": test_text}),
-            window_id,
-        );
+        let write_res = service.clipboard_write(&serde_json::json!({"text": test_text}), window_id);
 
         if let Ok(resp) = write_res {
             assert_eq!(resp, serde_json::json!({"success": true}));
@@ -569,10 +617,7 @@ mod tests {
             assert_eq!(read_val["text"], test_text);
         } else {
             // In headless/container environments where clipboard is unavailable, verify error is generic
-            assert_eq!(
-                write_res.unwrap_err(),
-                wavical_ipc::GENERIC_CLIPBOARD_ERROR
-            );
+            assert_eq!(write_res.unwrap_err(), wavical_ipc::GENERIC_CLIPBOARD_ERROR);
         }
     }
 
@@ -582,10 +627,7 @@ mod tests {
         let window_id = "test-window";
 
         let huge_text = "x".repeat(wavical_ipc::MAX_CLIPBOARD_TEXT_BYTES + 10);
-        let write_res = service.clipboard_write(
-            &serde_json::json!({"text": huge_text}),
-            window_id,
-        );
+        let write_res = service.clipboard_write(&serde_json::json!({"text": huge_text}), window_id);
         assert!(write_res.is_err());
         assert_eq!(write_res.unwrap_err(), wavical_ipc::GENERIC_CLIPBOARD_ERROR);
     }
@@ -602,7 +644,10 @@ mod tests {
             window_id,
         );
         assert!(bad_title.is_err());
-        assert_eq!(bad_title.unwrap_err(), wavical_ipc::GENERIC_NOTIFICATION_ERROR);
+        assert_eq!(
+            bad_title.unwrap_err(),
+            wavical_ipc::GENERIC_NOTIFICATION_ERROR
+        );
 
         // Disallowed url parameter
         let bad_url = service.notify_send(
@@ -610,7 +655,10 @@ mod tests {
             window_id,
         );
         assert!(bad_url.is_err());
-        assert_eq!(bad_url.unwrap_err(), wavical_ipc::GENERIC_NOTIFICATION_ERROR);
+        assert_eq!(
+            bad_url.unwrap_err(),
+            wavical_ipc::GENERIC_NOTIFICATION_ERROR
+        );
     }
 
     #[test]
@@ -631,7 +679,10 @@ mod tests {
         if resp.ok {
             assert_eq!(resp.result, Some(serde_json::json!({"success": true})));
         } else {
-            assert_eq!(resp.error.as_deref(), Some(wavical_ipc::GENERIC_CLIPBOARD_ERROR));
+            assert_eq!(
+                resp.error.as_deref(),
+                Some(wavical_ipc::GENERIC_CLIPBOARD_ERROR)
+            );
         }
     }
 
@@ -661,7 +712,10 @@ mod tests {
             }),
             window_id,
         );
-        assert!(res_write.is_err(), "Forged grant ID must be rejected on write");
+        assert!(
+            res_write.is_err(),
+            "Forged grant ID must be rejected on write"
+        );
         assert!(res_write.unwrap_err().contains("Grant not found"));
     }
 
@@ -681,18 +735,12 @@ mod tests {
             .expect("grant insertion should succeed");
 
         // Window A can read it successfully
-        let read_a = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            "window-A",
-        );
+        let read_a = service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), "window-A");
         assert!(read_a.is_ok(), "Window A should read its own grant");
         assert_eq!(read_a.unwrap()["content"], "confidential window A data");
 
         // Window B attempts to use Window A's grant ID -> MUST be treated as not found
-        let read_b = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            "window-B",
-        );
+        let read_b = service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), "window-B");
         assert!(read_b.is_err(), "Window B must not access Window A's grant");
         assert!(read_b.unwrap_err().contains("Grant not found"));
 
@@ -701,7 +749,10 @@ mod tests {
             &serde_json::json!({"grantId": grant_id, "content": "hijacked"}),
             "window-B",
         );
-        assert!(write_b.is_err(), "Window B must not write to Window A's grant");
+        assert!(
+            write_b.is_err(),
+            "Window B must not write to Window A's grant"
+        );
         assert!(write_b.unwrap_err().contains("Grant not found"));
     }
 
@@ -721,21 +772,20 @@ mod tests {
             .expect("insert grant");
 
         // Verify grant works initially
-        let before_close = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            window_id,
-        );
+        let before_close =
+            service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id);
         assert!(before_close.is_ok());
 
         // Simulate window close
         service.clear_window(window_id);
 
         // After window closes, grant is GONE
-        let after_close = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            window_id,
+        let after_close =
+            service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id);
+        assert!(
+            after_close.is_err(),
+            "Grant must be gone after window closes"
         );
-        assert!(after_close.is_err(), "Grant must be gone after window closes");
         assert!(after_close.unwrap_err().contains("Grant not found"));
     }
 
@@ -764,8 +814,12 @@ mod tests {
         assert_eq!(res_65.unwrap_err(), wavical_ipc::GrantError::LimitReached);
 
         // Another window can still create grants independently
-        let other_window_res = grant_table.insert("window-other", temp_dir.path().join("other.txt"));
-        assert!(other_window_res.is_ok(), "Different window limit is separate");
+        let other_window_res =
+            grant_table.insert("window-other", temp_dir.path().join("other.txt"));
+        assert!(
+            other_window_res.is_ok(),
+            "Different window limit is separate"
+        );
     }
 
     // Test 5: A granted path replaced by a symlink or junction after the grant is rejected.
@@ -788,10 +842,8 @@ mod tests {
             .expect("insert grant");
 
         // Verify read succeeds initially
-        let initial_read = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            window_id,
-        );
+        let initial_read =
+            service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id);
         assert!(initial_read.is_ok());
         assert_eq!(initial_read.unwrap()["content"], "real content");
 
@@ -807,10 +859,8 @@ mod tests {
         match symlink_result {
             Ok(_) => {
                 // Symlink was created; re-check at use time MUST detect and reject it!
-                let symlink_read = service.fs_read_granted(
-                    &serde_json::json!({"grantId": grant_id}),
-                    window_id,
-                );
+                let symlink_read =
+                    service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id);
                 assert!(
                     symlink_read.is_err(),
                     "Path replaced by symlink must be rejected at use time"
@@ -855,10 +905,8 @@ mod tests {
             .insert(window_id, &huge_file)
             .expect("insert grant");
 
-        let read_res = service.fs_read_granted(
-            &serde_json::json!({"grantId": read_grant}),
-            window_id,
-        );
+        let read_res =
+            service.fs_read_granted(&serde_json::json!({"grantId": read_grant}), window_id);
         assert!(read_res.is_err(), "Read over 10 MB limit must fail");
         assert!(read_res.unwrap_err().contains("10 MB limit"));
 
@@ -892,7 +940,10 @@ mod tests {
             }),
             window_id,
         );
-        assert!(bad_read.is_err(), "fs.readGranted must reject injected 'path'");
+        assert!(
+            bad_read.is_err(),
+            "fs.readGranted must reject injected 'path'"
+        );
         assert!(bad_read.unwrap_err().contains("unknown field `path`"));
 
         // Attack 2: Injected "path" in fs.writeGranted
@@ -904,7 +955,10 @@ mod tests {
             }),
             window_id,
         );
-        assert!(bad_write.is_err(), "fs.writeGranted must reject injected 'path'");
+        assert!(
+            bad_write.is_err(),
+            "fs.writeGranted must reject injected 'path'"
+        );
         assert!(bad_write.unwrap_err().contains("unknown field `path`"));
 
         // Attack 3: Injected "path" in dialog.openFile
@@ -914,7 +968,10 @@ mod tests {
             }),
             window_id,
         );
-        assert!(bad_open.is_err(), "dialog.openFile must reject injected 'path'");
+        assert!(
+            bad_open.is_err(),
+            "dialog.openFile must reject injected 'path'"
+        );
         assert!(bad_open.unwrap_err().contains("unknown field `path`"));
 
         // Attack 4: Raw filter string in dialog.openFile
@@ -924,7 +981,10 @@ mod tests {
             }),
             window_id,
         );
-        assert!(bad_filter.is_err(), "dialog.openFile must reject raw 'filter'");
+        assert!(
+            bad_filter.is_err(),
+            "dialog.openFile must reject raw 'filter'"
+        );
         assert!(bad_filter.unwrap_err().contains("unknown field `filter`"));
 
         // Attack 5: Unknown filterId in dialog.openFile
@@ -934,8 +994,15 @@ mod tests {
             }),
             window_id,
         );
-        assert!(bad_filter_id.is_err(), "dialog.openFile must reject unknown filterId");
-        assert!(bad_filter_id.unwrap_err().contains("Unknown dialog filter ID"));
+        assert!(
+            bad_filter_id.is_err(),
+            "dialog.openFile must reject unknown filterId"
+        );
+        assert!(
+            bad_filter_id
+                .unwrap_err()
+                .contains("Unknown dialog filter ID")
+        );
     }
 
     #[test]
@@ -950,12 +1017,12 @@ mod tests {
         // Even if an entry with colon is somehow inserted
         let grant_id = grant_table.insert(window_id, ads_path).expect("insert");
 
-        let res = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            window_id,
-        );
+        let res = service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id);
         assert!(res.is_err());
-        assert!(res.unwrap_err().contains("Alternate data streams are not permitted"));
+        assert!(
+            res.unwrap_err()
+                .contains("Alternate data streams are not permitted")
+        );
     }
 
     #[test]
@@ -967,12 +1034,11 @@ mod tests {
         let service = NativeService::with_grant_table(Arc::clone(&grant_table));
         let window_id = "window-reserved";
 
-        let grant_id = grant_table.insert(window_id, reserved_path).expect("insert");
+        let grant_id = grant_table
+            .insert(window_id, reserved_path)
+            .expect("insert");
 
-        let res = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            window_id,
-        );
+        let res = service.fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id);
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("reserved Windows device name"));
     }
@@ -990,28 +1056,31 @@ mod tests {
         let grant_id = grant_table.insert(window_id, &test_file).expect("insert");
 
         // Read initial content
-        let read_res = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            window_id,
-        ).expect("read should succeed");
+        let read_res = service
+            .fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id)
+            .expect("read should succeed");
         assert_eq!(read_res["content"], "Initial content 12345");
 
         // Write new content
-        let write_res = service.fs_write_granted(
-            &serde_json::json!({
-                "grantId": grant_id,
-                "content": "Updated content successfully written!"
-            }),
-            window_id,
-        ).expect("write should succeed");
+        let write_res = service
+            .fs_write_granted(
+                &serde_json::json!({
+                    "grantId": grant_id,
+                    "content": "Updated content successfully written!"
+                }),
+                window_id,
+            )
+            .expect("write should succeed");
         assert_eq!(write_res["success"], true);
 
         // Read updated content
-        let read_updated = service.fs_read_granted(
-            &serde_json::json!({"grantId": grant_id}),
-            window_id,
-        ).expect("read should succeed");
-        assert_eq!(read_updated["content"], "Updated content successfully written!");
+        let read_updated = service
+            .fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id)
+            .expect("read should succeed");
+        assert_eq!(
+            read_updated["content"],
+            "Updated content successfully written!"
+        );
     }
 
     // =========================================================================
@@ -1028,7 +1097,9 @@ mod tests {
                 {"id": "paste", "label": "Paste", "enabled": false}
             ]
         });
-        let res = service.menu_show_context_menu(&params, "win-1").expect("should succeed");
+        let res = service
+            .menu_show_context_menu(&params, "win-1")
+            .expect("should succeed");
         assert_eq!(res["success"], true);
     }
 
@@ -1116,14 +1187,24 @@ mod tests {
     }
 
     impl MenuProvider for MockMenuProvider {
-        fn show_context_menu(&self, _window_id: &str, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String> {
-            self.context_menu_shown.store(true, std::sync::atomic::Ordering::SeqCst);
+        fn show_context_menu(
+            &self,
+            _window_id: &str,
+            items: Vec<wavical_ipc::MenuItem>,
+        ) -> Result<(), String> {
+            self.context_menu_shown
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(items.len(), 1);
             Ok(())
         }
 
-        fn set_tray(&self, tooltip: Option<String>, items: Vec<wavical_ipc::MenuItem>) -> Result<(), String> {
-            self.tray_set_called.store(true, std::sync::atomic::Ordering::SeqCst);
+        fn set_tray(
+            &self,
+            tooltip: Option<String>,
+            items: Vec<wavical_ipc::MenuItem>,
+        ) -> Result<(), String> {
+            self.tray_set_called
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             assert_eq!(tooltip.as_deref(), Some("Test Tray"));
             assert_eq!(items.len(), 1);
             Ok(())
@@ -1139,19 +1220,125 @@ mod tests {
 
         let service = NativeService::new().with_menu_provider(provider.clone());
 
-        service.menu_show_context_menu(
-            &serde_json::json!({"items": [{"id": "item.1", "label": "Item"}]}),
-            "win-1",
-        ).expect("context menu success");
-        assert!(provider.context_menu_shown.load(std::sync::atomic::Ordering::SeqCst));
+        service
+            .menu_show_context_menu(
+                &serde_json::json!({"items": [{"id": "item.1", "label": "Item"}]}),
+                "win-1",
+            )
+            .expect("context menu success");
+        assert!(
+            provider
+                .context_menu_shown
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
 
-        service.tray_set(
-            &serde_json::json!({
-                "tooltip": "Test Tray",
-                "items": [{"id": "tray.1", "label": "Tray Item"}]
-            }),
-            "win-1",
-        ).expect("tray set success");
-        assert!(provider.tray_set_called.load(std::sync::atomic::Ordering::SeqCst));
+        service
+            .tray_set(
+                &serde_json::json!({
+                    "tooltip": "Test Tray",
+                    "items": [{"id": "tray.1", "label": "Tray Item"}]
+                }),
+                "win-1",
+            )
+            .expect("tray set success");
+        assert!(
+            provider
+                .tray_set_called
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
+    }
+
+    #[test]
+    fn test_wp8_badge_set_validation_and_not_supported_error() {
+        let service = NativeService::new();
+
+        // Count 5: passes validation, returns not supported generic error (does NOT return success)
+        let res5 = service.badge_set(&serde_json::json!({"count": 5}), "win-1");
+        assert!(res5.is_err());
+        assert_eq!(
+            res5.unwrap_err(),
+            "Taskbar overlay badge is not supported on this platform"
+        );
+
+        // Count 150: passes validation, returns not supported error
+        let res150 = service.badge_set(&serde_json::json!({"count": 150}), "win-1");
+        assert!(res150.is_err());
+        assert_eq!(
+            res150.unwrap_err(),
+            "Taskbar overlay badge is not supported on this platform"
+        );
+
+        // Count -5: fails validation before reaching provider
+        let res_neg = service.badge_set(&serde_json::json!({"count": -5}), "win-1");
+        assert!(res_neg.is_err());
+        assert!(
+            res_neg
+                .unwrap_err()
+                .contains("Badge parameter validation failed")
+        );
+    }
+
+    struct MockShortcutProvider {
+        registered_called: std::sync::atomic::AtomicBool,
+        simulate_conflict: bool,
+    }
+
+    impl ShortcutProvider for MockShortcutProvider {
+        fn register_shortcuts(
+            &self,
+            _window_id: &str,
+            shortcuts: Vec<wavical_ipc::ParsedShortcut>,
+        ) -> Result<(), String> {
+            self.registered_called
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            if self.simulate_conflict {
+                Err("Global shortcut is in use by another application".to_string())
+            } else {
+                assert_eq!(shortcuts.len(), 1);
+                assert_eq!(shortcuts[0].canonical, "Ctrl+Shift+K");
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_wp8_shortcut_register_validation_and_provider_dispatch() {
+        let provider = Arc::new(MockShortcutProvider {
+            registered_called: std::sync::atomic::AtomicBool::new(false),
+            simulate_conflict: false,
+        });
+
+        let service = NativeService::new().with_shortcut_provider(provider.clone());
+
+        // Valid shortcut
+        let res = service
+            .shortcut_register(&serde_json::json!({"shortcut": "ctrl+shift+k"}), "win-1")
+            .expect("should register");
+        assert_eq!(res["success"], true);
+        assert!(
+            provider
+                .registered_called
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
+
+        // Invalid grammar (missing modifier)
+        let err_res = service.shortcut_register(&serde_json::json!({"shortcut": "K"}), "win-1");
+        assert!(err_res.is_err());
+        assert!(err_res.unwrap_err().contains("Shortcut validation failed"));
+
+        // Conflict handling
+        let conflict_provider = Arc::new(MockShortcutProvider {
+            registered_called: std::sync::atomic::AtomicBool::new(false),
+            simulate_conflict: true,
+        });
+        let conflict_service = NativeService::new().with_shortcut_provider(conflict_provider);
+        let conflict_res = conflict_service
+            .shortcut_register(&serde_json::json!({"shortcut": "Ctrl+Alt+Delete"}), "win-1");
+        assert!(conflict_res.is_err());
+        assert!(
+            conflict_res
+                .unwrap_err()
+                .contains("in use by another application")
+        );
     }
 }

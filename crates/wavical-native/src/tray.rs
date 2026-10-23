@@ -40,8 +40,12 @@ pub fn build_muda_menu(items: &[MenuItem]) -> muda::Menu {
 
 /// Load an icon from a resolved filesystem path.
 pub fn load_tray_icon(path: &Path) -> Result<tray_icon::Icon, String> {
-    tray_icon::Icon::from_path(path, Some((32, 32)))
-        .map_err(|e| format!("Failed to load tray icon from path '{}': {e}", path.display()))
+    tray_icon::Icon::from_path(path, Some((32, 32))).map_err(|e| {
+        format!(
+            "Failed to load tray icon from path '{}': {e}",
+            path.display()
+        )
+    })
 }
 
 /// Show a context menu on Windows for the given HWND at the cursor position.
@@ -85,7 +89,10 @@ mod tests {
 
         let res = resolve_tray_icon_path(&sub, "../secret.ico");
         assert!(res.is_err());
-        assert!(res.unwrap_err().contains("Directory traversal sequence detected"));
+        assert!(
+            res.unwrap_err()
+                .contains("Directory traversal sequence detected")
+        );
     }
 
     #[test]

@@ -260,7 +260,10 @@ mod tests {
             MenuItem::new("duplicate.id", "Item C"),
         ];
         let err = validate_menu_items(&items).expect_err("Duplicate IDs must be rejected");
-        assert_eq!(err, MenuValidationError::DuplicateItemId("duplicate.id".to_string()));
+        assert_eq!(
+            err,
+            MenuValidationError::DuplicateItemId("duplicate.id".to_string())
+        );
     }
 
     #[test]
@@ -268,17 +271,26 @@ mod tests {
         // Uppercase not allowed [a-z0-9._-]
         let items_upper = vec![MenuItem::new("ItemBad", "Label")];
         let err = validate_menu_items(&items_upper).expect_err("Uppercase must be rejected");
-        assert!(matches!(err, MenuValidationError::InvalidItemIdCharacter { char: 'I', .. }));
+        assert!(matches!(
+            err,
+            MenuValidationError::InvalidItemIdCharacter { char: 'I', .. }
+        ));
 
         // Space not allowed
         let items_space = vec![MenuItem::new("item bad", "Label")];
         let err2 = validate_menu_items(&items_space).expect_err("Space must be rejected");
-        assert!(matches!(err2, MenuValidationError::InvalidItemIdCharacter { char: ' ', .. }));
+        assert!(matches!(
+            err2,
+            MenuValidationError::InvalidItemIdCharacter { char: ' ', .. }
+        ));
 
         // Special symbols like @ or ! or / not allowed
         let items_symbol = vec![MenuItem::new("item/bad", "Label")];
         let err3 = validate_menu_items(&items_symbol).expect_err("Slash must be rejected");
-        assert!(matches!(err3, MenuValidationError::InvalidItemIdCharacter { char: '/', .. }));
+        assert!(matches!(
+            err3,
+            MenuValidationError::InvalidItemIdCharacter { char: '/', .. }
+        ));
     }
 
     #[test]
@@ -319,7 +331,10 @@ mod tests {
         let label_101 = "L".repeat(101);
         let items_bad = vec![MenuItem::new("item_1", label_101)];
         let err = validate_menu_items(&items_bad).expect_err("101 chars label must be rejected");
-        assert!(matches!(err, MenuValidationError::LabelTooLong { max: 100, .. }));
+        assert!(matches!(
+            err,
+            MenuValidationError::LabelTooLong { max: 100, .. }
+        ));
     }
 
     #[test]
@@ -329,7 +344,8 @@ mod tests {
             {"id": "item.one", "label": "One"},
             {"id": "item.two", "label": "Two"}
         ]);
-        let parsed = parse_and_validate_tray_params(&json_arr).expect("Array parsing should succeed");
+        let parsed =
+            parse_and_validate_tray_params(&json_arr).expect("Array parsing should succeed");
         assert_eq!(parsed.items.len(), 2);
         assert_eq!(parsed.tooltip, None);
 
@@ -340,7 +356,8 @@ mod tests {
                 {"id": "quit", "label": "Quit App"}
             ]
         });
-        let parsed_obj = parse_and_validate_tray_params(&json_obj).expect("Object parsing should succeed");
+        let parsed_obj =
+            parse_and_validate_tray_params(&json_obj).expect("Object parsing should succeed");
         assert_eq!(parsed_obj.items.len(), 1);
         assert_eq!(parsed_obj.tooltip.as_deref(), Some("My App Tooltip"));
 
@@ -359,7 +376,8 @@ mod tests {
             {"id": "copy", "label": "Copy"},
             {"id": "paste", "label": "Paste"}
         ]);
-        let parsed = parse_and_validate_context_menu_params(&json_arr).expect("Parsing should succeed");
+        let parsed =
+            parse_and_validate_context_menu_params(&json_arr).expect("Parsing should succeed");
         assert_eq!(parsed.items.len(), 2);
 
         let json_obj = serde_json::json!({
@@ -367,7 +385,8 @@ mod tests {
                 {"id": "inspect", "label": "Inspect Element"}
             ]
         });
-        let parsed_obj = parse_and_validate_context_menu_params(&json_obj).expect("Parsing should succeed");
+        let parsed_obj =
+            parse_and_validate_context_menu_params(&json_obj).expect("Parsing should succeed");
         assert_eq!(parsed_obj.items.len(), 1);
     }
 }

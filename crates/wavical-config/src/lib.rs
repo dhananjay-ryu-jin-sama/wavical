@@ -39,7 +39,12 @@ pub struct WindowConfig {
     pub title: Option<String>,
 
     /// Persist window size, position, and maximized state across sessions (default: true).
-    #[serde(default, rename = "persistState", alias = "persist_state", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "persistState",
+        alias = "persist_state",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub persist_state: Option<bool>,
 }
 
@@ -121,12 +126,30 @@ pub struct AppConfig {
     pub dialog: Option<DialogConfig>,
 
     /// Optional single-instance lock setting (default: true).
-    #[serde(default, rename = "singleInstance", alias = "single_instance", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "singleInstance",
+        alias = "single_instance",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub single_instance: Option<bool>,
 
     /// Optional system tray configuration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tray: Option<TrayConfig>,
+
+    /// Optional global shortcuts registered at application startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcuts: Option<Vec<String>>,
+
+    /// Optional file associations list (each extension must match `^[a-z0-9]{1,10}$`).
+    #[serde(
+        default,
+        rename = "fileAssociations",
+        alias = "file_associations",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub file_associations: Option<Vec<String>>,
 }
 
 /// System tray configuration options.
@@ -167,6 +190,8 @@ impl AppConfig {
             dialog: None,
             single_instance: None,
             tray: None,
+            shortcuts: None,
+            file_associations: None,
         }
     }
 
@@ -377,6 +402,12 @@ pub enum ValidationError {
 
     #[error("appId must be alphanumeric (a-z, 0-9, -, _), got '{0}'")]
     InvalidAppId(String),
+
+    #[error("invalid file association extension: {0}")]
+    InvalidFileAssociation(String),
+
+    #[error("invalid shortcut specification: {0}")]
+    InvalidShortcut(String),
 }
 
 impl ValidationError {
@@ -420,6 +451,8 @@ fn extract_missing_field(msg: &str) -> Option<String> {
 /// - Presence and formatting of required `appId`
 /// - Strict schema validation (`deny_unknown_fields`)
 /// - Capability validation against the `wavical-ipc` registry
+/// - File associations extension regex (`^[a-z0-9]{1,10}$`)
+/// - Global shortcut grammar and uniqueness limits (max 32)
 pub fn parse_config_json(json_str: &str) -> Result<AppConfig, ValidationError> {
     let trimmed = json_str.trim();
     if trimmed.is_empty() || trimmed == "undefined" || trimmed == "null" {
@@ -463,6 +496,18 @@ pub fn parse_config_json(json_str: &str) -> Result<AppConfig, ValidationError> {
                 ));
             }
         }
+    }
+
+    if let Some(ref exts) = config.file_associations {
+        for ext in exts {
+            wavical_ipc::validate_file_extension(ext)
+                .map_err(|e| ValidationError::InvalidFileAssociation(e.to_string()))?;
+        }
+    }
+
+    if let Some(ref shortcuts) = config.shortcuts {
+        wavical_ipc::validate_shortcut_list(shortcuts)
+            .map_err(|e| ValidationError::InvalidShortcut(e.to_string()))?;
     }
 
     Ok(config)
@@ -798,7 +843,8 @@ mod tests {
 
         for (typo, expected_suggestion) in test_cases {
             let json = format!(r#"{{"appId": "test", "capabilities": {{"{typo}": true}}}}"#);
-            let err = parse_config_json(&json).expect_err(&format!("typo '{typo}' should be rejected"));
+            let err =
+                parse_config_json(&json).expect_err(&format!("typo '{typo}' should be rejected"));
             match err {
                 ValidationError::UnknownCapability(ref cap, _) => {
                     assert_eq!(cap, typo);
@@ -808,7 +854,8 @@ mod tests {
                         "Expected suggestion '{expected_suggestion}' for typo '{typo}'"
                     );
                     assert!(
-                        err.to_string().contains(&format!("did you mean '{expected_suggestion}'?")),
+                        err.to_string()
+                            .contains(&format!("did you mean '{expected_suggestion}'?")),
                         "Error string should contain suggestion for '{typo}'"
                     );
                 }
@@ -1010,16 +1057,20 @@ mod tests {
             dev_strat,
             single_instance_strat,
         )
-            .prop_map(|(app_id, version, window, capabilities, dev, single_instance)| AppConfig {
-                app_id,
-                version,
-                window,
-                capabilities,
-                dev,
-                dialog: None,
-                single_instance,
-                tray: None,
-            })
+            .prop_map(
+                |(app_id, version, window, capabilities, dev, single_instance)| AppConfig {
+                    app_id,
+                    version,
+                    window,
+                    capabilities,
+                    dev,
+                    dialog: None,
+                    single_instance,
+                    tray: None,
+                    shortcuts: None,
+                    file_associations: None,
+                },
+            )
     }
 
     #[test]
@@ -1048,6 +1099,54 @@ mod tests {
             }
             other => panic!("Unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_file_associations_and_shortcuts_config_validation() {
+        let valid_json = r#"{
+            "appId": "test-assoc",
+            "fileAssociations": ["wav", "demo123"],
+            "shortcuts": ["Ctrl+Shift+K", "Alt+F4"]
+        }"#;
+        let config = parse_config_json(valid_json).expect("valid config should parse");
+        assert_eq!(
+            config.file_associations.as_deref(),
+            Some(&["wav".to_string(), "demo123".to_string()][..])
+        );
+        assert_eq!(
+            config.shortcuts.as_deref(),
+            Some(&["Ctrl+Shift+K".to_string(), "Alt+F4".to_string()][..])
+        );
+
+        // Invalid extension (contains dot)
+        let bad_ext = r#"{
+            "appId": "test-assoc",
+            "fileAssociations": [".wav"]
+        }"#;
+        assert!(matches!(
+            parse_config_json(bad_ext),
+            Err(ValidationError::InvalidFileAssociation(_))
+        ));
+
+        // Invalid extension (too long)
+        let bad_len = r#"{
+            "appId": "test-assoc",
+            "fileAssociations": ["toolongext11"]
+        }"#;
+        assert!(matches!(
+            parse_config_json(bad_len),
+            Err(ValidationError::InvalidFileAssociation(_))
+        ));
+
+        // Invalid shortcut (duplicate)
+        let dup_shortcut = r#"{
+            "appId": "test-assoc",
+            "shortcuts": ["Ctrl+K", "Ctrl+K"]
+        }"#;
+        assert!(matches!(
+            parse_config_json(dup_shortcut),
+            Err(ValidationError::InvalidShortcut(_))
+        ));
     }
 
     proptest! {

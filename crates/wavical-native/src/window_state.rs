@@ -18,8 +18,13 @@ pub fn get_app_data_dir(app_id: &str) -> Result<PathBuf, String> {
         return Err("appId cannot be empty or whitespace".to_string());
     }
 
-    if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(format!("Invalid appId '{app_id}': only alphanumeric, '-', and '_' are allowed"));
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "Invalid appId '{app_id}': only alphanumeric, '-', and '_' are allowed"
+        ));
     }
 
     let base = if let Ok(appdata) = std::env::var("APPDATA") {
@@ -46,7 +51,10 @@ pub fn get_window_state_path(app_id: &str) -> Result<PathBuf, String> {
 /// and renames over the target path. If any step fails, the temporary file is cleaned up.
 pub fn write_file_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "Path must have a parent directory")
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Path must have a parent directory",
+        )
     })?;
 
     std::fs::create_dir_all(parent)?;
@@ -120,11 +128,18 @@ mod tests {
 
         // Write initial data
         write_file_atomic(&target_file, b"initial content").expect("first write should succeed");
-        assert_eq!(std::fs::read_to_string(&target_file).unwrap(), "initial content");
+        assert_eq!(
+            std::fs::read_to_string(&target_file).unwrap(),
+            "initial content"
+        );
 
         // Atomic overwrite
-        write_file_atomic(&target_file, b"overwritten content").expect("second write should succeed");
-        assert_eq!(std::fs::read_to_string(&target_file).unwrap(), "overwritten content");
+        write_file_atomic(&target_file, b"overwritten content")
+            .expect("second write should succeed");
+        assert_eq!(
+            std::fs::read_to_string(&target_file).unwrap(),
+            "overwritten content"
+        );
 
         // Verify no leftover .tmp files
         let parent = target_file.parent().unwrap();

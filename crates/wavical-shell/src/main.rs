@@ -53,6 +53,10 @@ pub struct ShellCli {
     #[arg(long, env = "WAVICAL_TRAY_ICON")]
     pub tray_icon: Option<String>,
 
+    /// Initial global shortcuts list (JSON array or comma-separated list) (WP8)
+    #[arg(long, env = "WAVICAL_SHORTCUTS")]
+    pub shortcuts: Option<String>,
+
     /// Run in development server mode
     #[arg(long)]
     pub dev: bool,
@@ -101,6 +105,21 @@ fn main() {
         .clone()
         .unwrap_or_else(|| args.app_id.clone());
 
+    let initial_shortcuts = if let Some(ref raw) = args.shortcuts {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('[') {
+            serde_json::from_str::<Vec<String>>(trimmed).unwrap_or_default()
+        } else {
+            trimmed
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+    } else {
+        Vec::new()
+    };
+
     let config = WindowConfig {
         window_id: args.app_id,
         allowed_origins: vec![
@@ -118,6 +137,7 @@ fn main() {
         persist_state: args.persist_state.unwrap_or(true),
         single_instance: args.single_instance.unwrap_or(true),
         tray_icon: args.tray_icon,
+        shortcuts: initial_shortcuts,
     };
 
     run_with_config(asset_root, config);

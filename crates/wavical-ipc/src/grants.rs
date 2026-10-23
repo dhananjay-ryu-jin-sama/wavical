@@ -90,7 +90,9 @@ impl GrantTable {
         let canonical_path = if path_buf.exists() {
             path_buf.canonicalize().ok()
         } else if let Some(parent) = path_buf.parent() {
-            if let (Ok(canonical_parent), Some(file_name)) = (parent.canonicalize(), path_buf.file_name()) {
+            if let (Ok(canonical_parent), Some(file_name)) =
+                (parent.canonicalize(), path_buf.file_name())
+            {
                 Some(canonical_parent.join(file_name))
             } else {
                 None
@@ -145,11 +147,9 @@ impl GrantTable {
     /// Remove a specific grant ID if owned by `window_id`.
     pub fn remove_grant(&self, grant_id: &str, window_id: &str) -> bool {
         let mut table = self.grants.write().unwrap();
-        if let Some(entry) = table.get(grant_id) {
-            if entry.window_id == window_id {
-                table.remove(grant_id);
-                return true;
-            }
+        if table.get(grant_id).map(|e| e.window_id.as_str()) == Some(window_id) {
+            table.remove(grant_id);
+            return true;
         }
         false
     }
@@ -211,7 +211,10 @@ mod tests {
             let id = generate_grant_id().expect("grant ID generation should succeed");
             // 128 bits = 16 bytes = 32 lowercase hex characters
             assert_eq!(id.len(), 32);
-            assert!(id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+            assert!(
+                id.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+            );
             assert!(ids.insert(id), "Grant IDs must be unique and unguessable");
         }
     }
@@ -224,12 +227,16 @@ mod tests {
         let grant_id = table.insert("win-1", path.clone()).expect("insert");
 
         // Allowed for win-1
-        let entry = table.get(&grant_id, "win-1").expect("win-1 lookup should succeed");
+        let entry = table
+            .get(&grant_id, "win-1")
+            .expect("win-1 lookup should succeed");
         assert_eq!(entry.window_id, "win-1");
         assert_eq!(entry.path, path);
 
         // Denied (treated as not found) for win-2
-        let err = table.get(&grant_id, "win-2").expect_err("win-2 lookup must fail");
+        let err = table
+            .get(&grant_id, "win-2")
+            .expect_err("win-2 lookup must fail");
         assert_eq!(err, GrantError::NotFound);
     }
 
@@ -247,8 +254,14 @@ mod tests {
         table.clear_window("win-close");
 
         assert_eq!(table.count_for_window("win-close"), 0);
-        assert_eq!(table.get(&id1, "win-close").unwrap_err(), GrantError::NotFound);
-        assert_eq!(table.get(&id2, "win-close").unwrap_err(), GrantError::NotFound);
+        assert_eq!(
+            table.get(&id1, "win-close").unwrap_err(),
+            GrantError::NotFound
+        );
+        assert_eq!(
+            table.get(&id2, "win-close").unwrap_err(),
+            GrantError::NotFound
+        );
 
         // Other window is unaffected
         assert_eq!(table.count_for_window("win-keep"), 1);
@@ -275,32 +288,59 @@ mod tests {
     #[test]
     fn test_deny_unknown_fields_rejects_page_supplied_paths() {
         // ReadGrantedParams
-        let json_with_path = r#"{"grantId": "0123456789abcdef0123456789abcdef", "path": "secret.txt"}"#;
+        let json_with_path =
+            r#"{"grantId": "0123456789abcdef0123456789abcdef", "path": "secret.txt"}"#;
         let err_read: Result<ReadGrantedParams, _> = serde_json::from_str(json_with_path);
         assert!(err_read.is_err());
-        assert!(err_read.unwrap_err().to_string().contains("unknown field `path`"));
+        assert!(
+            err_read
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field `path`")
+        );
 
         // WriteGrantedParams
         let json_write_path = r#"{"grantId": "0123456789abcdef0123456789abcdef", "content": "data", "path": "secret.txt"}"#;
         let err_write: Result<WriteGrantedParams, _> = serde_json::from_str(json_write_path);
         assert!(err_write.is_err());
-        assert!(err_write.unwrap_err().to_string().contains("unknown field `path`"));
+        assert!(
+            err_write
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field `path`")
+        );
 
         // OpenFileDialogParams
         let json_open_path = r#"{"path": "secret.txt"}"#;
         let err_open: Result<OpenFileDialogParams, _> = serde_json::from_str(json_open_path);
         assert!(err_open.is_err());
-        assert!(err_open.unwrap_err().to_string().contains("unknown field `path`"));
+        assert!(
+            err_open
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field `path`")
+        );
 
         let json_open_filter = r#"{"filter": "*.txt"}"#;
-        let err_open_filter: Result<OpenFileDialogParams, _> = serde_json::from_str(json_open_filter);
+        let err_open_filter: Result<OpenFileDialogParams, _> =
+            serde_json::from_str(json_open_filter);
         assert!(err_open_filter.is_err());
-        assert!(err_open_filter.unwrap_err().to_string().contains("unknown field `filter`"));
+        assert!(
+            err_open_filter
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field `filter`")
+        );
 
         // SaveFileDialogParams
         let json_save_path = r#"{"path": "secret.txt"}"#;
         let err_save: Result<SaveFileDialogParams, _> = serde_json::from_str(json_save_path);
         assert!(err_save.is_err());
-        assert!(err_save.unwrap_err().to_string().contains("unknown field `path`"));
+        assert!(
+            err_save
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field `path`")
+        );
     }
 }

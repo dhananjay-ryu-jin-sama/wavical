@@ -60,6 +60,20 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         }
     }
 
+    const shortcutListeners = new Set();
+    function dispatchShortcutEvent(shortcut) {
+        if (typeof shortcut !== 'string') return;
+        const event = new CustomEvent('wavical:shortcut', { detail: { shortcut } });
+        window.dispatchEvent(event);
+        for (const listener of shortcutListeners) {
+            try {
+                listener(shortcut);
+            } catch (err) {
+                console.error("Error in shortcut listener:", err);
+            }
+        }
+    }
+
     Object.defineProperty(window, '__wavical_receive__', {
         value: Object.freeze(receiveResponse),
         writable: false,
@@ -69,6 +83,13 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
 
     Object.defineProperty(window, '__wavical_event__', {
         value: Object.freeze(dispatchMenuEvent),
+        writable: false,
+        configurable: false,
+        enumerable: false,
+    });
+
+    Object.defineProperty(window, '__wavical_shortcut_event__', {
+        value: Object.freeze(dispatchShortcutEvent),
         writable: false,
         configurable: false,
         enumerable: false,
@@ -104,9 +125,18 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         return () => menuListeners.delete(callback);
     }
 
+    function onShortcut(callback) {
+        if (typeof callback !== 'function') {
+            throw new TypeError("Callback must be a function");
+        }
+        shortcutListeners.add(callback);
+        return () => shortcutListeners.delete(callback);
+    }
+
     const wavicalApi = Object.freeze({
         invoke: Object.freeze(invoke),
         onMenu: Object.freeze(onMenu),
+        onShortcut: Object.freeze(onShortcut),
     });
 
     Object.defineProperty(window, 'wavical', {
@@ -140,6 +170,10 @@ pub enum UserEvent {
     },
     /// Menu item clicked from either tray or context menu (WP7).
     MenuClicked(String),
+    /// Register global hotkey shortcuts on UI thread (WP8).
+    RegisterShortcuts(Vec<wavical_ipc::ParsedShortcut>),
+    /// Global hotkey shortcut triggered by OS (WP8).
+    ShortcutTriggered(u32),
     /// Exit event loop cleanly.
     Exit,
 }
@@ -181,6 +215,8 @@ pub struct WindowConfig {
     pub single_instance: bool,
     /// Optional relative path to tray icon inside src/ from app config (WP7).
     pub tray_icon: Option<String>,
+    /// Optional initial global shortcuts list (WP8).
+    pub shortcuts: Vec<String>,
 }
 
 impl Default for WindowConfig {
@@ -206,6 +242,7 @@ impl Default for WindowConfig {
             persist_state: true,
             single_instance: true,
             tray_icon: None,
+            shortcuts: Vec::new(),
         }
     }
 }
@@ -332,7 +369,9 @@ pub fn build_delivery_script(
 /// Helper to serialize a menu item click event into JavaScript evaluation code.
 pub fn build_menu_event_script(item_id: &str) -> String {
     let escaped_id = serde_json::to_string(item_id).unwrap_or_else(|_| "\"\"".to_string());
-    format!("if (typeof window.__wavical_event__ === 'function') {{ window.__wavical_event__({escaped_id}); }}")
+    format!(
+        "if (typeof window.__wavical_event__ === 'function') {{ window.__wavical_event__({escaped_id}); }}"
+    )
 }
 
 /// Process an incoming raw IPC message against window origin allowlist and capabilities.
@@ -397,7 +436,12 @@ pub fn process_ipc_message(
 
     let response = if wavical_ipc::is_native_method(&request.method) {
         let native_service = wavical_native::NativeService::new();
-        wavical_ipc::dispatch_native(&request, &config.window_id, &active_capabilities, &native_service)
+        wavical_ipc::dispatch_native(
+            &request,
+            &config.window_id,
+            &active_capabilities,
+            &native_service,
+        )
     } else {
         wavical_ipc::dispatch(&request, &active_capabilities, registry)
     };
@@ -604,7 +648,10 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     if let Some(ref mut server) = single_instance_server {
         let focus_proxy = proxy.clone();
         server.spawn_listener(move |args| {
-            tracing::info!("Received forwarded arguments from secondary instance: {:?}", args);
+            tracing::info!(
+                "Received forwarded arguments from secondary instance: {:?}",
+                args
+            );
             let _ = focus_proxy.send_event(UserEvent::FocusWindow);
         });
     }
@@ -642,12 +689,8 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
             })
             .collect();
 
-        let resolved = wavical_ipc::resolve_window_state(
-            &raw_json,
-            win_width,
-            win_height,
-            &screens,
-        );
+        let resolved =
+            wavical_ipc::resolve_window_state(&raw_json, win_width, win_height, &screens);
 
         window.set_inner_size(tao::dpi::PhysicalSize::new(resolved.width, resolved.height));
         if let (Some(x), Some(y)) = (resolved.x, resolved.y) {
@@ -735,11 +778,32 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
         }
     }
 
+    struct ShellShortcutProvider {
+        proxy: tao::event_loop::EventLoopProxy<UserEvent>,
+    }
+
+    impl wavical_native::ShortcutProvider for ShellShortcutProvider {
+        fn register_shortcuts(
+            &self,
+            _window_id: &str,
+            shortcuts: Vec<wavical_ipc::ParsedShortcut>,
+        ) -> Result<(), String> {
+            self.proxy
+                .send_event(UserEvent::RegisterShortcuts(shortcuts))
+                .map_err(|e| format!("Failed to send RegisterShortcuts event: {e}"))
+        }
+    }
+
     let menu_provider = std::sync::Arc::new(ShellMenuProvider {
         proxy: proxy.clone(),
     });
+    let shortcut_provider = std::sync::Arc::new(ShellShortcutProvider {
+        proxy: proxy.clone(),
+    });
     let native_service = std::sync::Arc::new(
-        wavical_native::NativeService::new().with_menu_provider(menu_provider)
+        wavical_native::NativeService::new()
+            .with_menu_provider(menu_provider)
+            .with_shortcut_provider(shortcut_provider),
     );
     registry.register_native(native_service.clone(), &config.window_id);
     let loop_native_service = native_service.clone();
@@ -750,6 +814,16 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     muda::MenuEvent::set_event_handler(Some(move |event: muda::MenuEvent| {
         let _ = menu_proxy.send_event(UserEvent::MenuClicked(event.id.0));
     }));
+
+    // Hook global_hotkey GlobalHotKeyEvent to forward shortcut presses to UI loop
+    let shortcut_proxy = proxy.clone();
+    global_hotkey::GlobalHotKeyEvent::set_event_handler(Some(
+        move |event: global_hotkey::GlobalHotKeyEvent| {
+            if event.state == global_hotkey::HotKeyState::Pressed {
+                let _ = shortcut_proxy.send_event(UserEvent::ShortcutTriggered(event.id));
+            }
+        },
+    ));
 
     // 5. Build the webview with custom protocol, CSP, navigation guard, popup blocker, and IPC handler
     let devtools = is_devtools_enabled();
@@ -851,9 +925,25 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
 
     let persist_state = config.persist_state;
     let config_tray_icon = config.tray_icon.clone();
+    let initial_shortcuts = config.shortcuts.clone();
     let _retained_server = single_instance_server;
     let mut crash_history: Vec<std::time::Instant> = Vec::new();
     let mut active_tray: Option<tray_icon::TrayIcon> = None;
+    let shortcut_manager = wavical_native::ShortcutManager::new().ok();
+
+    if let Some(ref sm) = shortcut_manager
+        && !initial_shortcuts.is_empty()
+        && let Ok(parsed) = wavical_ipc::validate_shortcut_list(&initial_shortcuts)
+    {
+        if let Err(e) = sm.register_all(&parsed) {
+            tracing::warn!("Failed to register initial config shortcuts: {e}");
+        } else {
+            tracing::info!(
+                count = parsed.len(),
+                "Initial config shortcuts registered successfully"
+            );
+        }
+    }
 
     // 6. Run tao closure event loop
     tracing::info!("Entering event loop");
@@ -964,6 +1054,28 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 let script = build_menu_event_script(&item_id);
                 if let Err(err) = webview.evaluate_script(&script) {
                     tracing::error!("Failed to evaluate menu event script in webview: {err}");
+                }
+            }
+            Event::UserEvent(UserEvent::RegisterShortcuts(shortcuts)) => {
+                tracing::info!(count = shortcuts.len(), "Registering global shortcuts");
+                if let Some(ref sm) = shortcut_manager
+                    && let Err(err) = sm.register_all(&shortcuts)
+                {
+                    tracing::warn!("Failed to register shortcuts: {err}");
+                }
+            }
+            Event::UserEvent(UserEvent::ShortcutTriggered(hotkey_id)) => {
+                if let Some(ref sm) = shortcut_manager
+                    && let Some(name) = sm.get_shortcut_name(hotkey_id)
+                {
+                    tracing::info!(shortcut = %name, "Global shortcut triggered; dispatching event to webview");
+                    let script = format!(
+                        "if (window.__wavical_shortcut_event__) {{ window.__wavical_shortcut_event__({}); }}",
+                        serde_json::to_string(&name).unwrap_or_default()
+                    );
+                    if let Err(err) = webview.evaluate_script(&script) {
+                        tracing::error!("Failed to evaluate shortcut event script: {err}");
+                    }
                 }
             }
             Event::UserEvent(UserEvent::Reload) => {

@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "wavical-cli"
 version.workspace = true
 edition.workspace = true
@@ -27,3 +27,6 @@ ctrlc = "3.4"
 
 [dev-dependencies]
 tempfile = "3"
+
+[target."cfg(windows)".dependencies]
+windows-registry = "0.100.0"

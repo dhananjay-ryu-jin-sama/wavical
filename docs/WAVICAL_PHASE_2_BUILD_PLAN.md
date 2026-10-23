@@ -190,7 +190,19 @@ For each feature, the agent reads current docs.rs pages and repo examples and re
 
 ## 3. Manual Windows checks (the agent cannot test GUI in CI)
 
-Each WP lists its manual checks. Collect them into one checklist at the end of WP9, with the expected result for each. The user runs the checklist on a real Windows machine before Phase 2 is called done. The agent must say clearly which checks were automated and which were not run.
+Each WP lists its manual checks. The user runs this checklist on a real Windows machine before Phase 2 is called done:
+
+### Consolidated Phase 2 Manual Verification Checklist:
+- [ ] **WP2 (File Dialogs & Grants):** Open file dialog, pick a file, read content. Cancel dialog. Save file. Expected: file read/write roundtrip works cleanly; cancelled dialog returns `{ cancelled: true }`.
+- [ ] **WP3 (Clipboard & Notifications):** Read/write text to Windows clipboard; fire desktop toast notification. Expected: text copied/pasted correctly; toast appears in Windows notification center.
+- [ ] **WP5 (Window State & Single-Instance):** Move/resize window, close, reopen. Launch second instance with `wavical dev examples/hello`. Expected: window position/size restored; second instance focuses existing window and exits 0.
+- [ ] **WP6 (Missing Runtime & Renderer Crash):** Test `WAVICAL_SIMULATE_NO_WEBVIEW2=1`. Crash webview. Expected: friendly native message box on missing runtime; single crash reloads page, rapid repeat crashes stop retrying cleanly.
+- [ ] **WP7 (Tray Icon & Context Menu):** Click "Setup Tray Icon"; right-click window for context menu. Expected: icon appears in notification tray, right-click opens native Win32 popup menu at cursor; clicks emit generic item events.
+- [ ] **WP8 (Global Shortcuts):** Register `Ctrl+Shift+K` in config or via page. Press `Ctrl+Shift+K` while another app has focus. Expected: hello page receives `wavical:shortcut` event with `{ shortcut: "Ctrl+Shift+K" }`.
+- [ ] **WP8 (Conflicting Shortcut):** Register a shortcut another app/system uses. Expected: generic error returned, app continues running without panic.
+- [ ] **WP8 (Taskbar Overlay Badge):** **DEFERRED** (Open Exception). Call `badge.set(5)` and `badge.set(150)`. Expected: error returned to page ("Taskbar overlay badge is not supported on this platform"), tracing warning logged, nothing crashes.
+- [ ] **WP8 (File Associations Registration):** Run `cargo run -p wavical-cli --bin wavical -- register-filetypes examples/hello`. Double-click a file with `.wavhello`. Expected: opens in Wavical shell.
+- [ ] **WP8 (File Associations Unregistration):** Run `cargo run -p wavical-cli --bin wavical -- unregister-filetypes examples/hello`. Expected: association keys removed from `HKCU\Software\Classes`.
 
 ---
 

@@ -15,8 +15,16 @@ export default {
     'fs.readGranted': true,
     'fs.writeGranted': true,
     'tray.set': true,
-    'menu.showContextMenu': true
+    'menu.showContextMenu': true,
+    'shortcut.register': true,
+    'badge.set': true
   },
+  shortcuts: [
+    'Ctrl+Shift+K'
+  ],
+  fileAssociations: [
+    'wavhello'
+  ],
   tray: {
     icon: 'icon.png'
   },

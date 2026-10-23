@@ -453,4 +453,101 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // WP8: Global Shortcuts and Badges
+    if (window.wavical && typeof window.wavical.onShortcut === 'function') {
+        window.wavical.onShortcut((shortcut) => {
+            console.log('[Event] Global shortcut pressed:', shortcut);
+            output.className = 'output-box success';
+            output.innerHTML = `
+                <div class="output-title">⌨️ Global Shortcut Triggered:</div>
+                <div>Shortcut: <strong>${escapeHtml(typeof shortcut === 'object' ? JSON.stringify(shortcut) : shortcut)}</strong></div>
+                <div class="note">Received generic event from native Win32 global hotkey manager without handles or pointers.</div>
+            `;
+        });
+    }
+
+    const btnRegShortcut = document.getElementById('btn-reg-shortcut');
+    if (btnRegShortcut) {
+        btnRegShortcut.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Registering global shortcut Ctrl+Shift+K...';
+            try {
+                const res = await window.wavical.invoke('shortcut.register', {
+                    shortcut: 'Ctrl+Shift+K'
+                });
+                output.className = 'output-box success';
+                output.innerHTML = `
+                    <div class="output-title">✔ Global Shortcut Registered:</div>
+                    <pre>${escapeHtml(JSON.stringify(res, null, 2))}</pre>
+                    <div class="note">Press <strong>Ctrl+Shift+K</strong> from anywhere (even when another app is focused).</div>
+                `;
+            } catch (err) {
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">✖ shortcut.register failed:</div><div>${escapeHtml(err.message)}</div>`;
+            }
+        });
+    }
+
+    const btnConflictingShortcut = document.getElementById('btn-conflicting-shortcut');
+    if (btnConflictingShortcut) {
+        btnConflictingShortcut.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Registering invalid/conflicting shortcut (Ctrl+Alt+Delete)...';
+            try {
+                await window.wavical.invoke('shortcut.register', {
+                    shortcut: 'Ctrl+Alt+Delete'
+                });
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">Unexpected success: conflict was not triggered.</div>`;
+            } catch (err) {
+                output.className = 'output-box expected-rejection';
+                output.innerHTML = `
+                    <div class="output-title">🛡️ Generic Error Returned as Expected:</div>
+                    <div class="error-msg">${escapeHtml(err.message)}</div>
+                    <div class="note">Conflict returned generic error and logged tracing event; app keeps running.</div>
+                `;
+            }
+        });
+    }
+
+    const btnBadge5 = document.getElementById('btn-badge-5');
+    if (btnBadge5) {
+        btnBadge5.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Calling badge.set with count 5...';
+            try {
+                await window.wavical.invoke('badge.set', { count: 5 });
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">Unexpected success</div>`;
+            } catch (err) {
+                output.className = 'output-box expected-rejection';
+                output.innerHTML = `
+                    <div class="output-title">🏷️ badge.set(5) Deferred as Expected:</div>
+                    <div class="error-msg">${escapeHtml(err.message)}</div>
+                    <div class="note">Pure validation in wavical-ipc succeeded; safe backend returned generic error without unsafe COM. Nothing crashed.</div>
+                `;
+            }
+        });
+    }
+
+    const btnBadge150 = document.getElementById('btn-badge-150');
+    if (btnBadge150) {
+        btnBadge150.addEventListener('click', async () => {
+            output.className = 'output-box running';
+            output.textContent = 'Calling badge.set with count 150 (would render 99+)...';
+            try {
+                await window.wavical.invoke('badge.set', { count: 150 });
+                output.className = 'output-box error';
+                output.innerHTML = `<div class="output-title">Unexpected success</div>`;
+            } catch (err) {
+                output.className = 'output-box expected-rejection';
+                output.innerHTML = `
+                    <div class="output-title">🏷️ badge.set(150) Deferred as Expected:</div>
+                    <div class="error-msg">${escapeHtml(err.message)}</div>
+                    <div class="note">Pure validation in wavical-ipc converted 150 -> "99+"; safe backend returned generic error without unsafe COM. Nothing crashed.</div>
+                `;
+            }
+        });
+    }
 });

@@ -17,6 +17,15 @@ pub use crash_recovery::*;
 pub mod menu;
 pub use menu::*;
 
+pub mod badge;
+pub use badge::*;
+
+pub mod shortcut;
+pub use shortcut::*;
+
+pub mod file_assoc;
+pub use file_assoc::*;
+
 /// Maximum raw IPC message size in bytes before parsing (1 MB default).
 pub const MAX_MESSAGE_SIZE_BYTES: usize = 1024 * 1024;
 
@@ -464,7 +473,9 @@ pub fn validate_clipboard_read(text: &str) -> Result<&str, &'static str> {
 ///
 /// Security constraints for v1:
 /// - Strict: no URLs, no actions, and no unrecognized fields are allowed.
-pub fn validate_notify_send<'a>(params: &'a serde_json::Value) -> Result<NotificationPayload<'a>, &'static str> {
+pub fn validate_notify_send<'a>(
+    params: &'a serde_json::Value,
+) -> Result<NotificationPayload<'a>, &'static str> {
     let serde_json::Value::Object(map) = params else {
         return Err(GENERIC_NOTIFICATION_ERROR);
     };
@@ -498,7 +509,9 @@ pub fn validate_notify_send<'a>(params: &'a serde_json::Value) -> Result<Notific
 }
 
 /// Default placeholder handler for unimplemented native methods.
-pub fn handle_native_unimplemented(_params: &serde_json::Value) -> Result<serde_json::Value, String> {
+pub fn handle_native_unimplemented(
+    _params: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     Err("Native feature not implemented yet".to_string())
 }
 
@@ -577,9 +590,7 @@ impl HandlerRegistry {
             let h = Arc::clone(&native_handler);
             let m = method.to_string();
             let w = Arc::clone(&wid);
-            self.register(method, move |params| {
-                h.handle_native(&m, params, &w)
-            });
+            self.register(method, move |params| h.handle_native(&m, params, &w));
         }
     }
 
@@ -1160,7 +1171,8 @@ mod tests {
             _params: &serde_json::Value,
             _window_id: &str,
         ) -> Result<serde_json::Value, String> {
-            self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(serde_json::json!({"status": "ok"}))
         }
     }
@@ -1244,7 +1256,10 @@ mod tests {
                 params: serde_json::json!({}),
             };
             let resp = dispatch_native(&req, window_id, &single_cap, &handler);
-            assert!(resp.ok, "Granted native call '{method}' failed unexpectedly");
+            assert!(
+                resp.ok,
+                "Granted native call '{method}' failed unexpectedly"
+            );
             assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
 
             expected_calls += 1;
@@ -1435,7 +1450,8 @@ mod tests {
             "title": title_exact_128,
             "body": body_exact_1024,
         });
-        let parsed = validate_notify_send(&valid_payload).expect("exact boundary payload should pass");
+        let parsed =
+            validate_notify_send(&valid_payload).expect("exact boundary payload should pass");
         assert_eq!(parsed.title, title_exact_128.as_str());
         assert_eq!(parsed.body, body_exact_1024.as_str());
 

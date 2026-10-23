@@ -34,10 +34,7 @@ pub fn show_renderer_crashed_dialog() {
 /// Attach an event listener for WebView2 renderer process failure on Windows.
 #[cfg(target_os = "windows")]
 #[allow(unsafe_code)]
-pub fn attach_renderer_crash_handler<F>(
-    webview: &wry::WebView,
-    on_crash: F,
-) -> Result<(), String>
+pub fn attach_renderer_crash_handler<F>(webview: &wry::WebView, on_crash: F) -> Result<(), String>
 where
     F: Fn(i32) + Send + 'static,
 {
@@ -69,10 +66,7 @@ where
 
 /// Fallback for non-Windows targets.
 #[cfg(not(target_os = "windows"))]
-pub fn attach_renderer_crash_handler<F>(
-    _webview: &wry::WebView,
-    _on_crash: F,
-) -> Result<(), String>
+pub fn attach_renderer_crash_handler<F>(_webview: &wry::WebView, _on_crash: F) -> Result<(), String>
 where
     F: Fn(i32) + Send + 'static,
 {

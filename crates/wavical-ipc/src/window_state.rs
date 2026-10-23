@@ -34,7 +34,12 @@ pub struct ScreenBounds {
 impl ScreenBounds {
     /// Construct a new screen bounding rectangle.
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Check whether a window rectangle overlaps this screen with grabable visible area.
@@ -105,27 +110,33 @@ struct RawWindowState {
 pub fn parse_window_state(raw_json: &str) -> Result<WindowState, WindowStateError> {
     let trimmed = raw_json.trim();
     if trimmed.is_empty() {
-        return Err(WindowStateError::CorruptJson("JSON string is empty".to_string()));
+        return Err(WindowStateError::CorruptJson(
+            "JSON string is empty".to_string(),
+        ));
     }
 
-    let val: serde_json::Value = serde_json::from_str(trimmed)
-        .map_err(|e| WindowStateError::CorruptJson(e.to_string()))?;
+    let val: serde_json::Value =
+        serde_json::from_str(trimmed).map_err(|e| WindowStateError::CorruptJson(e.to_string()))?;
 
     let map = match val {
         serde_json::Value::Object(m) => m,
-        _ => return Err(WindowStateError::CorruptJson("Window state JSON must be an object".to_string())),
+        _ => {
+            return Err(WindowStateError::CorruptJson(
+                "Window state JSON must be an object".to_string(),
+            ));
+        }
     };
 
     let raw: RawWindowState = serde_json::from_value(serde_json::Value::Object(map))
         .map_err(|e| WindowStateError::CorruptJson(e.to_string()))?;
 
     let width = match raw.width {
-        Some(w) if w >= 100.0 && w <= 32768.0 => w as u32,
+        Some(w) if (100.0..=32768.0).contains(&w) => w as u32,
         _ => DEFAULT_SAVED_WIDTH,
     };
 
     let height = match raw.height {
-        Some(h) if h >= 100.0 && h <= 32768.0 => h as u32,
+        Some(h) if (100.0..=32768.0).contains(&h) => h as u32,
         _ => DEFAULT_SAVED_HEIGHT,
     };
 
@@ -162,7 +173,9 @@ pub fn is_position_on_any_screen(
     if screens.is_empty() {
         return true;
     }
-    screens.iter().any(|screen| screen.intersects(x, y, width, height))
+    screens
+        .iter()
+        .any(|screen| screen.intersects(x, y, width, height))
 }
 
 /// Resolve window state from raw JSON, validating against screen monitors and falling back to defaults.
@@ -192,7 +205,8 @@ pub fn resolve_window_state(
 
     // If both x and y are present, verify visibility against connected monitors
     if let (Some(x), Some(y)) = (state.x, state.y) {
-        if !is_position_on_any_screen(x, y, state.width, state.height, screens) {
+        let is_off_screen = !is_position_on_any_screen(x, y, state.width, state.height, screens);
+        if is_off_screen {
             tracing::warn!(
                 x = x,
                 y = y,
@@ -320,8 +334,14 @@ mod tests {
         // Way off screen (e.g. disconnected monitor at x: 8000)
         let offscreen_json = r#"{"x": 8000, "y": 8000, "width": 800, "height": 600}"#;
         let resolved_off = resolve_window_state(offscreen_json, 1200, 800, &screens);
-        assert_eq!(resolved_off.x, None, "Off-screen X must fall back to default None");
-        assert_eq!(resolved_off.y, None, "Off-screen Y must fall back to default None");
+        assert_eq!(
+            resolved_off.x, None,
+            "Off-screen X must fall back to default None"
+        );
+        assert_eq!(
+            resolved_off.y, None,
+            "Off-screen Y must fall back to default None"
+        );
         assert_eq!(resolved_off.width, 800);
         assert_eq!(resolved_off.height, 600);
 

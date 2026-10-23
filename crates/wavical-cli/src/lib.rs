@@ -38,6 +38,22 @@ pub enum Commands {
 
     /// Build the application for production
     Build(BuildArgs),
+
+    /// Register file associations declared in wavical.config.js under HKCU\Software\Classes (WP8)
+    #[command(name = "register-filetypes")]
+    RegisterFiletypes(FiletypesArgs),
+
+    /// Unregister file associations declared in wavical.config.js under HKCU\Software\Classes (WP8)
+    #[command(name = "unregister-filetypes")]
+    UnregisterFiletypes(FiletypesArgs),
+}
+
+/// Arguments for the `register-filetypes` and `unregister-filetypes` subcommands.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct FiletypesArgs {
+    /// Project root directory containing wavical.config.js (defaults to current directory)
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
 }
 
 /// Arguments for the `init` subcommand.
@@ -117,6 +133,12 @@ pub enum CliError {
         dst: PathBuf,
         source: std::io::Error,
     },
+
+    #[error("Windows registry error: {0}")]
+    RegistryError(String),
+
+    #[error("file association error: {0}")]
+    FileAssociation(#[from] wavical_ipc::FileAssocValidationError),
 }
 
 /// Summary returned after successful initialization of a new project.
@@ -401,6 +423,13 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     }
     if let Some(tray_icon) = config.tray_icon() {
         cmd.arg("--tray-icon").arg(tray_icon);
+    }
+    if let Some(shortcuts_json) = config
+        .shortcuts
+        .as_ref()
+        .and_then(|s| serde_json::to_string(s).ok())
+    {
+        cmd.arg("--shortcuts").arg(shortcuts_json);
     }
 
     let mut child = cmd
@@ -750,7 +779,133 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::RegisterFiletypes(args) => match run_register_filetypes(&args.dir) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Commands::UnregisterFiletypes(args) => match run_unregister_filetypes(&args.dir) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
     }
+}
+
+/// Register file associations declared in `wavical.config.js` under HKCU\Software\Classes (WP8).
+pub fn run_register_filetypes(dir: &Path) -> Result<(), CliError> {
+    let project_root = if dir == Path::new(".") {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    } else if dir.is_relative() {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(dir))
+            .unwrap_or_else(|_| dir.to_path_buf())
+    } else {
+        dir.to_path_buf()
+    };
+
+    let config =
+        wavical_config::validate_config(&project_root).map_err(CliError::ConfigValidation)?;
+
+    let exts = match config.file_associations {
+        Some(ref list) if !list.is_empty() => list,
+        _ => {
+            println!("No file associations declared in config.");
+            return Ok(());
+        }
+    };
+
+    let shell_path = find_wavical_shell().unwrap_or_else(|_| {
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wavical-shell.exe"))
+    });
+    let exe_str = shell_path.display().to_string();
+
+    #[cfg(windows)]
+    {
+        use windows_registry::CURRENT_USER;
+        for ext in exts {
+            let keys = wavical_ipc::build_association_keys(&config.app_id, ext)?;
+
+            let ext_key = CURRENT_USER.create(&keys.ext_key).map_err(|e| {
+                CliError::RegistryError(format!("Failed to create {}: {e}", keys.ext_key))
+            })?;
+            ext_key.set_string("", &keys.prog_id).map_err(|e| {
+                CliError::RegistryError(format!("Failed to set {}: {e}", keys.ext_key))
+            })?;
+
+            let cmd_key = CURRENT_USER.create(&keys.open_command_key).map_err(|e| {
+                CliError::RegistryError(format!("Failed to create {}: {e}", keys.open_command_key))
+            })?;
+            let command_val = format!(r#""{exe_str}" "%1""#);
+            cmd_key.set_string("", &command_val).map_err(|e| {
+                CliError::RegistryError(format!("Failed to set command for {}: {e}", keys.prog_id))
+            })?;
+
+            println!(
+                "✓ Registered file association: .{} -> {}",
+                keys.extension, keys.prog_id
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (exts, exe_str);
+        println!(
+            "File type registration under HKCU\\Software\\Classes is only applicable on Windows."
+        );
+    }
+
+    Ok(())
+}
+
+/// Unregister file associations declared in `wavical.config.js` under HKCU\Software\Classes (WP8).
+pub fn run_unregister_filetypes(dir: &Path) -> Result<(), CliError> {
+    let project_root = if dir == Path::new(".") {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    } else if dir.is_relative() {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(dir))
+            .unwrap_or_else(|_| dir.to_path_buf())
+    } else {
+        dir.to_path_buf()
+    };
+
+    let config =
+        wavical_config::validate_config(&project_root).map_err(CliError::ConfigValidation)?;
+
+    let exts = match config.file_associations {
+        Some(ref list) if !list.is_empty() => list,
+        _ => {
+            println!("No file associations declared in config.");
+            return Ok(());
+        }
+    };
+
+    #[cfg(windows)]
+    {
+        use windows_registry::CURRENT_USER;
+        for ext in exts {
+            let keys = wavical_ipc::build_association_keys(&config.app_id, ext)?;
+            let _ = CURRENT_USER.remove_tree(&keys.ext_key);
+            let _ = CURRENT_USER.remove_tree(&keys.prog_id_key);
+            println!("✓ Unregistered file association: .{}", keys.extension);
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = exts;
+        println!(
+            "File type unregistration under HKCU\\Software\\Classes is only applicable on Windows."
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -851,6 +1006,71 @@ mod tests {
                 assert!(args.release);
             }
             _ => panic!("expected build subcommand"),
+        }
+
+        let reg_cli = Cli::try_parse_from(["wavical", "register-filetypes", "my-app"])
+            .expect("parse register-filetypes");
+        match reg_cli.command {
+            Commands::RegisterFiletypes(args) => {
+                assert_eq!(args.dir, PathBuf::from("my-app"));
+            }
+            _ => panic!("expected register-filetypes subcommand"),
+        }
+
+        let unreg_cli = Cli::try_parse_from(["wavical", "unregister-filetypes", "my-app"])
+            .expect("parse unregister-filetypes");
+        match unreg_cli.command {
+            Commands::UnregisterFiletypes(args) => {
+                assert_eq!(args.dir, PathBuf::from("my-app"));
+            }
+            _ => panic!("expected unregister-filetypes subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_filetype_registration_and_unregistration_lifecycle() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project_dir = temp.path();
+
+        let config_js = r#"export default {
+            appId: 'test-filetypes-lifecycle',
+            fileAssociations: ['wavlife']
+        };"#;
+        std::fs::write(project_dir.join("wavical.config.js"), config_js).expect("write config");
+
+        // 1. Register
+        run_register_filetypes(project_dir).expect("register filetypes should succeed");
+
+        #[cfg(windows)]
+        {
+            use windows_registry::CURRENT_USER;
+            let ext_key = CURRENT_USER.open(r"Software\Classes\.wavlife");
+            assert!(
+                ext_key.is_ok(),
+                "Registry key for .wavlife should exist in HKCU"
+            );
+            if let Ok(k) = ext_key {
+                let val: Result<String, _> = k.get_string("");
+                assert_eq!(val.unwrap(), "Wavical.test-filetypes-lifecycle");
+            }
+        }
+
+        // 2. Unregister
+        run_unregister_filetypes(project_dir).expect("unregister filetypes should succeed");
+
+        #[cfg(windows)]
+        {
+            use windows_registry::CURRENT_USER;
+            let ext_key = CURRENT_USER.open(r"Software\Classes\.wavlife");
+            assert!(
+                ext_key.is_err(),
+                "Registry key for .wavlife must be completely removed"
+            );
+            let prog_key = CURRENT_USER.open(r"Software\Classes\Wavical.test-filetypes-lifecycle");
+            assert!(
+                prog_key.is_err(),
+                "Registry key for ProgID must be completely removed"
+            );
         }
     }
 }

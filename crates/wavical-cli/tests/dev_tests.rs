@@ -235,7 +235,7 @@ export default {
     let (line_tx, line_rx) = mpsc::channel();
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if line_tx.send(line).is_err() {
                 break;
             }
@@ -246,17 +246,17 @@ export default {
     let mut started = false;
     let mut shell_pid = 0u32;
     while Instant::now() < deadline {
-        if let Ok(line) = line_rx.recv_timeout(Duration::from_millis(100)) {
-            if line.contains("Dev server running (PID:") {
-                started = true;
-                if let Some(start) = line.find("(PID: ") {
-                    let rem = &line[start + 6..];
-                    if let Some(end) = rem.find(')') {
-                        shell_pid = rem[..end].parse::<u32>().unwrap_or(0);
-                    }
+        if let Ok(line) = line_rx.recv_timeout(Duration::from_millis(100))
+            && line.contains("Dev server running (PID:")
+        {
+            started = true;
+            if let Some(start) = line.find("(PID: ") {
+                let rem = &line[start + 6..];
+                if let Some(end) = rem.find(')') {
+                    shell_pid = rem[..end].parse::<u32>().unwrap_or(0);
                 }
-                break;
             }
+            break;
         }
     }
 

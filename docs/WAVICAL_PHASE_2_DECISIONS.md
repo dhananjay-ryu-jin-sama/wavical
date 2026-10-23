@@ -133,25 +133,32 @@ This document records the research, evaluation, and decisions for all native Tie
 
 ## 3. Critical Findings Requiring Escalation
 
-### 3.1 Taskbar Overlay Badge (`ITaskbarList3::SetOverlayIcon`)
+### 3.1 Taskbar Overlay Badge (`ITaskbarList3::SetOverlayIcon`) — OPEN EXCEPTION
 - **Question:** Which crate, if any, wraps `ITaskbarList3` without our own `unsafe`?
 - **Finding:** **NO crate exists on crates.io that wraps `ITaskbarList3::SetOverlayIcon` without requiring `unsafe`.**
   - `tao 0.37.1` has no `set_overlay_icon` or `set_badge_label` method on Windows (`WindowExtWindows` only offers `set_skip_taskbar` and `has_undecorated_shadow`).
   - The official Microsoft `windows` crate (`windows::Win32::UI::Shell::ITaskbarList3`) exposes `SetOverlayIcon(hwnd, hicon, description)`, but calling COM methods and `CoCreateInstance` is inherently marked `unsafe`.
   - The `winsafe = "0.0.29"` crate wraps `ITaskbarList3::SetOverlayIcon`, but constructing `winsafe::HWND` from tao's window handle requires `unsafe { HWND::from_ptr(window.hwnd()) }`, and creating the `HICON` badge bitmap in memory also requires Win32 GDI calls that involve `unsafe`.
-  - **Action per prompt rules:** STOP and notify the user before proceeding with any badge implementation.
+- **Decision & Architecture in WP8:**
+  - **Open Exception:** Per explicit user directive, zero `unsafe` was written for taskbar badges and the `windows` crate was not added.
+  - **Pure Validation:** Full parameter and range validation is maintained in `wavical-ipc` (`0` clears, `1..=99` exact count, `>99` renders `"99+"`, negative values rejected) with comprehensive unit tests.
+  - **Backend Stub:** In `wavical-native`, `NativeService::badge_set` validates the count, logs a structured `tracing::warn!` event, and returns a generic `"Taskbar overlay badge is not supported on this platform"` error (does NOT return success).
+  - **Deferred Implementation:** The actual native Windows `ITaskbarList3` rendering is deferred to a future hardening phase where an isolated, human-reviewed `unsafe` change can be performed.
 
 ### 3.2 Context Menu (`muda::ContextMenu::show_context_menu_for_hwnd`)
 - `muda`'s popup menu method on Windows takes a raw `isize` window handle and is defined as `unsafe fn show_context_menu_for_hwnd(...)`.
-- If `wavical-native` maintains `#![forbid(unsafe_code)]`, calling `show_context_menu_for_hwnd` directly will fail compilation.
+- Isolated safely in `wavical-native` (`crates/wavical-native/src/tray.rs`) under scoped `#[allow(unsafe_code)]`, keeping all other crates (and `wavical-shell`) strictly `#![forbid(unsafe_code)]`.
 
 ### 3.3 WebView2 Detection & Renderer Crash Recovery in `wry`
 - **Detection:** `wry::webview_version() -> Result<String, wry::Error>` is completely safe and already used in `wavical-shell`.
-- **Renderer Crash Events:** `wry 0.57.0` has **no high-level callback** (like `on_process_failed`) on `WebViewBuilder`. The underlying event is `ICoreWebView2::add_ProcessFailed`, which is only accessible by downcasting via `wry::WebViewExtWindows::webview() -> ICoreWebView2` and registering a COM event sink, which requires `unsafe`.
-- **Alternative Safe Design for WP6:** An IPC health heartbeat or detecting when IPC calls suddenly fail / webview drops connection, or using a localized pure retry-state machine as specified in WP6.
+- **Renderer Crash Events:** Pure retry state machine in `wavical-ipc` with 30-second backoff window and single-reload recovery.
 
 ---
 
 ## 4. Status
 
-Work Package 1 research is complete. Decisions are documented and all source links verified. Awaiting user direction on the `unsafe` boundaries for Taskbar Badges, Context Menus, and COM Crash Events.
+- WP1 through WP8 implementations complete.
+- All crates (`wavical-ipc`, `wavical-config`, `wavical-protocol`, `wavical-cli`, `wavical-shell`) strictly maintain `#![forbid(unsafe_code)]`.
+- `wavical-native` enforces `#![deny(unsafe_code)]` with exactly one scoped `#[allow(unsafe_code)]` for `muda::show_context_menu_for_hwnd`.
+- Taskbar overlay badge recorded as an open exception: pure validation enforced, OS COM calls deferred to human-reviewed hardening.
+
