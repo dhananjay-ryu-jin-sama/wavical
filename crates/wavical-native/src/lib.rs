@@ -411,22 +411,29 @@ impl NativeService {
 
         validate_granted_target(&entry, true).map_err(|err| err.to_string())?;
 
-        let meta =
-            std::fs::metadata(&entry.path).map_err(|e| format!("Failed to read metadata: {e}"))?;
+        let mut file = std::fs::File::open(&entry.path).map_err(|e| {
+            tracing::warn!(error = %e, path = ?entry.path, "Failed to open granted file for reading");
+            "Failed to open granted file".to_string()
+        })?;
+
+        let meta = file.metadata().map_err(|e| {
+            tracing::warn!(error = %e, path = ?entry.path, "Failed to read metadata on opened file handle");
+            "Failed to read granted file metadata".to_string()
+        })?;
 
         if meta.len() > MAX_READ_GRANTED_BYTES as u64 {
             return Err("File size exceeds 10 MB limit".to_string());
         }
-
-        let mut file =
-            std::fs::File::open(&entry.path).map_err(|e| format!("Failed to open file: {e}"))?;
 
         let mut buffer = Vec::new();
         let bytes_read = file
             .by_ref()
             .take(MAX_READ_GRANTED_BYTES as u64 + 1)
             .read_to_end(&mut buffer)
-            .map_err(|e| format!("Failed to read file: {e}"))?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, path = ?entry.path, "Failed to read content from granted file");
+                "Failed to read granted file".to_string()
+            })?;
 
         if bytes_read > MAX_READ_GRANTED_BYTES {
             return Err("File size exceeds 10 MB limit".to_string());
@@ -464,8 +471,10 @@ impl NativeService {
 
         validate_granted_target(&entry, false).map_err(|err| err.to_string())?;
 
-        std::fs::write(&entry.path, parsed.content.as_bytes())
-            .map_err(|e| format!("Failed to write file: {e}"))?;
+        std::fs::write(&entry.path, parsed.content.as_bytes()).map_err(|e| {
+            tracing::warn!(error = %e, path = ?entry.path, "Failed to write content to granted file");
+            "Failed to write granted file".to_string()
+        })?;
 
         Ok(serde_json::json!({
             "success": true,
@@ -1340,5 +1349,48 @@ mod tests {
                 .unwrap_err()
                 .contains("in use by another application")
         );
+    }
+
+    #[test]
+    fn test_fs_read_write_error_sanitization_never_leaks_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let file_path = temp.path().join("secret_data_filename.txt");
+        let service = NativeService::new();
+        let window_id = "test-win";
+
+        // Register grant for this file
+        let grant_id = service
+            .grant_table
+            .insert(window_id, file_path.clone())
+            .unwrap();
+
+        // 1. Reading non-existent file: fails with sanitized error, no path in error
+        let read_err = service
+            .fs_read_granted(&serde_json::json!({"grantId": grant_id}), window_id)
+            .unwrap_err();
+        assert!(!read_err.contains("secret_data_filename"));
+        assert!(!read_err.contains(temp.path().to_str().unwrap()));
+        assert_eq!(read_err, "Granted file does not exist");
+
+        // 2. Write valid content
+        let write_res = service
+            .fs_write_granted(
+                &serde_json::json!({
+                    "grantId": grant_id,
+                    "content": "Secret content"
+                }),
+                window_id,
+            )
+            .unwrap();
+        assert_eq!(write_res["success"], true);
+
+        // 3. Forged grant ID returns generic error without path
+        let forged_err = service
+            .fs_read_granted(
+                &serde_json::json!({"grantId": "00000000-0000-0000-0000-000000000000"}),
+                window_id,
+            )
+            .unwrap_err();
+        assert_eq!(forged_err, "Grant not found or not owned by this window");
     }
 }

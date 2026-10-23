@@ -25,13 +25,30 @@ Run in Linux or WSL from the repository root:
    cargo +nightly fuzz run resolve_path
    ```
 
-### Running with Time Limits & Sanitizers
+4. **Fuzz Native Request Parameter Parser (WP9):**
+   ```bash
+   cargo +nightly fuzz run native_request_parser
+   ```
 
-To run a fuzz target for a fixed time limit (e.g. 60 seconds):
+5. **Fuzz Grant Table Isolation & Limits (WP9):**
+   ```bash
+   cargo +nightly fuzz run grant_table
+   ```
+
+### Nightly WSL Continuous / Long-Running Fuzzing Commands
+
+To run nightly continuous fuzzing in WSL across all targets:
 ```bash
-cargo +nightly fuzz run parse_message -- -max_total_time=60
-cargo +nightly fuzz run capability_dispatch -- -max_total_time=60
-cargo +nightly fuzz run resolve_path -- -max_total_time=60
+# In WSL:
+rustup install nightly
+cargo +nightly install cargo-fuzz
+
+# Overnight runs (e.g. 1 hour / 3600 seconds per target):
+cargo +nightly fuzz run parse_message -- -max_total_time=3600
+cargo +nightly fuzz run capability_dispatch -- -max_total_time=3600
+cargo +nightly fuzz run resolve_path -- -max_total_time=3600
+cargo +nightly fuzz run native_request_parser -- -max_total_time=3600
+cargo +nightly fuzz run grant_table -- -max_total_time=3600
 ```
 
 ### Reproducing Crash Artifacts

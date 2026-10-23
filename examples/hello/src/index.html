@@ -18,93 +18,93 @@
         </div>
         
         <div class="ipc-section">
-            <div class="section-label">Bridge Capabilities</div>
+            <div class="section-label">Bridge Capabilities &bull; <code>capabilities['core.ping']</code></div>
             <div class="button-row">
                 <button id="btn-ping" class="btn btn-primary" type="button">
                     <span class="btn-icon">⚡</span>
-                    Call core.ping (Granted)
+                    Call core.ping <small>[granted: capabilities['core.ping']]</small>
                 </button>
                 <button id="btn-echo" class="btn btn-secondary" type="button">
                     <span class="btn-icon">🛡️</span>
-                    Call core.echo (Ungranted)
+                    Call core.echo <small>[ungranted: default-deny]</small>
                 </button>
             </div>
 
-            <div class="section-label">Native Features (WP3)</div>
+            <div class="section-label">Clipboard & Notifications (WP3) &bull; <code>capabilities['clipboard.*', 'notify.send']</code></div>
             <div class="input-row">
                 <input id="clipboard-input" class="text-input" type="text" placeholder="Type text here to copy..." value="Hello from Wavical native clipboard!">
             </div>
             <div class="button-row">
                 <button id="btn-copy" class="btn btn-primary" type="button">
                     <span class="btn-icon">📋</span>
-                    Copy (clipboard.write)
+                    Copy <small>[capabilities['clipboard.write']]</small>
                 </button>
                 <button id="btn-paste" class="btn btn-secondary" type="button">
                     <span class="btn-icon">📥</span>
-                    Paste (clipboard.read)
+                    Paste <small>[capabilities['clipboard.read']]</small>
                 </button>
                 <button id="btn-notify" class="btn btn-primary" type="button">
                     <span class="btn-icon">🔔</span>
-                    Notify (notify.send)
+                    Notify <small>[capabilities['notify.send']]</small>
                 </button>
             </div>
 
-            <div class="section-label">Scoped File Access (WP4)</div>
+            <div class="section-label">Scoped File Access (WP4) &bull; <code>capabilities['dialog.*', 'fs.*']</code></div>
             <div class="input-row">
                 <input id="file-content-input" class="text-input" type="text" placeholder="Content to write or display..." value="Wavical scoped file storage test content.">
             </div>
             <div class="button-row">
                 <button id="btn-open-file" class="btn btn-primary" type="button">
                     <span class="btn-icon">📂</span>
-                    Open & Read (dialog.openFile + fs.readGranted)
+                    Open & Read <small>[dialog.openFile + fs.readGranted]</small>
                 </button>
                 <button id="btn-save-file" class="btn btn-primary" type="button">
                     <span class="btn-icon">💾</span>
-                    Save File (dialog.saveFile + fs.writeGranted)
+                    Save File <small>[dialog.saveFile + fs.writeGranted]</small>
                 </button>
                 <button id="btn-cancel-dialog" class="btn btn-secondary" type="button">
                     <span class="btn-icon">✖️</span>
-                    Cancel Test (Cancel dialog)
+                    Cancel Test <small>[dialog cancellation]</small>
                 </button>
                 <button id="btn-attack-path" class="btn btn-warning" type="button">
                     <span class="btn-icon">🛡️</span>
-                    Send Raw Path (Attack - Denied)
+                    Send Raw Path <small>[Attack - Denied]</small>
                 </button>
             </div>
 
-            <div class="section-label">Tray & Context Menu (WP7)</div>
+            <div class="section-label">Tray & Context Menu (WP7) &bull; <code>capabilities['tray.set', 'menu.showContextMenu']</code></div>
             <div class="button-row">
                 <button id="btn-set-tray" class="btn btn-primary" type="button">
                     <span class="btn-icon">📥</span>
-                    Set Tray Menu (tray.set)
+                    Set Tray Menu <small>[tray.set + tray.icon]</small>
                 </button>
                 <button id="btn-show-context" class="btn btn-secondary" type="button">
                     <span class="btn-icon">📋</span>
-                    Show Context Menu (Right-Click also works)
+                    Show Context Menu <small>[menu.showContextMenu]</small>
                 </button>
                 <button id="btn-menu-201" class="btn btn-warning" type="button">
                     <span class="btn-icon">🚫</span>
-                    Send 201 Items (Denied)
+                    Send 201 Items <small>[Attack - 200 Limit Denied]</small>
                 </button>
             </div>
 
-            <div class="section-label">Global Shortcuts & Badges (WP8)</div>
+            <div class="section-label">Global Shortcuts & Badges (WP8) &bull; <code>capabilities['shortcut.register', 'badge.set']</code></div>
             <div class="button-row">
                 <button id="btn-reg-shortcut" class="btn btn-primary" type="button">
                     <span class="btn-icon">⌨️</span>
-                    Register Shortcut (Ctrl+Shift+K)
+                    Register Shortcut <small>[shortcut.register: Ctrl+Shift+K]</small>
                 </button>
                 <button id="btn-conflicting-shortcut" class="btn btn-warning" type="button">
                     <span class="btn-icon">⚡</span>
-                    Register Conflict (Expect Error)
+                    Register Conflict <small>[Expect Error]</small>
                 </button>
                 <button id="btn-badge-5" class="btn btn-secondary" type="button">
                     <span class="btn-icon">🏷️</span>
-                    Badge: 5 (Deferred)
+                    Badge: 5 <small>[badge.set - Deferred]</small>
                 </button>
                 <button id="btn-badge-150" class="btn btn-secondary" type="button">
                     <span class="btn-icon">🏷️</span>
-                    Badge: 150 (Deferred)
+                    Badge: 150 <small>[badge.set - Deferred]</small>
                 </button>
             </div>
 

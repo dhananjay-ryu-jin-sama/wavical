@@ -34,11 +34,11 @@ jobs:
       - name: Run attack page integration test harness
         run: cargo run -p wavical-integration-tests
 
-      - name: Build workspace
+      - name: Build workspace (including wavical-native)
         run: cargo build --workspace
 
   linux:
-    name: "Linux (IPC, Protocol, Config, CLI)"
+    name: "Linux (Pure Crates & Grant Table Tests)"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -57,13 +57,13 @@ jobs:
       - name: Check code formatting
         run: cargo fmt --all --check
 
-      - name: Run clippy
+      - name: Run clippy on pure crates
         run: cargo clippy -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli -- -D warnings
 
-      - name: Run tests
+      - name: Run pure-crate tests (including grant table isolation and limits)
         run: cargo test -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli
 
-      - name: Build binaries and crates
+      - name: Build pure binaries and crates
         run: cargo build -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli
 
   cli-e2e:

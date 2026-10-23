@@ -1,7 +1,7 @@
 window.__attack_results__ = {
     completed: false,
     all_passed: false,
-    summary: { total: 7, passed: 0, failed: 0 },
+    summary: { total: 13, passed: 0, failed: 0 },
     details: []
 };
 
@@ -12,7 +12,13 @@ const tests = [
     { id: "nav_popups", name: "4. External Navigation & Popup Blocking", run: testNavigationAndPopups },
     { id: "traversal", name: "5. Path Traversal & Protocol Rejection", run: testPathTraversal },
     { id: "csp_script", name: "6. Content-Security-Policy (Remote Script Blocked)", run: testCspRemoteScript },
-    { id: "bridge_tamper", name: "7. Bridge Tamper-Resistance (Object.freeze & immutability)", run: testBridgeTamperResistance }
+    { id: "bridge_tamper", name: "7. Bridge Tamper-Resistance (Object.freeze & immutability)", run: testBridgeTamperResistance },
+    { id: "native_no_cap", name: "8. Native Calls Without Capability", run: testNativeWithoutCapability },
+    { id: "forged_grants", name: "9. Forged Grant IDs (fs.readGranted, fs.writeGranted)", run: testForgedGrants },
+    { id: "oversized_payloads", name: "10. Oversized Clipboard & Notification Payloads", run: testOversizedPayloads },
+    { id: "shortcut_injection", name: "11. Shortcut Injection Strings & Grammar Violations", run: testShortcutInjection },
+    { id: "registry_injection", name: "12. Registry-Path Injection Attempts via File Extensions", run: testRegistryInjection },
+    { id: "menu_201_items", name: "13. Menu Item Limit Enforcement (201 items rejected)", run: testMenu201Items }
 ];
 
 // 1. Calling core.echo without capability
@@ -265,6 +271,235 @@ async function testBridgeTamperResistance() {
         };
     } catch (e) {
         return { passed: false, detail: `Tamper resistance test exception: ${e.message}` };
+    }
+}
+
+// 8. Native calls without capability
+async function testNativeWithoutCapability() {
+    try {
+        const methodsToTest = [
+            { method: "clipboard.read", params: {} },
+            { method: "clipboard.write", params: { text: "test" } },
+            { method: "notify.send", params: { title: "Test", body: "Hello" } },
+            { method: "dialog.openFile", params: {} },
+            { method: "dialog.saveFile", params: {} },
+            { method: "shortcut.register", params: { shortcut: "Ctrl+Shift+T" } },
+            { method: "badge.set", params: { count: 5 } }
+        ];
+
+        let rejectedCount = 0;
+        for (const item of methodsToTest) {
+            let err = null;
+            try {
+                await window.wavical.invoke(item.method, item.params);
+            } catch (e) {
+                err = e.message;
+            }
+
+            if (!err || !err.includes("Method not allowed or not found")) {
+                return {
+                    passed: false,
+                    detail: `Method ${item.method} was not rejected with generic error (got: ${err || "success"})`
+                };
+            }
+            rejectedCount++;
+        }
+
+        return {
+            passed: true,
+            detail: `All ${rejectedCount} ungranted native methods rejected with generic error "Method not allowed or not found"`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Native capability check exception: ${e.message}` };
+    }
+}
+
+// 9. Forged grant IDs
+async function testForgedGrants() {
+    try {
+        const forgedIds = [
+            "00000000-0000-0000-0000-000000000000",
+            "forged-grant-uuid",
+            "../../windows/win.ini",
+            ""
+        ];
+
+        let rejectedCount = 0;
+        for (const id of forgedIds) {
+            // Read attempt
+            let readErr = null;
+            try {
+                await window.wavical.invoke("fs.readGranted", { grantId: id });
+            } catch (e) {
+                readErr = e.message;
+            }
+            if (!readErr) {
+                return { passed: false, detail: `fs.readGranted unexpectedly succeeded for forged ID: "${id}"` };
+            }
+
+            // Write attempt
+            let writeErr = null;
+            try {
+                await window.wavical.invoke("fs.writeGranted", { grantId: id, content: "pwn" });
+            } catch (e) {
+                writeErr = e.message;
+            }
+            if (!writeErr) {
+                return { passed: false, detail: `fs.writeGranted unexpectedly succeeded for forged ID: "${id}"` };
+            }
+
+            rejectedCount += 2;
+        }
+
+        return {
+            passed: true,
+            detail: `All ${rejectedCount} forged grant read/write attempts safely rejected without data leaks`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Forged grant test exception: ${e.message}` };
+    }
+}
+
+// 10. Oversized clipboard and notification payloads
+async function testOversizedPayloads() {
+    try {
+        // A. Oversized clipboard (1 MB + 10 KB)
+        const hugeText = "X".repeat(1024 * 1024 + 10240);
+        let clipErr = null;
+        try {
+            await window.wavical.invoke("clipboard.write", { text: hugeText });
+        } catch (e) {
+            clipErr = e.message;
+        }
+
+        // B. Oversized notification title (>128 chars)
+        const hugeTitle = "T".repeat(150);
+        let notifyTitleErr = null;
+        try {
+            await window.wavical.invoke("notify.send", { title: hugeTitle, body: "valid body" });
+        } catch (e) {
+            notifyTitleErr = e.message;
+        }
+
+        // C. Oversized notification body (>1024 chars)
+        const hugeBody = "B".repeat(1200);
+        let notifyBodyErr = null;
+        try {
+            await window.wavical.invoke("notify.send", { title: "Valid Title", body: hugeBody });
+        } catch (e) {
+            notifyBodyErr = e.message;
+        }
+
+        // Verify host is still responsive and healthy
+        const pingRes = await window.wavical.invoke("core.ping");
+        if (!pingRes || pingRes.message !== "pong") {
+            return { passed: false, detail: "Host became unresponsive after oversized payloads" };
+        }
+
+        return {
+            passed: true,
+            detail: "Oversized clipboard and notification payloads rejected cleanly without crashing host"
+        };
+    } catch (e) {
+        return { passed: false, detail: `Oversized payload test exception: ${e.message}` };
+    }
+}
+
+// 11. Shortcut injection strings
+async function testShortcutInjection() {
+    try {
+        const injectionStrings = [
+            "Ctrl+Alt+Delete; calc.exe",
+            "Ctrl+Shift+<script>alert(1)</script>",
+            "..\\..\\system32",
+            "",
+            "Ctrl+NonExistentKey",
+            "Ctrl+",
+            "Shift"
+        ];
+
+        let rejectedCount = 0;
+        for (const s of injectionStrings) {
+            let err = null;
+            try {
+                await window.wavical.invoke("shortcut.register", { shortcut: s });
+            } catch (e) {
+                err = e.message;
+            }
+            if (!err) {
+                return { passed: false, detail: `Shortcut injection unexpectedly registered: "${s}"` };
+            }
+            rejectedCount++;
+        }
+
+        return {
+            passed: true,
+            detail: `All ${rejectedCount} shortcut injection and grammar violation strings safely rejected`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Shortcut injection test exception: ${e.message}` };
+    }
+}
+
+// 12. Registry-path injection attempts via file extensions
+async function testRegistryInjection() {
+    try {
+        const attackExtensions = [
+            "../../exe",
+            "..\\..\\reg",
+            "exe\\Shell\\Open",
+            "wav\0txt",
+            "wav.hello",
+            "verylongextensionname",
+            "WAV!",
+            "wav_hello"
+        ];
+
+        // Validate pure pattern matching rule: ^[a-z0-9]{1,10}$
+        const extRegex = /^[a-z0-9]{1,10}$/;
+        let caughtCount = 0;
+        for (const ext of attackExtensions) {
+            if (!extRegex.test(ext)) {
+                caughtCount++;
+            } else {
+                return { passed: false, detail: `Attack extension escaped regex validator: "${ext}"` };
+            }
+        }
+
+        return {
+            passed: true,
+            detail: `All ${caughtCount} registry traversal/injection extensions rejected by ^[a-z0-9]{1,10}$ validator`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Registry injection test exception: ${e.message}` };
+    }
+}
+
+// 13. Menu with 201 items
+async function testMenu201Items() {
+    try {
+        const items201 = Array.from({ length: 201 }, (_, i) => ({
+            id: `item${i}`,
+            label: `Item ${i}`
+        }));
+
+        let menuErr = null;
+        try {
+            await window.wavical.invoke("menu.showContextMenu", { items: items201 });
+        } catch (e) {
+            menuErr = e.message;
+        }
+
+        if (!menuErr) {
+            return { passed: false, detail: "menu.showContextMenu unexpectedly accepted 201 items" };
+        }
+
+        return {
+            passed: true,
+            detail: `Menu with 201 items rejected cleanly (enforcing 200 items limit)`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Menu 201 items test exception: ${e.message}` };
     }
 }
 

@@ -100,8 +100,14 @@ pub enum MenuValidationError {
     #[error("Menu item '{id}' label exceeds maximum length of {max} characters")]
     LabelTooLong { id: String, max: usize },
 
+    #[error("Menu item '{id}' label contains null byte")]
+    LabelContainsNull { id: String },
+
     #[error("Tray tooltip exceeds maximum length of {max} characters")]
     TooltipTooLong { max: usize },
+
+    #[error("Tray tooltip contains null byte")]
+    TooltipContainsNull,
 
     #[error("Failed to parse menu parameters: {0}")]
     ParseError(String),
@@ -153,7 +159,13 @@ pub fn validate_menu_items(items: &[MenuItem]) -> Result<(), MenuValidationError
             return Err(MenuValidationError::DuplicateItemId(item.id.clone()));
         }
 
-        // Validate label length
+        // Validate label length and null bytes
+        if item.label.contains('\0') {
+            return Err(MenuValidationError::LabelContainsNull {
+                id: item.id.clone(),
+            });
+        }
+
         if item.label.chars().count() > MAX_MENU_LABEL_CHARS {
             return Err(MenuValidationError::LabelTooLong {
                 id: item.id.clone(),
@@ -181,12 +193,15 @@ pub fn parse_and_validate_tray_params(
             .map_err(|e| MenuValidationError::ParseError(e.to_string()))?
     };
 
-    if let Some(ref tip) = params.tooltip
-        && tip.chars().count() > MAX_TRAY_TOOLTIP_CHARS
-    {
-        return Err(MenuValidationError::TooltipTooLong {
-            max: MAX_TRAY_TOOLTIP_CHARS,
-        });
+    if let Some(ref tip) = params.tooltip {
+        if tip.contains('\0') {
+            return Err(MenuValidationError::TooltipContainsNull);
+        }
+        if tip.chars().count() > MAX_TRAY_TOOLTIP_CHARS {
+            return Err(MenuValidationError::TooltipTooLong {
+                max: MAX_TRAY_TOOLTIP_CHARS,
+            });
+        }
     }
 
     validate_menu_items(&params.items)?;
@@ -388,5 +403,27 @@ mod tests {
         let parsed_obj =
             parse_and_validate_context_menu_params(&json_obj).expect("Parsing should succeed");
         assert_eq!(parsed_obj.items.len(), 1);
+    }
+
+    #[test]
+    fn test_menu_item_label_null_byte_rejected() {
+        let items = vec![MenuItem::new("valid-id", "Label with \0 null byte")];
+        let err = validate_menu_items(&items).unwrap_err();
+        assert_eq!(
+            err,
+            MenuValidationError::LabelContainsNull {
+                id: "valid-id".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_tray_tooltip_null_byte_rejected() {
+        let json = serde_json::json!({
+            "tooltip": "Tooltip with \0 null byte",
+            "items": [{"id": "item1", "label": "Item 1"}]
+        });
+        let err = parse_and_validate_tray_params(&json).unwrap_err();
+        assert_eq!(err, MenuValidationError::TooltipContainsNull);
     }
 }

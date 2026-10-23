@@ -117,8 +117,10 @@ fn main() {
         }
     };
 
-    // 4. Initialize handler registry
-    let registry = wavical_ipc::HandlerRegistry::with_core_handlers();
+    // 4. Initialize handler registry with core and native handlers
+    let mut registry = wavical_ipc::HandlerRegistry::with_core_handlers();
+    let native_service = std::sync::Arc::new(wavical_native::NativeService::new());
+    registry.register_native(native_service, &config.window_id);
 
     // 5. Configure protocol and handlers
     let protocol_asset_root = asset_root.clone();

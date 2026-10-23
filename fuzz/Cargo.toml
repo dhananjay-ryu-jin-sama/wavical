@@ -29,3 +29,15 @@ name = "resolve_path"
 path = "fuzz_targets/resolve_path.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "native_request_parser"
+path = "fuzz_targets/native_request_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "grant_table"
+path = "fuzz_targets/grant_table.rs"
+test = false
+doc = false

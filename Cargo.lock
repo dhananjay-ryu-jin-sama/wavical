@@ -3617,6 +3617,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wavical-ipc",
+ "wavical-native",
  "wavical-protocol",
  "wavical-shell",
  "wry",

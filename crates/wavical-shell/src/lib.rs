@@ -434,7 +434,9 @@ pub fn process_ipc_message(
         )));
     }
 
-    let response = if wavical_ipc::is_native_method(&request.method) {
+    let response = if registry.has_handler(&request.method) {
+        wavical_ipc::dispatch(&request, &active_capabilities, registry)
+    } else if wavical_ipc::is_native_method(&request.method) {
         let native_service = wavical_native::NativeService::new();
         wavical_ipc::dispatch_native(
             &request,
@@ -1104,10 +1106,10 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 *control_flow = ControlFlow::Exit;
             }
             Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
+                event: WindowEvent::CloseRequested | WindowEvent::Destroyed,
                 ..
             } => {
-                tracing::info!("Window close requested; saving state, clearing grants and exiting cleanly");
+                tracing::info!("Window close or destroyed event received; saving state, clearing grants and exiting cleanly");
                 save_window_state_helper(&window, &loop_window_id, persist_state);
                 loop_native_service.clear_window(&loop_window_id);
                 *control_flow = ControlFlow::Exit;
