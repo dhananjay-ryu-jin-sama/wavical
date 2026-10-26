@@ -40,7 +40,7 @@ Electron bundles a full Chromium and Node.js runtime with every app. Tauri impro
 | 🛡️ | **Default-deny** | Every window starts with **zero** capabilities. IPC methods, origins, navigations, popups, and native APIs are blocked unless explicitly allowed. |
 | 🔑 | **Scoped file access** | The webview **never** touches a raw file path. Files chosen via native dialogs yield opaque, unguessable grant tokens verified in Rust at time-of-use. |
 | 🦀 | **Memory-safe** | `#![forbid(unsafe_code)]` in pure crates. No `unwrap()`/`expect()` on untrusted input. |
-| 🔬 | **Verified** | 213 unit and property tests (`proptest`), `cargo-fuzz` harnesses, and a live **adversarial attack page** run in CI. |
+| 🔬 | **Verified** | 230+ unit, property, and black-box security audit tests (`proptest`), `cargo-fuzz` harnesses, and a live **adversarial attack page** run in CI. |
 | 🤐 | **No leaks** | Errors returned to the page are generic. Internal paths, rejection reasons, and file layouts stay out of the webview. |
 | 🤖 | **AI-native (planned)** | Local LLM runtimes, embedded RAG, and model management are first-class roadmap goals. |
 
@@ -421,15 +421,25 @@ fn main() {
 Wavical follows one rule: **every security rule has a test that fails if the rule is removed.**
 
 ```powershell
-# The full quality gate (the same checks CI runs - 213 tests across workspace)
+# The full quality gate (the same checks CI runs - 230+ tests across workspace)
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build --workspace
 
+# Independent security audit test suite (Phase 0 pure crates)
+cargo test -p wavical-audit-tests
+
 # Live adversarial test bench (opens a real WebView2 window)
 cargo run -p wavical-integration-tests
 ```
+
+### 📋 Security Audits
+
+Formal independent black-box security audit reports are stored under [`docs/audits/`](docs/audits/):
+- **[A0: Baseline, CI, and Drift Audit](docs/audits/A0_baseline.md)** — Initial workspace baseline and supply chain verification.
+- **[A1a: Phase 0 Pure Crates Security Audit](docs/audits/A1a_pure_crates.md)** — Rigorous table-driven attack payloads, NTFS edge cases, pre-parse message limits, and capability isolation verification for `wavical-protocol` and `wavical-ipc`.
+
 
 ### 🎯 Attack test bench
 

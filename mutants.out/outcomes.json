@@ -1,0 +1,285 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 76.1683545,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 16.6706812,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/wavical-ipc/src/grants.rs:20:53: replace * with +",
+          "package": "wavical-ipc",
+          "file": "crates/wavical-ipc/src/grants.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 53
+            },
+            "end": {
+              "line": 20,
+              "column": 54
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/crates__wavical-ipc__src__grants.rs_line_20_col_53.log",
+      "diff_path": "diff/crates__wavical-ipc__src__grants.rs_line_20_col_53.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.8973849,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 20.6109689,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/wavical-ipc/src/grants.rs:20:53: replace * with /",
+          "package": "wavical-ipc",
+          "file": "crates/wavical-ipc/src/grants.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 53
+            },
+            "end": {
+              "line": 20,
+              "column": 54
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/crates__wavical-ipc__src__grants.rs_line_20_col_53_001.log",
+      "diff_path": "diff/crates__wavical-ipc__src__grants.rs_line_20_col_53_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.7148522,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.8693375,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/wavical-ipc/src/grants.rs:20:46: replace * with +",
+          "package": "wavical-ipc",
+          "file": "crates/wavical-ipc/src/grants.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 46
+            },
+            "end": {
+              "line": 20,
+              "column": 47
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/crates__wavical-ipc__src__grants.rs_line_20_col_46.log",
+      "diff_path": "diff/crates__wavical-ipc__src__grants.rs_line_20_col_46.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.9087568,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 12.5044547,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/wavical-ipc/src/grants.rs:20:46: replace * with /",
+          "package": "wavical-ipc",
+          "file": "crates/wavical-ipc/src/grants.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 46
+            },
+            "end": {
+              "line": 20,
+              "column": 47
+            }
+          },
+          "replacement": "/",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/crates__wavical-ipc__src__grants.rs_line_20_col_46_001.log",
+      "diff_path": "diff/crates__wavical-ipc__src__grants.rs_line_20_col_46_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.5967213,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "crates/wavical-ipc/src/grants.rs:23:54: replace * with +",
+          "package": "wavical-ipc",
+          "file": "crates/wavical-ipc/src/grants.rs",
+          "function": null,
+          "span": {
+            "start": {
+              "line": 23,
+              "column": 54
+            },
+            "end": {
+              "line": 23,
+              "column": 55
+            }
+          },
+          "replacement": "+",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/crates__wavical-ipc__src__grants.rs_line_23_col_54.log",
+      "diff_path": "diff/crates__wavical-ipc__src__grants.rs_line_23_col_54.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 2.6080563,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 17.2182375,
+          "process_status": "Success",
+          "argv": [
+            "C:\\Users\\DHANANS\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe",
+            "test",
+            "--verbose",
+            "--package=wavical-ipc@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 5,
+  "missed": 4,
+  "caught": 0,
+  "timeout": 0,
+  "unviable": 1,
+  "success": 0,
+  "start_time": "2026-10-26T07:38:11.3232771Z",
+  "end_time": null,
+  "cargo_mutants_version": "27.1.0"
+}

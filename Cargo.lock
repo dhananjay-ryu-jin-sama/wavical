@@ -3577,6 +3577,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "wavical-audit"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "proptest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wavical-cli",
+ "wavical-config",
+ "wavical-ipc",
+ "wavical-native",
+ "wavical-protocol",
+ "wavical-shell",
+ "wry",
+]
+
+[[package]]
 name = "wavical-cli"
 version = "0.1.0"
 dependencies = [

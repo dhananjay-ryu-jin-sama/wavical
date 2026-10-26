@@ -1,0 +1,19 @@
+[package]
+name = "wavical-audit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+wavical-protocol = { path = "../../crates/wavical-protocol" }
+wavical-ipc = { path = "../../crates/wavical-ipc" }
+wavical-shell = { path = "../../crates/wavical-shell" }
+wavical-config = { path = "../../crates/wavical-config" }
+wavical-cli = { path = "../../crates/wavical-cli" }
+wavical-native = { path = "../../crates/wavical-native" }
+arboard = "3.7.0"
+wry = "0.57.0"
+serde_json = "1.0.151"
+serde = { version = "1.0.229", features = ["derive"] }
+tempfile = "3.27.0"
+proptest = "1.11.0"

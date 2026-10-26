@@ -1,0 +1,261 @@
+cargo:rerun-if-env-changed=CUSTOM_LIBFUZZER_PATH
+cargo:rerun-if-changed=libfuzzer\FuzzerCrossOver.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerDataFlowTrace.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerDriver.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerExtFunctionsDlsym.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerExtFunctionsWeak.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerExtFunctionsWindows.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerExtraCounters.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerExtraCountersDarwin.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerExtraCountersWindows.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerFork.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerInterceptors.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerIO.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerIOPosix.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerIOWindows.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerLoop.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerMain.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerMerge.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerMutate.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerSHA1.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerTracePC.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerUtil.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerUtilDarwin.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerUtilFuchsia.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerUtilLinux.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerUtilPosix.cpp
+cargo:rerun-if-changed=libfuzzer\FuzzerUtilWindows.cpp
+cargo:rerun-if-env-changed=CC_FORCE_DISABLE
+CC_FORCE_DISABLE = None
+cargo:rerun-if-env-changed=CC_PREFER_CLANG_CL_OVER_MSVC
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+cargo:rerun-if-env-changed=VCINSTALLDIR
+VCINSTALLDIR = None
+cargo:rerun-if-env-changed=VSTEL_MSBuildProjectFullPath
+VSTEL_MSBuildProjectFullPath = None
+cargo:rerun-if-env-changed=VCToolsVersion
+VCToolsVersion = None
+cargo:rerun-if-env-changed=VSCMD_ARG_VCVARS_SPECTRE
+VSCMD_ARG_VCVARS_SPECTRE = None
+cargo:rerun-if-env-changed=WindowsSdkDir
+WindowsSdkDir = None
+cargo:rerun-if-env-changed=WindowsSDKVersion
+WindowsSDKVersion = None
+cargo:rerun-if-env-changed=LIB
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+cargo:rerun-if-env-changed=INCLUDE
+INCLUDE = None
+cargo:rerun-if-env-changed=CXX_x86_64-pc-windows-msvc
+CXX_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CXX_x86_64_pc_windows_msvc
+CXX_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CXX
+HOST_CXX = None
+cargo:rerun-if-env-changed=CXX
+CXX = None
+cargo:rerun-if-env-changed=EXTERNAL_INCLUDE
+cargo:rerun-if-env-changed=CL
+cargo:rerun-if-env-changed=_CL_
+cargo:rerun-if-env-changed=LIBPATH
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+cargo:rerun-if-env-changed=CXXFLAGS
+CXXFLAGS = None
+cargo:rerun-if-env-changed=HOST_CXXFLAGS
+HOST_CXXFLAGS = None
+cargo:rerun-if-env-changed=CXXFLAGS_x86_64_pc_windows_msvc
+CXXFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=CXXFLAGS_x86_64-pc-windows-msvc
+CXXFLAGS_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+FuzzerCrossOver.cpp
+FuzzerDataFlowTrace.cpp
+FuzzerDriver.cpp
+FuzzerExtFunctionsDlsym.cpp
+FuzzerExtFunctionsWeak.cpp
+FuzzerExtFunctionsWindows.cpp
+FuzzerExtraCounters.cpp
+FuzzerExtraCountersDarwin.cpp
+FuzzerExtraCountersWindows.cpp
+FuzzerFork.cpp
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+FuzzerInterceptors.cpp
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+FuzzerIO.cpp
+FuzzerIOPosix.cpp
+FuzzerIOWindows.cpp
+FuzzerLoop.cpp
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+FuzzerMain.cpp
+FuzzerMerge.cpp
+FuzzerMutate.cpp
+FuzzerSHA1.cpp
+FuzzerTracePC.cpp
+FuzzerUtil.cpp
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+FuzzerUtilDarwin.cpp
+FuzzerUtilFuchsia.cpp
+FuzzerUtilLinux.cpp
+FuzzerUtilPosix.cpp
+FuzzerUtilWindows.cpp
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(310): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(310): note: the template instantiation context (the oldest one first) is
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(678): note: see reference to class template instantiation 'std::basic_ostream<char,std::char_traits<char>>' being compiled
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(303): note: while compiling class template member function 'std::basic_ostream<char,std::char_traits<char>> &std::basic_ostream<char,std::char_traits<char>>::operator <<(unsigned int)'
+libfuzzer\FuzzerSHA1.cpp(214): note: see the first reference to 'std::basic_ostream<char,std::char_traits<char>>::operator <<' in 'fuzzer::Sha1ToString'
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): warning C4530: C++ exception handler used, but unwind semantics are not enabled. Specify /EHsc
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\__msvc_ostream.hpp(781): note: the template instantiation context (the oldest one first) is
+C:\Users\DHANANS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libfuzzer-sys-0.4.13\libfuzzer\FuzzerCommand.h(144): note: see reference to function template instantiation 'std::basic_ostream<char,std::char_traits<char>> &std::operator <<<std::char_traits<char>>(std::basic_ostream<char,std::char_traits<char>> &,const char *)' being compiled
+CC_FORCE_DISABLE = None
+cargo:rerun-if-env-changed=AR_x86_64-pc-windows-msvc
+AR_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=AR_x86_64_pc_windows_msvc
+AR_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_AR
+HOST_AR = None
+cargo:rerun-if-env-changed=AR
+AR = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CXX_x86_64-pc-windows-msvc = None
+CXX_x86_64_pc_windows_msvc = None
+HOST_CXX = None
+CXX = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+cargo:rerun-if-env-changed=ARFLAGS
+ARFLAGS = None
+cargo:rerun-if-env-changed=HOST_ARFLAGS
+HOST_ARFLAGS = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64_pc_windows_msvc
+ARFLAGS_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=ARFLAGS_x86_64-pc-windows-msvc
+ARFLAGS_x86_64-pc-windows-msvc = None
+AR_x86_64-pc-windows-msvc = None
+AR_x86_64_pc_windows_msvc = None
+HOST_AR = None
+AR = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CXX_x86_64-pc-windows-msvc = None
+CXX_x86_64_pc_windows_msvc = None
+HOST_CXX = None
+CXX = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+ARFLAGS = None
+HOST_ARFLAGS = None
+ARFLAGS_x86_64_pc_windows_msvc = None
+ARFLAGS_x86_64-pc-windows-msvc = None
+AR_x86_64-pc-windows-msvc = None
+AR_x86_64_pc_windows_msvc = None
+HOST_AR = None
+AR = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CXX_x86_64-pc-windows-msvc = None
+CXX_x86_64_pc_windows_msvc = None
+HOST_CXX = None
+CXX = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+ARFLAGS = None
+HOST_ARFLAGS = None
+ARFLAGS_x86_64_pc_windows_msvc = None
+ARFLAGS_x86_64-pc-windows-msvc = None
+CC_PREFER_CLANG_CL_OVER_MSVC = None
+VCINSTALLDIR = None
+VSTEL_MSBuildProjectFullPath = None
+VCToolsVersion = None
+VSCMD_ARG_VCVARS_SPECTRE = None
+WindowsSdkDir = None
+WindowsSDKVersion = None
+LIB = None
+PATH = Some(C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\deps;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\lib;C:/Users/DHANANS/.gemini/antigravity-ide/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:\Windows\System32;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\.local\bin;C:\Users\DHANANS\.cargo\bin;C:\Users\DHANANS\AppData\Local\agy\bin;C:\Program Files\PTC\RVSClient134\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\IVIY;C:\Program Files\Git\cmd;C:\Program Files\TortoiseGit\bin;C:\Program Files\PTC\RVSClient134\jdk21\bin;C:/Users/DHANANS/.gemini/antigravity-cli/bin;c:\Program Files (x86)\Vector vFlash 10\Bin\Automation\;C:\Program Files\dotnet\;C:\Program Files\ZenZefiT\;C:\Program Files\nodejs\;C:\apps\Matlab\R2025b\runtime\win64;C:\apps\Matlab\R2025b\bin;C:\Windows\system32\config\systemprofile\AppData\Local\Microsoft\WindowsApps;C:\Windows\system32\config\systemprofile\AppData\Roaming\npm;C:\Apps\PLATON_Connect_tc2406\java\jdk;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412\startup;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows64\nx2412;C:\Apps\Siemens\NXCurrentDT\bct\bin\windows;c:\Program Files (x86)\Vector CANdb++ 3.1\Exec32;c:\Program Files\Vector SIL Kit 4.0.34\x86\bin;c:\Program Files\Vector SIL Kit 4.0.34\x86_64\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WindowsApps;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\AppData\Local\Programs\Antigravity IDE\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\BurntSushi.ripgrep.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe\ripgrep-15.2.0-x86_64-pc-windows-msvc;C:\Users\DHANANS\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\OpenAI.Codex_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\Users\DHANANS\.platformio\penv\Scripts;C:\Program Files\JetBrains\CLion 2026.2.1\bin\cmake\win\x64\bin;C:\Users\DHANANS\.lmstudio\bin;C:\Users\DHANANS\AppData\Local\Programs\Ollama;c:\Program Files\Vector Informatik GmbH\VIO System Configuration Tool\;C:\Users\DHANANS\AppData\Roaming\npm;C:\Users\DHANANS\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin;C:\Users\DHANANS\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
+INCLUDE = None
+CXX_x86_64-pc-windows-msvc = None
+CXX_x86_64_pc_windows_msvc = None
+HOST_CXX = None
+CXX = None
+cargo:rustc-link-lib=static=fuzzer
+cargo:rustc-link-search=native=C:\Users\DHANANS\OneDrive - Daimler Truck\Documents\Dhananjay\coading\Arka-Wavical\fuzz\target\debug\build\libfuzzer-sys-888692f3a50b87a4\out
+cargo:rerun-if-env-changed=CXXSTDLIB_x86_64-pc-windows-msvc
+CXXSTDLIB_x86_64-pc-windows-msvc = None
+cargo:rerun-if-env-changed=CXXSTDLIB_x86_64_pc_windows_msvc
+CXXSTDLIB_x86_64_pc_windows_msvc = None
+cargo:rerun-if-env-changed=HOST_CXXSTDLIB
+HOST_CXXSTDLIB = None
+cargo:rerun-if-env-changed=CXXSTDLIB
+CXXSTDLIB = None

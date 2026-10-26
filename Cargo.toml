@@ -8,6 +8,7 @@ members = [
     "crates/wavical-cli",
     "crates/wavical-native",
     "tests/integration",
+    "tests/audit",
 ]
 exclude = [
     "fuzz",

@@ -1,0 +1,21 @@
+--- crates/wavical-ipc/src/grants.rs
++++ replace * with /
+@@ -15,17 +15,17 @@
+ 
+ /// Maximum number of file grants permitted concurrently for a single window.
+ pub const MAX_GRANTS_PER_WINDOW: usize = 64;
+ 
+ /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).
+ pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;
+ 
+ /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).
+-pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;
++pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 / /* ~ changed by cargo-mutants ~ */ 1024;
+ 
+ /// Generic error message returned when a grant lookup or operation fails.
+ pub const GENERIC_GRANT_ERROR: &str = "Grant operation failed";
+ 
+ /// Generic error message returned when a filesystem operation fails.
+ pub const GENERIC_FS_ERROR: &str = "File operation failed";
+ 
+ /// Rejection reasons for grant operations.

@@ -1,0 +1,794 @@
+[
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with +\n@@ -12,17 +12,17 @@\n use std::path::PathBuf;\n use std::sync::RwLock;\n use thiserror::Error;\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n-pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 + /* ~ changed by cargo-mutants ~ */ 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:20:53: replace * with +",
+    "package": "wavical-ipc",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 54,
+        "line": 20
+      },
+      "start": {
+        "column": 53,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with /\n@@ -12,17 +12,17 @@\n use std::path::PathBuf;\n use std::sync::RwLock;\n use thiserror::Error;\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n-pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 / /* ~ changed by cargo-mutants ~ */ 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:20:53: replace * with /",
+    "package": "wavical-ipc",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 54,
+        "line": 20
+      },
+      "start": {
+        "column": 53,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with +\n@@ -12,17 +12,17 @@\n use std::path::PathBuf;\n use std::sync::RwLock;\n use thiserror::Error;\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n-pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_READ_GRANTED_BYTES: usize = 10 + /* ~ changed by cargo-mutants ~ */ 1024 * 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:20:46: replace * with +",
+    "package": "wavical-ipc",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 47,
+        "line": 20
+      },
+      "start": {
+        "column": 46,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with /\n@@ -12,17 +12,17 @@\n use std::path::PathBuf;\n use std::sync::RwLock;\n use thiserror::Error;\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n-pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_READ_GRANTED_BYTES: usize = 10 / /* ~ changed by cargo-mutants ~ */ 1024 * 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:20:46: replace * with /",
+    "package": "wavical-ipc",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 47,
+        "line": 20
+      },
+      "start": {
+        "column": 46,
+        "line": 20
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with +\n@@ -15,17 +15,17 @@\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n-pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 + /* ~ changed by cargo-mutants ~ */ 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n pub const GENERIC_FS_ERROR: &str = \"File operation failed\";\n \n /// Rejection reasons for grant operations.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:23:54: replace * with +",
+    "package": "wavical-ipc",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 55,
+        "line": 23
+      },
+      "start": {
+        "column": 54,
+        "line": 23
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with /\n@@ -15,17 +15,17 @@\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n-pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 / /* ~ changed by cargo-mutants ~ */ 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n pub const GENERIC_FS_ERROR: &str = \"File operation failed\";\n \n /// Rejection reasons for grant operations.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:23:54: replace * with /",
+    "package": "wavical-ipc",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 55,
+        "line": 23
+      },
+      "start": {
+        "column": 54,
+        "line": 23
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with +\n@@ -15,17 +15,17 @@\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n-pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_WRITE_GRANTED_BYTES: usize = 10 + /* ~ changed by cargo-mutants ~ */ 1024 * 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n pub const GENERIC_FS_ERROR: &str = \"File operation failed\";\n \n /// Rejection reasons for grant operations.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:23:47: replace * with +",
+    "package": "wavical-ipc",
+    "replacement": "+",
+    "span": {
+      "end": {
+        "column": 48,
+        "line": 23
+      },
+      "start": {
+        "column": 47,
+        "line": 23
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace * with /\n@@ -15,17 +15,17 @@\n \n /// Maximum number of file grants permitted concurrently for a single window.\n pub const MAX_GRANTS_PER_WINDOW: usize = 64;\n \n /// Maximum allowable file size for `fs.readGranted` (10 MB named constant).\n pub const MAX_READ_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n \n /// Maximum allowable payload size for `fs.writeGranted` (10 MB named constant).\n-pub const MAX_WRITE_GRANTED_BYTES: usize = 10 * 1024 * 1024;\n+pub const MAX_WRITE_GRANTED_BYTES: usize = 10 / /* ~ changed by cargo-mutants ~ */ 1024 * 1024;\n \n /// Generic error message returned when a grant lookup or operation fails.\n pub const GENERIC_GRANT_ERROR: &str = \"Grant operation failed\";\n \n /// Generic error message returned when a filesystem operation fails.\n pub const GENERIC_FS_ERROR: &str = \"File operation failed\";\n \n /// Rejection reasons for grant operations.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": null,
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:23:47: replace * with /",
+    "package": "wavical-ipc",
+    "replacement": "/",
+    "span": {
+      "end": {
+        "column": 48,
+        "line": 23
+      },
+      "start": {
+        "column": 47,
+        "line": 23
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace generate_grant_id -> Result<String, GrantError> with Ok(String::new())\n@@ -49,19 +49,17 @@\n     /// The target filesystem path chosen by the user in the native dialog.\n     pub path: PathBuf,\n     /// Canonical path captured at grant time (if target exists).\n     pub canonical_path: Option<PathBuf>,\n }\n \n /// Generate a cryptographically secure 128-bit unguessable grant ID formatted as 32 lowercase hex characters.\n pub fn generate_grant_id() -> Result<String, GrantError> {\n-    let mut bytes = [0u8; 16];\n-    getrandom::fill(&mut bytes).map_err(|e| GrantError::RandomnessError(e.to_string()))?;\n-    Ok(bytes.iter().map(|b| format!(\"{:02x}\", b)).collect())\n+    Ok(String::new()) /* ~ changed by cargo-mutants ~ */\n }\n \n /// Thread-safe in-memory table tracking active scoped file grants per window.\n #[derive(Debug, Default)]\n pub struct GrantTable {\n     grants: RwLock<HashMap<String, GrantEntry>>,\n }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "generate_grant_id",
+      "return_type": "-> Result<String, GrantError>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 60
+        },
+        "start": {
+          "column": 1,
+          "line": 55
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:57:5: replace generate_grant_id -> Result<String, GrantError> with Ok(String::new())",
+    "package": "wavical-ipc",
+    "replacement": "Ok(String::new())",
+    "span": {
+      "end": {
+        "column": 61,
+        "line": 59
+      },
+      "start": {
+        "column": 5,
+        "line": 57
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace generate_grant_id -> Result<String, GrantError> with Ok(\"xyzzy\".into())\n@@ -49,19 +49,17 @@\n     /// The target filesystem path chosen by the user in the native dialog.\n     pub path: PathBuf,\n     /// Canonical path captured at grant time (if target exists).\n     pub canonical_path: Option<PathBuf>,\n }\n \n /// Generate a cryptographically secure 128-bit unguessable grant ID formatted as 32 lowercase hex characters.\n pub fn generate_grant_id() -> Result<String, GrantError> {\n-    let mut bytes = [0u8; 16];\n-    getrandom::fill(&mut bytes).map_err(|e| GrantError::RandomnessError(e.to_string()))?;\n-    Ok(bytes.iter().map(|b| format!(\"{:02x}\", b)).collect())\n+    Ok(\"xyzzy\".into()) /* ~ changed by cargo-mutants ~ */\n }\n \n /// Thread-safe in-memory table tracking active scoped file grants per window.\n #[derive(Debug, Default)]\n pub struct GrantTable {\n     grants: RwLock<HashMap<String, GrantEntry>>,\n }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "generate_grant_id",
+      "return_type": "-> Result<String, GrantError>",
+      "span": {
+        "end": {
+          "column": 2,
+          "line": 60
+        },
+        "start": {
+          "column": 1,
+          "line": 55
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:57:5: replace generate_grant_id -> Result<String, GrantError> with Ok(\"xyzzy\".into())",
+    "package": "wavical-ipc",
+    "replacement": "Ok(\"xyzzy\".into())",
+    "span": {
+      "end": {
+        "column": 61,
+        "line": 59
+      },
+      "start": {
+        "column": 5,
+        "line": 57
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::insert -> Result<String, GrantError> with Ok(String::new())\n@@ -72,50 +72,17 @@\n             grants: RwLock::new(HashMap::new()),\n         }\n     }\n \n     /// Insert a granted path for a window, returning an opaque 128-bit grant ID.\n     ///\n     /// Returns `Err(GrantError::LimitReached)` if the window already holds 64 grants.\n     pub fn insert(&self, window_id: &str, path: impl Into<PathBuf>) -> Result<String, GrantError> {\n-        let mut table = self.grants.write().unwrap();\n-\n-        // Enforce max 64 grants per window limit\n-        let current_count = table.values().filter(|e| e.window_id == window_id).count();\n-        if current_count >= MAX_GRANTS_PER_WINDOW {\n-            return Err(GrantError::LimitReached);\n-        }\n-\n-        let grant_id = generate_grant_id()?;\n-        let path_buf: PathBuf = path.into();\n-        let canonical_path = if path_buf.exists() {\n-            path_buf.canonicalize().ok()\n-        } else if let Some(parent) = path_buf.parent() {\n-            if let (Ok(canonical_parent), Some(file_name)) =\n-                (parent.canonicalize(), path_buf.file_name())\n-            {\n-                Some(canonical_parent.join(file_name))\n-            } else {\n-                None\n-            }\n-        } else {\n-            None\n-        };\n-\n-        table.insert(\n-            grant_id.clone(),\n-            GrantEntry {\n-                window_id: window_id.to_string(),\n-                path: path_buf,\n-                canonical_path,\n-            },\n-        );\n-\n-        Ok(grant_id)\n+        Ok(String::new()) /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Look up a grant by ID and window ID.\n     ///\n     /// CRITICAL SECURITY INVARIANT:\n     /// If the grant exists but belongs to a different window, it returns `GrantError::NotFound`\n     /// to prevent cross-window access or existence probing.\n     pub fn get(&self, grant_id: &str, window_id: &str) -> Result<GrantEntry, GrantError> {\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::insert",
+      "return_type": "-> Result<String, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 114
+        },
+        "start": {
+          "column": 5,
+          "line": 76
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:80:9: replace GrantTable::insert -> Result<String, GrantError> with Ok(String::new())",
+    "package": "wavical-ipc",
+    "replacement": "Ok(String::new())",
+    "span": {
+      "end": {
+        "column": 21,
+        "line": 113
+      },
+      "start": {
+        "column": 9,
+        "line": 80
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::insert -> Result<String, GrantError> with Ok(\"xyzzy\".into())\n@@ -72,50 +72,17 @@\n             grants: RwLock::new(HashMap::new()),\n         }\n     }\n \n     /// Insert a granted path for a window, returning an opaque 128-bit grant ID.\n     ///\n     /// Returns `Err(GrantError::LimitReached)` if the window already holds 64 grants.\n     pub fn insert(&self, window_id: &str, path: impl Into<PathBuf>) -> Result<String, GrantError> {\n-        let mut table = self.grants.write().unwrap();\n-\n-        // Enforce max 64 grants per window limit\n-        let current_count = table.values().filter(|e| e.window_id == window_id).count();\n-        if current_count >= MAX_GRANTS_PER_WINDOW {\n-            return Err(GrantError::LimitReached);\n-        }\n-\n-        let grant_id = generate_grant_id()?;\n-        let path_buf: PathBuf = path.into();\n-        let canonical_path = if path_buf.exists() {\n-            path_buf.canonicalize().ok()\n-        } else if let Some(parent) = path_buf.parent() {\n-            if let (Ok(canonical_parent), Some(file_name)) =\n-                (parent.canonicalize(), path_buf.file_name())\n-            {\n-                Some(canonical_parent.join(file_name))\n-            } else {\n-                None\n-            }\n-        } else {\n-            None\n-        };\n-\n-        table.insert(\n-            grant_id.clone(),\n-            GrantEntry {\n-                window_id: window_id.to_string(),\n-                path: path_buf,\n-                canonical_path,\n-            },\n-        );\n-\n-        Ok(grant_id)\n+        Ok(\"xyzzy\".into()) /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Look up a grant by ID and window ID.\n     ///\n     /// CRITICAL SECURITY INVARIANT:\n     /// If the grant exists but belongs to a different window, it returns `GrantError::NotFound`\n     /// to prevent cross-window access or existence probing.\n     pub fn get(&self, grant_id: &str, window_id: &str) -> Result<GrantEntry, GrantError> {\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::insert",
+      "return_type": "-> Result<String, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 114
+        },
+        "start": {
+          "column": 5,
+          "line": 76
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:80:9: replace GrantTable::insert -> Result<String, GrantError> with Ok(\"xyzzy\".into())",
+    "package": "wavical-ipc",
+    "replacement": "Ok(\"xyzzy\".into())",
+    "span": {
+      "end": {
+        "column": 21,
+        "line": 113
+      },
+      "start": {
+        "column": 9,
+        "line": 80
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace == with != in GrantTable::insert\n@@ -75,17 +75,17 @@\n \n     /// Insert a granted path for a window, returning an opaque 128-bit grant ID.\n     ///\n     /// Returns `Err(GrantError::LimitReached)` if the window already holds 64 grants.\n     pub fn insert(&self, window_id: &str, path: impl Into<PathBuf>) -> Result<String, GrantError> {\n         let mut table = self.grants.write().unwrap();\n \n         // Enforce max 64 grants per window limit\n-        let current_count = table.values().filter(|e| e.window_id == window_id).count();\n+        let current_count = table.values().filter(|e| e.window_id != /* ~ changed by cargo-mutants ~ */ window_id).count();\n         if current_count >= MAX_GRANTS_PER_WINDOW {\n             return Err(GrantError::LimitReached);\n         }\n \n         let grant_id = generate_grant_id()?;\n         let path_buf: PathBuf = path.into();\n         let canonical_path = if path_buf.exists() {\n             path_buf.canonicalize().ok()\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::insert",
+      "return_type": "-> Result<String, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 114
+        },
+        "start": {
+          "column": 5,
+          "line": 76
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:83:67: replace == with != in GrantTable::insert",
+    "package": "wavical-ipc",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 69,
+        "line": 83
+      },
+      "start": {
+        "column": 67,
+        "line": 83
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace >= with < in GrantTable::insert\n@@ -76,17 +76,17 @@\n     /// Insert a granted path for a window, returning an opaque 128-bit grant ID.\n     ///\n     /// Returns `Err(GrantError::LimitReached)` if the window already holds 64 grants.\n     pub fn insert(&self, window_id: &str, path: impl Into<PathBuf>) -> Result<String, GrantError> {\n         let mut table = self.grants.write().unwrap();\n \n         // Enforce max 64 grants per window limit\n         let current_count = table.values().filter(|e| e.window_id == window_id).count();\n-        if current_count >= MAX_GRANTS_PER_WINDOW {\n+        if current_count < /* ~ changed by cargo-mutants ~ */ MAX_GRANTS_PER_WINDOW {\n             return Err(GrantError::LimitReached);\n         }\n \n         let grant_id = generate_grant_id()?;\n         let path_buf: PathBuf = path.into();\n         let canonical_path = if path_buf.exists() {\n             path_buf.canonicalize().ok()\n         } else if let Some(parent) = path_buf.parent() {\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::insert",
+      "return_type": "-> Result<String, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 114
+        },
+        "start": {
+          "column": 5,
+          "line": 76
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:84:26: replace >= with < in GrantTable::insert",
+    "package": "wavical-ipc",
+    "replacement": "<",
+    "span": {
+      "end": {
+        "column": 28,
+        "line": 84
+      },
+      "start": {
+        "column": 26,
+        "line": 84
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::get -> Result<GrantEntry, GrantError> with Ok(Default::default())\n@@ -114,21 +114,17 @@\n     }\n \n     /// Look up a grant by ID and window ID.\n     ///\n     /// CRITICAL SECURITY INVARIANT:\n     /// If the grant exists but belongs to a different window, it returns `GrantError::NotFound`\n     /// to prevent cross-window access or existence probing.\n     pub fn get(&self, grant_id: &str, window_id: &str) -> Result<GrantEntry, GrantError> {\n-        let table = self.grants.read().unwrap();\n-        match table.get(grant_id) {\n-            Some(entry) if entry.window_id == window_id => Ok(entry.clone()),\n-            _ => Err(GrantError::NotFound),\n-        }\n+        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n         table.retain(|_, entry| entry.window_id != window_id);\n     }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::get",
+      "return_type": "-> Result<GrantEntry, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 127
+        },
+        "start": {
+          "column": 5,
+          "line": 116
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:122:9: replace GrantTable::get -> Result<GrantEntry, GrantError> with Ok(Default::default())",
+    "package": "wavical-ipc",
+    "replacement": "Ok(Default::default())",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 126
+      },
+      "start": {
+        "column": 9,
+        "line": 122
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace match guard entry.window_id == window_id with true in GrantTable::get\n@@ -116,17 +116,17 @@\n     /// Look up a grant by ID and window ID.\n     ///\n     /// CRITICAL SECURITY INVARIANT:\n     /// If the grant exists but belongs to a different window, it returns `GrantError::NotFound`\n     /// to prevent cross-window access or existence probing.\n     pub fn get(&self, grant_id: &str, window_id: &str) -> Result<GrantEntry, GrantError> {\n         let table = self.grants.read().unwrap();\n         match table.get(grant_id) {\n-            Some(entry) if entry.window_id == window_id => Ok(entry.clone()),\n+            Some(entry) if true /* ~ changed by cargo-mutants ~ */ => Ok(entry.clone()),\n             _ => Err(GrantError::NotFound),\n         }\n     }\n \n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n         table.retain(|_, entry| entry.window_id != window_id);\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::get",
+      "return_type": "-> Result<GrantEntry, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 127
+        },
+        "start": {
+          "column": 5,
+          "line": 116
+        }
+      }
+    },
+    "genre": "MatchArmGuard",
+    "name": "crates/wavical-ipc/src/grants.rs:124:28: replace match guard entry.window_id == window_id with true in GrantTable::get",
+    "package": "wavical-ipc",
+    "replacement": "true",
+    "span": {
+      "end": {
+        "column": 56,
+        "line": 124
+      },
+      "start": {
+        "column": 28,
+        "line": 124
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace match guard entry.window_id == window_id with false in GrantTable::get\n@@ -116,17 +116,17 @@\n     /// Look up a grant by ID and window ID.\n     ///\n     /// CRITICAL SECURITY INVARIANT:\n     /// If the grant exists but belongs to a different window, it returns `GrantError::NotFound`\n     /// to prevent cross-window access or existence probing.\n     pub fn get(&self, grant_id: &str, window_id: &str) -> Result<GrantEntry, GrantError> {\n         let table = self.grants.read().unwrap();\n         match table.get(grant_id) {\n-            Some(entry) if entry.window_id == window_id => Ok(entry.clone()),\n+            Some(entry) if false /* ~ changed by cargo-mutants ~ */ => Ok(entry.clone()),\n             _ => Err(GrantError::NotFound),\n         }\n     }\n \n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n         table.retain(|_, entry| entry.window_id != window_id);\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::get",
+      "return_type": "-> Result<GrantEntry, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 127
+        },
+        "start": {
+          "column": 5,
+          "line": 116
+        }
+      }
+    },
+    "genre": "MatchArmGuard",
+    "name": "crates/wavical-ipc/src/grants.rs:124:28: replace match guard entry.window_id == window_id with false in GrantTable::get",
+    "package": "wavical-ipc",
+    "replacement": "false",
+    "span": {
+      "end": {
+        "column": 56,
+        "line": 124
+      },
+      "start": {
+        "column": 28,
+        "line": 124
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace == with != in GrantTable::get\n@@ -116,17 +116,17 @@\n     /// Look up a grant by ID and window ID.\n     ///\n     /// CRITICAL SECURITY INVARIANT:\n     /// If the grant exists but belongs to a different window, it returns `GrantError::NotFound`\n     /// to prevent cross-window access or existence probing.\n     pub fn get(&self, grant_id: &str, window_id: &str) -> Result<GrantEntry, GrantError> {\n         let table = self.grants.read().unwrap();\n         match table.get(grant_id) {\n-            Some(entry) if entry.window_id == window_id => Ok(entry.clone()),\n+            Some(entry) if entry.window_id != /* ~ changed by cargo-mutants ~ */ window_id => Ok(entry.clone()),\n             _ => Err(GrantError::NotFound),\n         }\n     }\n \n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n         table.retain(|_, entry| entry.window_id != window_id);\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::get",
+      "return_type": "-> Result<GrantEntry, GrantError>",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 127
+        },
+        "start": {
+          "column": 5,
+          "line": 116
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:124:44: replace == with != in GrantTable::get",
+    "package": "wavical-ipc",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 46,
+        "line": 124
+      },
+      "start": {
+        "column": 44,
+        "line": 124
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::clear_window with ()\n@@ -123,18 +123,17 @@\n         match table.get(grant_id) {\n             Some(entry) if entry.window_id == window_id => Ok(entry.clone()),\n             _ => Err(GrantError::NotFound),\n         }\n     }\n \n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n-        let mut table = self.grants.write().unwrap();\n-        table.retain(|_, entry| entry.window_id != window_id);\n+        () /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Return the number of active grants for a window.\n     pub fn count_for_window(&self, window_id: &str) -> usize {\n         let table = self.grants.read().unwrap();\n         table.values().filter(|e| e.window_id == window_id).count()\n     }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::clear_window",
+      "return_type": "",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 133
+        },
+        "start": {
+          "column": 5,
+          "line": 129
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:131:9: replace GrantTable::clear_window with ()",
+    "package": "wavical-ipc",
+    "replacement": "()",
+    "span": {
+      "end": {
+        "column": 63,
+        "line": 132
+      },
+      "start": {
+        "column": 9,
+        "line": 131
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace != with == in GrantTable::clear_window\n@@ -124,17 +124,17 @@\n             Some(entry) if entry.window_id == window_id => Ok(entry.clone()),\n             _ => Err(GrantError::NotFound),\n         }\n     }\n \n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n-        table.retain(|_, entry| entry.window_id != window_id);\n+        table.retain(|_, entry| entry.window_id == /* ~ changed by cargo-mutants ~ */ window_id);\n     }\n \n     /// Return the number of active grants for a window.\n     pub fn count_for_window(&self, window_id: &str) -> usize {\n         let table = self.grants.read().unwrap();\n         table.values().filter(|e| e.window_id == window_id).count()\n     }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::clear_window",
+      "return_type": "",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 133
+        },
+        "start": {
+          "column": 5,
+          "line": 129
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:132:49: replace != with == in GrantTable::clear_window",
+    "package": "wavical-ipc",
+    "replacement": "==",
+    "span": {
+      "end": {
+        "column": 51,
+        "line": 132
+      },
+      "start": {
+        "column": 49,
+        "line": 132
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::count_for_window -> usize with 0\n@@ -129,18 +129,17 @@\n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n         table.retain(|_, entry| entry.window_id != window_id);\n     }\n \n     /// Return the number of active grants for a window.\n     pub fn count_for_window(&self, window_id: &str) -> usize {\n-        let table = self.grants.read().unwrap();\n-        table.values().filter(|e| e.window_id == window_id).count()\n+        0 /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Return total grants currently stored across all windows.\n     pub fn total_count(&self) -> usize {\n         let table = self.grants.read().unwrap();\n         table.len()\n     }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::count_for_window",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 139
+        },
+        "start": {
+          "column": 5,
+          "line": 135
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:137:9: replace GrantTable::count_for_window -> usize with 0",
+    "package": "wavical-ipc",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 68,
+        "line": 138
+      },
+      "start": {
+        "column": 9,
+        "line": 137
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::count_for_window -> usize with 1\n@@ -129,18 +129,17 @@\n     /// Clear all grants for the given window ID (called when the window closes).\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n         table.retain(|_, entry| entry.window_id != window_id);\n     }\n \n     /// Return the number of active grants for a window.\n     pub fn count_for_window(&self, window_id: &str) -> usize {\n-        let table = self.grants.read().unwrap();\n-        table.values().filter(|e| e.window_id == window_id).count()\n+        1 /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Return total grants currently stored across all windows.\n     pub fn total_count(&self) -> usize {\n         let table = self.grants.read().unwrap();\n         table.len()\n     }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::count_for_window",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 139
+        },
+        "start": {
+          "column": 5,
+          "line": 135
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:137:9: replace GrantTable::count_for_window -> usize with 1",
+    "package": "wavical-ipc",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 68,
+        "line": 138
+      },
+      "start": {
+        "column": 9,
+        "line": 137
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace == with != in GrantTable::count_for_window\n@@ -130,17 +130,17 @@\n     pub fn clear_window(&self, window_id: &str) {\n         let mut table = self.grants.write().unwrap();\n         table.retain(|_, entry| entry.window_id != window_id);\n     }\n \n     /// Return the number of active grants for a window.\n     pub fn count_for_window(&self, window_id: &str) -> usize {\n         let table = self.grants.read().unwrap();\n-        table.values().filter(|e| e.window_id == window_id).count()\n+        table.values().filter(|e| e.window_id != /* ~ changed by cargo-mutants ~ */ window_id).count()\n     }\n \n     /// Return total grants currently stored across all windows.\n     pub fn total_count(&self) -> usize {\n         let table = self.grants.read().unwrap();\n         table.len()\n     }\n \n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::count_for_window",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 139
+        },
+        "start": {
+          "column": 5,
+          "line": 135
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:138:47: replace == with != in GrantTable::count_for_window",
+    "package": "wavical-ipc",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 49,
+        "line": 138
+      },
+      "start": {
+        "column": 47,
+        "line": 138
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::total_count -> usize with 0\n@@ -135,18 +135,17 @@\n     /// Return the number of active grants for a window.\n     pub fn count_for_window(&self, window_id: &str) -> usize {\n         let table = self.grants.read().unwrap();\n         table.values().filter(|e| e.window_id == window_id).count()\n     }\n \n     /// Return total grants currently stored across all windows.\n     pub fn total_count(&self) -> usize {\n-        let table = self.grants.read().unwrap();\n-        table.len()\n+        0 /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Remove a specific grant ID if owned by `window_id`.\n     pub fn remove_grant(&self, grant_id: &str, window_id: &str) -> bool {\n         let mut table = self.grants.write().unwrap();\n         if table.get(grant_id).map(|e| e.window_id.as_str()) == Some(window_id) {\n             table.remove(grant_id);\n             return true;\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::total_count",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 145
+        },
+        "start": {
+          "column": 5,
+          "line": 141
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:143:9: replace GrantTable::total_count -> usize with 0",
+    "package": "wavical-ipc",
+    "replacement": "0",
+    "span": {
+      "end": {
+        "column": 20,
+        "line": 144
+      },
+      "start": {
+        "column": 9,
+        "line": 143
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::total_count -> usize with 1\n@@ -135,18 +135,17 @@\n     /// Return the number of active grants for a window.\n     pub fn count_for_window(&self, window_id: &str) -> usize {\n         let table = self.grants.read().unwrap();\n         table.values().filter(|e| e.window_id == window_id).count()\n     }\n \n     /// Return total grants currently stored across all windows.\n     pub fn total_count(&self) -> usize {\n-        let table = self.grants.read().unwrap();\n-        table.len()\n+        1 /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Remove a specific grant ID if owned by `window_id`.\n     pub fn remove_grant(&self, grant_id: &str, window_id: &str) -> bool {\n         let mut table = self.grants.write().unwrap();\n         if table.get(grant_id).map(|e| e.window_id.as_str()) == Some(window_id) {\n             table.remove(grant_id);\n             return true;\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::total_count",
+      "return_type": "-> usize",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 145
+        },
+        "start": {
+          "column": 5,
+          "line": 141
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:143:9: replace GrantTable::total_count -> usize with 1",
+    "package": "wavical-ipc",
+    "replacement": "1",
+    "span": {
+      "end": {
+        "column": 20,
+        "line": 144
+      },
+      "start": {
+        "column": 9,
+        "line": 143
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::remove_grant -> bool with true\n@@ -141,22 +141,17 @@\n     /// Return total grants currently stored across all windows.\n     pub fn total_count(&self) -> usize {\n         let table = self.grants.read().unwrap();\n         table.len()\n     }\n \n     /// Remove a specific grant ID if owned by `window_id`.\n     pub fn remove_grant(&self, grant_id: &str, window_id: &str) -> bool {\n-        let mut table = self.grants.write().unwrap();\n-        if table.get(grant_id).map(|e| e.window_id.as_str()) == Some(window_id) {\n-            table.remove(grant_id);\n-            return true;\n-        }\n-        false\n+        true /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n /// Parameters for `dialog.openFile`.\n /// Strictly rejects page-supplied file paths and arbitrary filter strings.\n #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]\n #[serde(deny_unknown_fields)]\n pub struct OpenFileDialogParams {\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::remove_grant",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 155
+        },
+        "start": {
+          "column": 5,
+          "line": 147
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:149:9: replace GrantTable::remove_grant -> bool with true",
+    "package": "wavical-ipc",
+    "replacement": "true",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 154
+      },
+      "start": {
+        "column": 9,
+        "line": 149
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace GrantTable::remove_grant -> bool with false\n@@ -141,22 +141,17 @@\n     /// Return total grants currently stored across all windows.\n     pub fn total_count(&self) -> usize {\n         let table = self.grants.read().unwrap();\n         table.len()\n     }\n \n     /// Remove a specific grant ID if owned by `window_id`.\n     pub fn remove_grant(&self, grant_id: &str, window_id: &str) -> bool {\n-        let mut table = self.grants.write().unwrap();\n-        if table.get(grant_id).map(|e| e.window_id.as_str()) == Some(window_id) {\n-            table.remove(grant_id);\n-            return true;\n-        }\n-        false\n+        false /* ~ changed by cargo-mutants ~ */\n     }\n }\n \n /// Parameters for `dialog.openFile`.\n /// Strictly rejects page-supplied file paths and arbitrary filter strings.\n #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]\n #[serde(deny_unknown_fields)]\n pub struct OpenFileDialogParams {\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::remove_grant",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 155
+        },
+        "start": {
+          "column": 5,
+          "line": 147
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "crates/wavical-ipc/src/grants.rs:149:9: replace GrantTable::remove_grant -> bool with false",
+    "package": "wavical-ipc",
+    "replacement": "false",
+    "span": {
+      "end": {
+        "column": 14,
+        "line": 154
+      },
+      "start": {
+        "column": 9,
+        "line": 149
+      }
+    }
+  },
+  {
+    "diff": "--- crates/wavical-ipc/src/grants.rs\n+++ replace == with != in GrantTable::remove_grant\n@@ -142,17 +142,17 @@\n     pub fn total_count(&self) -> usize {\n         let table = self.grants.read().unwrap();\n         table.len()\n     }\n \n     /// Remove a specific grant ID if owned by `window_id`.\n     pub fn remove_grant(&self, grant_id: &str, window_id: &str) -> bool {\n         let mut table = self.grants.write().unwrap();\n-        if table.get(grant_id).map(|e| e.window_id.as_str()) == Some(window_id) {\n+        if table.get(grant_id).map(|e| e.window_id.as_str()) != /* ~ changed by cargo-mutants ~ */ Some(window_id) {\n             table.remove(grant_id);\n             return true;\n         }\n         false\n     }\n }\n \n /// Parameters for `dialog.openFile`.\n",
+    "file": "crates/wavical-ipc/src/grants.rs",
+    "function": {
+      "function_name": "GrantTable::remove_grant",
+      "return_type": "-> bool",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 155
+        },
+        "start": {
+          "column": 5,
+          "line": 147
+        }
+      }
+    },
+    "genre": "BinaryOperator",
+    "name": "crates/wavical-ipc/src/grants.rs:150:62: replace == with != in GrantTable::remove_grant",
+    "package": "wavical-ipc",
+    "replacement": "!=",
+    "span": {
+      "end": {
+        "column": 64,
+        "line": 150
+      },
+      "start": {
+        "column": 62,
+        "line": 150
+      }
+    }
+  }
+]
