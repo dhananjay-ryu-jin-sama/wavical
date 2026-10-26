@@ -12,8 +12,11 @@ feature-depth = 1
 ignore = [
     # Transitive macro dependency from gtk/glib-macros in wry/tao; unmaintained upstream
     "RUSTSEC-2024-0370",
+    # Transitive dependencies from notify-rust via zbus; unmaintained standalone crates merged into zbus 6.0
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
 ]
-git-fetch-with-cli = true
 
 [licenses]
 # Allow-list for common permissive and weak copyleft open-source licenses
@@ -30,6 +33,7 @@ allow = [
     "Zlib",
     "0BSD",
     "MPL-2.0",
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 unused-allowed-license = "allow"

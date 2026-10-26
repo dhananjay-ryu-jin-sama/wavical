@@ -41,6 +41,30 @@ pub enum GrantError {
     RandomnessError(String),
 }
 
+/// Access permission mode for scoped file grants (FINDING-G2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum GrantMode {
+    /// Read-only access (granted by `dialog.openFile`).
+    #[default]
+    ReadOnly,
+    /// Write-only access (granted by `dialog.saveFile`).
+    WriteOnly,
+    /// Read-write access (e.g. for internal or test use).
+    ReadWrite,
+}
+
+impl GrantMode {
+    /// Check whether this grant mode permits reading file content.
+    pub fn can_read(&self) -> bool {
+        matches!(self, GrantMode::ReadOnly | GrantMode::ReadWrite)
+    }
+
+    /// Check whether this grant mode permits writing file content.
+    pub fn can_write(&self) -> bool {
+        matches!(self, GrantMode::WriteOnly | GrantMode::ReadWrite)
+    }
+}
+
 /// An entry in the grant table mapping a grant ID to window and path metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrantEntry {
@@ -50,6 +74,8 @@ pub struct GrantEntry {
     pub path: PathBuf,
     /// Canonical path captured at grant time (if target exists).
     pub canonical_path: Option<PathBuf>,
+    /// Permission mode scoping (read-only vs write-only vs read-write).
+    pub mode: GrantMode,
 }
 
 /// Generate a cryptographically secure 128-bit unguessable grant ID formatted as 32 lowercase hex characters.
@@ -73,10 +99,22 @@ impl GrantTable {
         }
     }
 
-    /// Insert a granted path for a window, returning an opaque 128-bit grant ID.
+    /// Insert a granted path for a window with the default mode (ReadOnly), returning an opaque 128-bit grant ID.
     ///
     /// Returns `Err(GrantError::LimitReached)` if the window already holds 64 grants.
     pub fn insert(&self, window_id: &str, path: impl Into<PathBuf>) -> Result<String, GrantError> {
+        self.insert_with_mode(window_id, path, GrantMode::ReadOnly)
+    }
+
+    /// Insert a granted path for a window with an explicit permission mode (FINDING-G2).
+    ///
+    /// Returns `Err(GrantError::LimitReached)` if the window already holds 64 grants.
+    pub fn insert_with_mode(
+        &self,
+        window_id: &str,
+        path: impl Into<PathBuf>,
+        mode: GrantMode,
+    ) -> Result<String, GrantError> {
         let mut table = self.grants.write().unwrap();
 
         // Enforce max 64 grants per window limit
@@ -107,6 +145,7 @@ impl GrantTable {
                 window_id: window_id.to_string(),
                 path: path_buf,
                 canonical_path,
+                mode,
             },
         );
 
@@ -342,5 +381,38 @@ mod tests {
                 .to_string()
                 .contains("unknown field `path`")
         );
+    }
+
+    #[test]
+    fn test_grant_mode_permissions() {
+        let table = GrantTable::new();
+        let read_id = table
+            .insert_with_mode("win-1", PathBuf::from("read.txt"), GrantMode::ReadOnly)
+            .unwrap();
+        let write_id = table
+            .insert_with_mode("win-1", PathBuf::from("write.txt"), GrantMode::WriteOnly)
+            .unwrap();
+        let rw_id = table
+            .insert_with_mode("win-1", PathBuf::from("rw.txt"), GrantMode::ReadWrite)
+            .unwrap();
+        let default_id = table.insert("win-1", PathBuf::from("def.txt")).unwrap();
+
+        let read_entry = table.get(&read_id, "win-1").unwrap();
+        assert_eq!(read_entry.mode, GrantMode::ReadOnly);
+        assert!(read_entry.mode.can_read());
+        assert!(!read_entry.mode.can_write());
+
+        let write_entry = table.get(&write_id, "win-1").unwrap();
+        assert_eq!(write_entry.mode, GrantMode::WriteOnly);
+        assert!(!write_entry.mode.can_read());
+        assert!(write_entry.mode.can_write());
+
+        let rw_entry = table.get(&rw_id, "win-1").unwrap();
+        assert_eq!(rw_entry.mode, GrantMode::ReadWrite);
+        assert!(rw_entry.mode.can_read());
+        assert!(rw_entry.mode.can_write());
+
+        let default_entry = table.get(&default_id, "win-1").unwrap();
+        assert_eq!(default_entry.mode, GrantMode::ReadOnly);
     }
 }

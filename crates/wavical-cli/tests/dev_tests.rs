@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -196,9 +198,16 @@ export default {
     );
 
     // 5. Clean termination
+    #[cfg(windows)]
     if shell_pid > 0 {
         let _ = Command::new("taskkill")
             .args(["/F", "/PID", &shell_pid.to_string()])
+            .output();
+    }
+    #[cfg(not(windows))]
+    if shell_pid > 0 {
+        let _ = Command::new("kill")
+            .args(["-9", &shell_pid.to_string()])
             .output();
     }
     let _ = child.kill();
@@ -266,9 +275,16 @@ export default {
         "src/ directory must have been auto-created"
     );
 
+    #[cfg(windows)]
     if shell_pid > 0 {
         let _ = Command::new("taskkill")
             .args(["/F", "/PID", &shell_pid.to_string()])
+            .output();
+    }
+    #[cfg(not(windows))]
+    if shell_pid > 0 {
+        let _ = Command::new("kill")
+            .args(["-9", &shell_pid.to_string()])
             .output();
     }
     let _ = child.kill();

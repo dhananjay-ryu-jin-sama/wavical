@@ -928,7 +928,6 @@ fn test_part1_filesystem_escapes() {
 /// Error values must NEVER leak the absolute root path or raw requested path in Display or Debug.
 /// FINDING-P1: PathRejectionReason::TrailingDotOrSpace and ReservedDeviceName leak raw segment strings in Display output.
 #[test]
-#[ignore = "FINDING-P1"]
 fn test_part1_error_information_leakage() {
     let secret_root_marker = "SECRET_ROOT_MARKER_98765";
     let dir = tempfile::Builder::new()

@@ -3,8 +3,9 @@
 use std::io::Read;
 use std::sync::{Arc, OnceLock};
 use wavical_ipc::{
-    GrantEntry, GrantTable, MAX_READ_GRANTED_BYTES, MAX_WRITE_GRANTED_BYTES, NativeHandler,
-    OpenFileDialogParams, ReadGrantedParams, SaveFileDialogParams, WriteGrantedParams,
+    GrantEntry, GrantMode, GrantTable, MAX_READ_GRANTED_BYTES, MAX_WRITE_GRANTED_BYTES,
+    NativeHandler, OpenFileDialogParams, ReadGrantedParams, SaveFileDialogParams,
+    WriteGrantedParams,
 };
 
 pub mod single_instance;
@@ -330,7 +331,7 @@ impl NativeService {
             Some(path) => {
                 let grant_id = self
                     .grant_table
-                    .insert(window_id, path)
+                    .insert_with_mode(window_id, path, GrantMode::ReadOnly)
                     .map_err(|e| format!("Failed to record file grant: {e}"))?;
                 Ok(serde_json::json!({
                     "cancelled": false,
@@ -378,7 +379,7 @@ impl NativeService {
             Some(path) => {
                 let grant_id = self
                     .grant_table
-                    .insert(window_id, path)
+                    .insert_with_mode(window_id, path, GrantMode::WriteOnly)
                     .map_err(|e| format!("Failed to record file grant: {e}"))?;
                 Ok(serde_json::json!({
                     "cancelled": false,
@@ -408,6 +409,10 @@ impl NativeService {
             .grant_table
             .get(&parsed.grant_id, window_id)
             .map_err(|_| "Grant not found or not owned by this window".to_string())?;
+
+        if !entry.mode.can_read() {
+            return Err("Grant does not permit reading".to_string());
+        }
 
         validate_granted_target(&entry, true).map_err(|err| err.to_string())?;
 
@@ -464,22 +469,87 @@ impl NativeService {
             return Err("Payload exceeds 10 MB limit".to_string());
         }
 
-        let entry = self
-            .grant_table
-            .get(&parsed.grant_id, window_id)
-            .map_err(|_| "Grant not found or not owned by this window".to_string())?;
+        // FINDING-F1: Open handle once with Win32 share flags, validate handle metadata, and write via that handle
+        let (mut file, entry) = self.open_granted_write_handle(&parsed.grant_id, window_id)?;
 
-        validate_granted_target(&entry, false).map_err(|err| err.to_string())?;
-
-        std::fs::write(&entry.path, parsed.content.as_bytes()).map_err(|e| {
+        use std::io::Write;
+        file.write_all(parsed.content.as_bytes()).map_err(|e| {
             tracing::warn!(error = %e, path = ?entry.path, "Failed to write content to granted file");
             "Failed to write granted file".to_string()
+        })?;
+
+        file.flush().map_err(|e| {
+            tracing::warn!(error = %e, path = ?entry.path, "Failed to flush granted file");
+            "Failed to flush granted file".to_string()
         })?;
 
         Ok(serde_json::json!({
             "success": true,
             "bytesWritten": parsed.content.len()
         }))
+    }
+
+    /// Open granted file handle for writing with restrictive share flags and handle validation (FINDING-F1).
+    pub fn open_granted_write_handle(
+        &self,
+        grant_id: &str,
+        window_id: &str,
+    ) -> Result<(std::fs::File, GrantEntry), String> {
+        let entry = self
+            .grant_table
+            .get(grant_id, window_id)
+            .map_err(|_| "Grant not found or not owned by this window".to_string())?;
+
+        if !entry.mode.can_write() {
+            return Err("Grant does not permit writing".to_string());
+        }
+
+        validate_granted_target(&entry, false).map_err(|err| err.to_string())?;
+
+        // FINDING-F1: Open file handle once with restrictive Win32 share flags and handle validation
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_SHARE_READ = 1: disallow FILE_SHARE_DELETE and FILE_SHARE_WRITE
+            // to prevent concurrent deletion, renaming, or symlink/junction swapping while handle is open.
+            options.share_mode(1);
+        }
+
+        let file = options.open(&entry.path).map_err(|e| {
+            tracing::warn!(error = %e, path = ?entry.path, "Failed to open granted file for writing");
+            "Failed to open granted file for writing".to_string()
+        })?;
+
+        let meta = file.metadata().map_err(|e| {
+            tracing::warn!(error = %e, path = ?entry.path, "Failed to inspect granted file handle metadata");
+            "Failed to read granted file metadata".to_string()
+        })?;
+
+        if !meta.is_file() {
+            return Err("Target handle is not a regular file".to_string());
+        }
+
+        let symlink_meta = std::fs::symlink_metadata(&entry.path).map_err(|e| {
+            tracing::warn!(error = %e, path = ?entry.path, "Failed to inspect symlink metadata on opened target");
+            "Failed to read file metadata".to_string()
+        })?;
+        if symlink_meta.is_symlink() {
+            return Err("Symlinks and junctions are strictly forbidden".to_string());
+        }
+
+        if let Some(ref orig_canonical) = entry.canonical_path {
+            let current_canonical = entry.path.canonicalize().map_err(|e| {
+                tracing::warn!(error = %e, path = ?entry.path, "Failed to canonicalize opened target");
+                "Failed to canonicalize path".to_string()
+            })?;
+            if &current_canonical != orig_canonical {
+                return Err("Canonical path mismatch: target was replaced or moved".to_string());
+            }
+        }
+
+        Ok((file, entry))
     }
 
     /// Show window context menu (WP7).
@@ -923,7 +993,7 @@ mod tests {
         let write_file = temp_dir.path().join("target_write.txt");
         std::fs::write(&write_file, "init").expect("init file");
         let write_grant = grant_table
-            .insert(window_id, &write_file)
+            .insert_with_mode(window_id, &write_file, GrantMode::WriteOnly)
             .expect("insert grant");
 
         let huge_payload = "X".repeat(MAX_WRITE_GRANTED_BYTES + 1);
@@ -1062,7 +1132,9 @@ mod tests {
         let service = NativeService::with_grant_table(Arc::clone(&grant_table));
         let window_id = "window-roundtrip";
 
-        let grant_id = grant_table.insert(window_id, &test_file).expect("insert");
+        let grant_id = grant_table
+            .insert_with_mode(window_id, &test_file, GrantMode::ReadWrite)
+            .expect("insert");
 
         // Read initial content
         let read_res = service
@@ -1090,6 +1162,107 @@ mod tests {
             read_updated["content"],
             "Updated content successfully written!"
         );
+    }
+
+    #[test]
+    fn test_wp4_grant_mode_scoping_enforcement() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let read_file = temp_dir.path().join("read_only.txt");
+        std::fs::write(&read_file, "Read-only secret content").expect("write file");
+
+        let write_file = temp_dir.path().join("write_only.txt");
+        std::fs::write(&write_file, "Initial write content").expect("write file");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-mode-scope";
+
+        let read_grant = grant_table
+            .insert_with_mode(window_id, &read_file, GrantMode::ReadOnly)
+            .expect("insert read grant");
+        let write_grant = grant_table
+            .insert_with_mode(window_id, &write_file, GrantMode::WriteOnly)
+            .expect("insert write grant");
+
+        // 1. Reading from a ReadOnly grant succeeds
+        let read_ok = service
+            .fs_read_granted(&serde_json::json!({"grantId": read_grant}), window_id)
+            .expect("read from ReadOnly grant must succeed");
+        assert_eq!(read_ok["content"], "Read-only secret content");
+
+        // 2. Writing to a ReadOnly grant MUST fail (FINDING-G2)
+        let write_fail = service.fs_write_granted(
+            &serde_json::json!({
+                "grantId": read_grant,
+                "content": "Malicious overwrite attempt"
+            }),
+            window_id,
+        );
+        assert!(
+            write_fail.is_err(),
+            "Writing to a ReadOnly grant must be rejected"
+        );
+        assert!(write_fail.unwrap_err().contains("does not permit writing"));
+
+        // 3. Writing to a WriteOnly grant succeeds
+        let write_ok = service
+            .fs_write_granted(
+                &serde_json::json!({
+                    "grantId": write_grant,
+                    "content": "Valid write update"
+                }),
+                window_id,
+            )
+            .expect("writing to WriteOnly grant must succeed");
+        assert_eq!(write_ok["success"], true);
+
+        // 4. Reading from a WriteOnly grant MUST fail (FINDING-G2)
+        let read_fail =
+            service.fs_read_granted(&serde_json::json!({"grantId": write_grant}), window_id);
+        assert!(
+            read_fail.is_err(),
+            "Reading from a WriteOnly grant must be rejected"
+        );
+        assert!(read_fail.unwrap_err().contains("does not permit reading"));
+    }
+
+    #[test]
+    fn test_wp4_single_handle_write_toctou_defense() {
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let write_file = temp_dir.path().join("single_handle.txt");
+        std::fs::write(&write_file, "Initial content").expect("write file");
+
+        let grant_table = Arc::new(GrantTable::new());
+        let service = NativeService::with_grant_table(Arc::clone(&grant_table));
+        let window_id = "window-single-handle";
+
+        let write_grant = grant_table
+            .insert_with_mode(window_id, &write_file, GrantMode::WriteOnly)
+            .expect("insert write grant");
+
+        // 1. open_granted_write_handle locks file against deletion/renaming
+        let (mut file, entry) = service
+            .open_granted_write_handle(&write_grant, window_id)
+            .expect("open write handle");
+        assert_eq!(entry.path, write_file);
+
+        #[cfg(windows)]
+        {
+            let del = std::fs::remove_file(&write_file);
+            assert!(
+                del.is_err(),
+                "Target file must be protected against concurrent deletion"
+            );
+        }
+
+        // 2. Write payload via handle
+        use std::io::Write;
+        file.write_all(b"Handle written data").expect("write");
+        file.flush().expect("flush");
+        drop(file);
+
+        let read_back = std::fs::read_to_string(&write_file).expect("read");
+        assert_eq!(read_back, "Handle written data");
     }
 
     // =========================================================================
@@ -1358,10 +1531,10 @@ mod tests {
         let service = NativeService::new();
         let window_id = "test-win";
 
-        // Register grant for this file
+        // Register grant for this file with ReadWrite mode
         let grant_id = service
             .grant_table
-            .insert(window_id, file_path.clone())
+            .insert_with_mode(window_id, file_path.clone(), GrantMode::ReadWrite)
             .unwrap();
 
         // 1. Reading non-existent file: fails with sanitized error, no path in error

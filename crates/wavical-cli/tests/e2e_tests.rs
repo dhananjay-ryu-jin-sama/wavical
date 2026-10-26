@@ -69,9 +69,16 @@ fn test_e2e_full_lifecycle_workflow() {
     thread::sleep(Duration::from_secs(3));
 
     // Terminate dev server and shell cleanly
+    #[cfg(windows)]
     if shell_pid > 0 {
         let _ = Command::new("taskkill")
             .args(["/F", "/PID", &shell_pid.to_string()])
+            .output();
+    }
+    #[cfg(not(windows))]
+    if shell_pid > 0 {
+        let _ = Command::new("kill")
+            .args(["-9", &shell_pid.to_string()])
             .output();
     }
     let _ = dev_child.kill();

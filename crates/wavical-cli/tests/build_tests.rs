@@ -184,6 +184,113 @@ fn test_build_overwrites_existing_directory() {
 }
 
 #[test]
+fn test_build_removes_stale_files_on_rebuild() {
+    let temp_root = tempdir().expect("create temp dir");
+    let target = temp_root.path().join("stale-test-app");
+    run_init(&target, false).expect("scaffold app");
+
+    let wavical_bin = env!("CARGO_BIN_EXE_wavical");
+
+    // Add extra file to src
+    let stale_src = target.join("src").join("stale.txt");
+    fs::write(&stale_src, "stale content").expect("write stale.txt");
+
+    // First build
+    let out1 = Command::new(wavical_bin)
+        .arg("build")
+        .arg(&target)
+        .output()
+        .expect("execute build 1");
+    assert!(out1.status.success());
+    assert!(target.join("dist").join("stale.txt").is_file());
+
+    // Delete from src
+    fs::remove_file(&stale_src).expect("remove stale.txt");
+
+    // Second build
+    let out2 = Command::new(wavical_bin)
+        .arg("build")
+        .arg(&target)
+        .output()
+        .expect("execute build 2");
+    assert!(out2.status.success());
+
+    assert!(
+        !target.join("dist").join("stale.txt").exists(),
+        "Deleted file must not remain in dist"
+    );
+}
+
+#[test]
+fn test_build_refuses_dangerous_outdir() {
+    let temp_root = tempdir().expect("create temp dir");
+    let target = temp_root.path().join("danger-test-app");
+    run_init(&target, false).expect("scaffold app");
+
+    let wavical_bin = env!("CARGO_BIN_EXE_wavical");
+
+    for dangerous in &[".", "src", "..", "src/nested"] {
+        let out = Command::new(wavical_bin)
+            .arg("build")
+            .arg(&target)
+            .arg("--outdir")
+            .arg(dangerous)
+            .output()
+            .expect("execute build");
+        assert!(
+            !out.status.success(),
+            "outdir '{dangerous}' must be refused"
+        );
+    }
+}
+
+#[test]
+fn test_build_excludes_sensitive_and_metadata_files() {
+    let temp_root = tempdir().expect("create temp dir");
+    let target = temp_root.path().join("secrets-app");
+    run_init(&target, false).expect("scaffold app");
+
+    let wavical_bin = env!("CARGO_BIN_EXE_wavical");
+
+    // Add sensitive and metadata files
+    let src = target.join("src");
+    fs::write(src.join(".env"), "SECRET_API=topsecret").expect("write .env");
+    fs::write(src.join(".env.production"), "DATABASE_URL=postgres://...")
+        .expect("write .env.production");
+    fs::write(src.join("bundle.js.map"), "{\"mappings\": \"\"}").expect("write bundle.js.map");
+    fs::write(src.join("Thumbs.db"), "thumbs-data").expect("write Thumbs.db");
+    fs::write(src.join(".DS_Store"), "ds-store-data").expect("write .DS_Store");
+    fs::create_dir_all(src.join(".git")).expect("create .git");
+    fs::write(src.join(".git/config"), "git-config").expect("write .git/config");
+
+    let out = Command::new(wavical_bin)
+        .arg("build")
+        .arg(&target)
+        .output()
+        .expect("execute build");
+    assert!(out.status.success());
+
+    let dist = target.join("dist");
+    assert!(!dist.join(".env").exists());
+    assert!(!dist.join(".env.production").exists());
+    assert!(!dist.join("bundle.js.map").exists());
+    assert!(!dist.join("Thumbs.db").exists());
+    assert!(!dist.join(".DS_Store").exists());
+    assert!(!dist.join(".git").exists());
+
+    // Verify wavical-manifest.json does not list them
+    let manifest_str =
+        fs::read_to_string(dist.join("wavical-manifest.json")).expect("read manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_str).expect("parse manifest");
+    let assets = manifest["assets"].as_object().expect("assets object");
+    assert!(!assets.contains_key(".env"));
+    assert!(!assets.contains_key(".env.production"));
+    assert!(!assets.contains_key("bundle.js.map"));
+    assert!(!assets.contains_key("Thumbs.db"));
+    assert!(!assets.contains_key(".DS_Store"));
+}
+
+#[test]
 fn test_build_fails_when_src_missing() {
     let temp_root = tempdir().expect("create temp dir");
     let target = temp_root.path().join("missing-src-app");

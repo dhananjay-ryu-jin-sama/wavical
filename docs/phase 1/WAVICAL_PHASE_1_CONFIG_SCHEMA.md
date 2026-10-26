@@ -16,9 +16,15 @@ export default {
   appId: 'my-app',
 
   // Optional fields
+  version: '0.1.0',
   window: { /* see below */ },
   capabilities: { /* see below */ },
   dev: { /* see below */ },
+  singleInstance: true,
+  tray: { /* see below */ },
+  shortcuts: [ /* see below */ ],
+  fileAssociations: [ /* see below */ ],
+  dialog: { /* see below */ },
 }
 ```
 
@@ -32,6 +38,17 @@ A unique identifier for your app. Used in window titles, data directories, and l
 
 ```javascript
 appId: 'my-awesome-app'
+```
+
+### `version` (optional, string)
+
+Application semantic version string (e.g. `'0.1.0'`, `'1.2.3'`).
+
+- Defaults to `'0.1.0'` if omitted
+- Embedded into the generated `wavical-manifest.json` during `wavical build`
+
+```javascript
+version: '1.0.0'
 ```
 
 ### `window` (optional, object)
@@ -87,6 +104,62 @@ dev: {
 
 - **Default:** port 7890
 - **Why a port?** Future phases will use this for WebSocket-based hot-reload and a devtools panel.
+
+### `singleInstance` (optional, boolean)
+
+Enforce a single-instance lock across launches. When `true`, subsequent app launches forward their arguments to the running primary window and exit.
+
+- **Default:** `true`
+
+```javascript
+singleInstance: true
+```
+
+### `tray` (optional, object)
+
+System tray configuration.
+
+```javascript
+tray: {
+  icon: 'icon.png', // relative path inside src/ to icon file
+}
+```
+
+### `shortcuts` (optional, array of strings)
+
+Global keyboard accelerators registered at application startup.
+
+```javascript
+shortcuts: [
+  'CommandOrControl+Shift+D',
+  'Alt+F4'
+]
+```
+
+### `fileAssociations` (optional, array of strings)
+
+File extensions registered with the operating system (e.g. HKCU file association handlers).
+
+- Each extension must be 1 to 10 alphanumeric characters (`^[a-z0-9]{1,10}$`)
+
+```javascript
+fileAssociations: ['txt', 'md']
+```
+
+### `dialog` (optional, object)
+
+Fixed dialog filter specifications for file picker dialogs.
+
+```javascript
+dialog: {
+  filters: {
+    text: {
+      name: 'Text Documents',
+      extensions: ['txt', 'md']
+    }
+  }
+}
+```
 
 ## Examples
 

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
 use wavical_ipc::{
     Capabilities, GENERIC_CLIPBOARD_ERROR, GENERIC_METHOD_ERROR, GENERIC_NOTIFICATION_ERROR,
-    GrantError, GrantTable, MAX_CLIPBOARD_TEXT_BYTES, MAX_GRANTS_PER_WINDOW,
+    GrantError, GrantMode, GrantTable, MAX_CLIPBOARD_TEXT_BYTES, MAX_GRANTS_PER_WINDOW,
     MAX_NOTIFICATION_BODY_CHARS, MAX_NOTIFICATION_TITLE_CHARS, MAX_WRITE_GRANTED_BYTES,
     NATIVE_METHOD_NAMES, NativeHandler, OpenFileDialogParams, Request, SaveFileDialogParams,
     known_capabilities, registered_native_methods, validate_clipboard_read,
@@ -490,7 +490,9 @@ fn test_part5_fs_read_write_granted_enforcements() {
     let service = NativeService::with_grant_table(table.clone());
     let window_id = "test-fs-win";
 
-    let grant_id = table.insert(window_id, &test_file).expect("insert grant");
+    let grant_id = table
+        .insert_with_mode(window_id, &test_file, GrantMode::ReadWrite)
+        .expect("insert grant");
 
     // 1. Read granted succeeds
     let read_params = serde_json::json!({ "grantId": grant_id });
@@ -598,7 +600,6 @@ fn test_grant_id_format_validated_before_lookup() {
 
 /// FINDING-G2: Grant table does not enforce read-only vs write-only mode
 #[test]
-#[ignore = "FINDING-G2"]
 fn test_grant_enforces_read_vs_write_mode() {
     let tmp = tempdir().unwrap();
     let file = tmp.path().join("open_only.txt");
@@ -620,6 +621,82 @@ fn test_grant_enforces_read_vs_write_mode() {
         res.is_err(),
         "Open file grant was allowed to be overwritten via fs.writeGranted"
     );
+
+    // Grant created from save file dialog should NOT allow readGranted
+    let save_file = tmp.path().join("save_only.txt");
+    std::fs::write(&save_file, b"save_data").unwrap();
+    let save_grant = table
+        .insert_with_mode("win-1", &save_file, GrantMode::WriteOnly)
+        .unwrap();
+
+    let read_params = serde_json::json!({
+        "grantId": save_grant
+    });
+    let read_res = service.fs_read_granted(&read_params, "win-1");
+    assert!(
+        read_res.is_err(),
+        "Save file grant was allowed to be read via fs.readGranted"
+    );
+}
+
+/// FINDING-F1: TOCTOU race window between validation and std::fs::write
+#[test]
+fn test_fs_write_granted_toctou_handle_validation() {
+    let tmp = tempdir().unwrap();
+    let file = tmp.path().join("toctou_target.txt");
+    std::fs::write(&file, b"initial content").unwrap();
+
+    let table = Arc::new(GrantTable::new());
+    let service = NativeService::with_grant_table(table.clone());
+    let window_id = "win-toctou";
+
+    let grant_id = table
+        .insert_with_mode(window_id, &file, GrantMode::WriteOnly)
+        .unwrap();
+
+    // Open file handle once with restrictive Win32 share flags and handle validation
+    let (mut handle, entry) = service
+        .open_granted_write_handle(&grant_id, window_id)
+        .expect("Open granted write handle must succeed and lock target file");
+
+    assert_eq!(entry.path, file);
+
+    // On Windows, verify that the open write handle prevents concurrent deletion or renaming
+    #[cfg(windows)]
+    {
+        let delete_attempt = std::fs::remove_file(&file);
+        assert!(
+            delete_attempt.is_err(),
+            "Target file should be locked with restrictive share flags against deletion/renaming while write handle is open"
+        );
+        let rename_attempt = std::fs::rename(&file, tmp.path().join("swapped.txt"));
+        assert!(
+            rename_attempt.is_err(),
+            "Target file should be locked with restrictive share flags against renaming/swapping while write handle is open"
+        );
+    }
+
+    // Write through the open handle directly
+    use std::io::Write;
+    handle.write_all(b"safe write payload").unwrap();
+    handle.flush().unwrap();
+    drop(handle);
+
+    // After handle is closed, the written payload is persisted
+    let content = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(content, "safe write payload");
+
+    // Also verify fs_write_granted round-trip executes safely using the single-handle write
+    let write_res = service.fs_write_granted(
+        &serde_json::json!({
+            "grantId": grant_id,
+            "content": "second safe payload via fs_write_granted"
+        }),
+        window_id,
+    );
+    assert!(write_res.is_ok(), "fs_write_granted must succeed");
+    let content2 = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(content2, "second safe payload via fs_write_granted");
 }
 
 /// FINDING-D1: Dialog title and defaultName have no length or character validation

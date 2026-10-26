@@ -445,6 +445,22 @@ fn extract_missing_field(msg: &str) -> Option<String> {
     None
 }
 
+pub const CONFIG_DELIMITER_START: &str = "__WAVICAL_CONFIG_JSON_START__";
+
+/// Delimiter marking the end of the evaluated config JSON payload.
+pub const CONFIG_DELIMITER_END: &str = "__WAVICAL_CONFIG_JSON_END__";
+
+/// Extract JSON payload between delimiter tokens if present, or return trimmed string.
+pub fn extract_config_json(raw: &str) -> &str {
+    if let Some(start_idx) = raw.find(CONFIG_DELIMITER_START) {
+        let after_start = &raw[start_idx + CONFIG_DELIMITER_START.len()..];
+        if let Some(end_idx) = after_start.find(CONFIG_DELIMITER_END) {
+            return after_start[..end_idx].trim();
+        }
+    }
+    raw.trim()
+}
+
 /// Parse and validate a JSON string into an `AppConfig`.
 ///
 /// Enforces:
@@ -454,7 +470,8 @@ fn extract_missing_field(msg: &str) -> Option<String> {
 /// - File associations extension regex (`^[a-z0-9]{1,10}$`)
 /// - Global shortcut grammar and uniqueness limits (max 32)
 pub fn parse_config_json(json_str: &str) -> Result<AppConfig, ValidationError> {
-    let trimmed = json_str.trim();
+    let extracted = extract_config_json(json_str);
+    let trimmed = extracted.trim();
     if trimmed.is_empty() || trimmed == "undefined" || trimmed == "null" {
         return Err(ValidationError::MalformedJson(
             "wavical.config.js must export a default configuration object".to_string(),
@@ -529,7 +546,12 @@ pub fn execute_node_config_script(
     let mut cmd = Command::new("node");
     cmd.arg("-e")
         .arg(
-            "console.log(JSON.stringify(await import('./wavical.config.js').then(m => m.default)))",
+            "console.log = (...args) => console.error(...args);\
+             console.info = (...args) => console.error(...args);\
+             console.debug = (...args) => console.error(...args);\
+             const m = await import('./wavical.config.js');\
+             const c = m ? m.default : undefined;\
+             process.stdout.write('__WAVICAL_CONFIG_JSON_START__\\n' + JSON.stringify(c) + '\\n__WAVICAL_CONFIG_JSON_END__\\n');",
         )
         .current_dir(project_root)
         .stdout(Stdio::piped())
@@ -1147,6 +1169,20 @@ mod tests {
             parse_config_json(dup_shortcut),
             Err(ValidationError::InvalidShortcut(_))
         ));
+    }
+
+    #[test]
+    fn test_config_stdout_pollution_isolation() {
+        let dir = tempdir().expect("tempdir");
+        let config_file = dir.path().join("wavical.config.js");
+        let mut file = std::fs::File::create(&config_file).expect("file create");
+        file.write_all(
+            b"console.log('diagnostic log 1');\nconsole.info('diagnostic info');\nexport default { appId: 'isolated-app' };\n",
+        )
+        .expect("write");
+
+        let conf = validate_config(dir.path()).expect("validate_config should isolate stdout");
+        assert_eq!(conf.app_id, "isolated-app");
     }
 
     proptest! {

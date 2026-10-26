@@ -367,7 +367,10 @@ async function testOversizedPayloads() {
         const hugeText = "X".repeat(1024 * 1024 + 10240);
         let clipErr = null;
         try {
-            await window.wavical.invoke("clipboard.write", { text: hugeText });
+            await Promise.race([
+                window.wavical.invoke("clipboard.write", { text: hugeText }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Oversized payload dropped by host")), 150))
+            ]);
         } catch (e) {
             clipErr = e.message;
         }

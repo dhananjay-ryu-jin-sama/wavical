@@ -36,8 +36,8 @@ pub enum PathRejectionReason {
     #[error("Windows reserved device name detected: '{0}'")]
     ReservedDeviceName(String),
 
-    #[error("Trailing dot or space detected in segment: '{0}'")]
-    TrailingDotOrSpace(String),
+    #[error("Trailing dot or space detected in path segment")]
+    TrailingDotOrSpace,
 
     #[error("Requested asset not found")]
     NotFound,
@@ -236,7 +236,7 @@ pub fn sanitize_path_segments(raw_path: &str) -> Result<Vec<String>, PathRejecti
 
         // Trailing dot or space check (NTFS auto-stripping exploit)
         if segment.ends_with('.') || segment.ends_with(' ') || segment.starts_with(' ') {
-            return Err(PathRejectionReason::TrailingDotOrSpace(segment.to_string()));
+            return Err(PathRejectionReason::TrailingDotOrSpace);
         }
 
         // Windows reserved device names
@@ -493,20 +493,38 @@ mod tests {
         let dir = tempdir().unwrap();
         assert!(matches!(
             resolve_asset_path("/file.txt.", dir.path()).unwrap_err(),
-            PathRejectionReason::TrailingDotOrSpace(_)
+            PathRejectionReason::TrailingDotOrSpace
         ));
         assert!(matches!(
             resolve_asset_path("/file.txt ", dir.path()).unwrap_err(),
-            PathRejectionReason::TrailingDotOrSpace(_)
+            PathRejectionReason::TrailingDotOrSpace
         ));
         assert!(matches!(
             resolve_asset_path("/ file.txt", dir.path()).unwrap_err(),
-            PathRejectionReason::TrailingDotOrSpace(_)
+            PathRejectionReason::TrailingDotOrSpace
         ));
         assert!(matches!(
             resolve_asset_path("/sub./file.txt", dir.path()).unwrap_err(),
-            PathRejectionReason::TrailingDotOrSpace(_)
+            PathRejectionReason::TrailingDotOrSpace
         ));
+    }
+
+    /// F-A1a-01: ProtocolError::TrailingDotOrSpace must not leak raw segment strings in Display or Debug.
+    #[test]
+    fn test_trailing_dot_or_space_does_not_leak_in_display() {
+        let dir = tempdir().unwrap();
+        let marker = "SECRET_MARKER_999";
+        let err = resolve_asset_path(&format!("/foo_{marker}."), dir.path()).unwrap_err();
+        let display = format!("{}", err);
+        let debug = format!("{:?}", err);
+        assert!(
+            !display.contains(marker),
+            "Display leaks segment marker: {display}"
+        );
+        assert!(
+            !debug.contains(marker),
+            "Debug leaks segment marker: {debug}"
+        );
     }
 
     #[test]

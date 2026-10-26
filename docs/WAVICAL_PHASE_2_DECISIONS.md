@@ -19,6 +19,9 @@ This document records the research, evaluation, and decisions for all native Tie
 | **Taskbar Overlay Badge** | **NONE** (safe wrapper) | N/A | Windows COM `ITaskbarList3::SetOverlayIcon` | Yes (tied to window `HWND`) | **YES — CRITICAL: No safe wrapper exists on crates.io without our own `unsafe`** | [MSDN ITaskbarList3](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-itaskbarlist3) |
 | **WebView2 Detection** | `wry` | `0.57.0` (existing) | `wry::webview_version() -> Result<String, wry::Error>` | No (can be called prior to window creation) | **No** (safe public function in `wry`) | [docs.rs/wry/0.57.0](https://docs.rs/wry/0.57.0/wry/fn.webview_version.html) |
 | **WebView2 Renderer Crash Recovery** | `wry` / `webview2-com` | `0.57.0` / `0.39.0` | Underlying COM `ICoreWebView2::add_ProcessFailed` via `wry::WebViewExtWindows::webview()` | Yes (event dispatch on main UI thread) | **YES** (`wry` exposes no safe high-level event; hooking COM requires `unsafe`) | [docs.rs/wry/0.57.0 (WebViewExtWindows)](https://docs.rs/wry/0.57.0/wry/trait.WebViewExtWindows.html) |
+| **CSPRNG / Entropy** | `getrandom` | `0.3.4` | `getrandom::fill()` for CSP nonces and grant IDs | No | **No** (pure safe Rust API) | [docs.rs/getrandom/0.3.4](https://docs.rs/getrandom/0.3.4) |
+| **Signal Handling** | `ctrlc` | `3.4.7` | `ctrlc::set_handler()` for graceful CLI dev cleanup | No | **No** (pure safe Rust API) | [docs.rs/ctrlc/3.4.7](https://docs.rs/ctrlc/3.4.7) |
+| **User Registry** | `windows-registry` | `0.6.0` | `windows_registry::CURRENT_USER` for file associations | No | **No** (pure safe Rust API) | [docs.rs/windows-registry/0.6.0](https://docs.rs/windows-registry/0.6.0) |
 
 ---
 
@@ -128,6 +131,12 @@ This document records the research, evaluation, and decisions for all native Tie
   3. If binding fails with `AddrInUse` (or `LocalSocketStream::connect(pipe_name)` succeeds): this process is a **secondary instance**. Write the CLI arguments (JSON-encoded) to the stream, flush, and exit with code 0.
 - **Safety:** `interprocess` wraps Windows Named Pipes internally with 100% safe Rust interfaces. No `unsafe` needed in our codebase.
 - **Source:** https://docs.rs/interprocess/2.4.6/interprocess/local_socket/index.html
+
+### 2.9 Auxiliary Dependencies & Toolchain Decisions (F-A0-04)
+- **`getrandom` (v0.3.4 in `wavical-ipc`):** Cryptographically secure CSP nonce generation and 128-bit high-entropy grant ID generation for opaque file access tokens. Pure safe Rust.
+- **`ctrlc` (v3.4.7 in `wavical-cli`):** Cross-platform SIGINT/Ctrl+C handler ensuring child processes (development server and child webview shell) are cleanly terminated upon exit.
+- **`windows-registry` (v0.6.0 in `wavical-native`):** Pure safe Windows registry manipulation scoped strictly to user hive (`HKEY_CURRENT_USER\Software\Classes`) for file association registration and unregistration.
+- **`muda` (v0.21.2) & `tray-icon` (v0.26.1 in `wavical-shell`):** Direct dependencies in the application shell for event-loop integration, linking tray icon clicks and context menus with the tao event loop.
 
 ---
 

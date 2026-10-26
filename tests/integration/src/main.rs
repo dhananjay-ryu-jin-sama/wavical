@@ -277,8 +277,8 @@ fn main() {
 
                 println!("====================================================================");
 
-                if report.all_passed && report.summary.passed == 7 && report.summary.failed == 0 {
-                    println!("SUCCESS: All 7 adversarial attack vectors were securely thwarted!");
+                if report.all_passed && report.summary.passed == report.summary.total && report.summary.failed == 0 {
+                    println!("SUCCESS: All {} adversarial attack vectors were securely thwarted!", report.summary.total);
                     println!("====================================================================\n");
                     *control_flow = ControlFlow::Exit;
                 } else {

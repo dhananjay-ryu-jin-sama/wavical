@@ -265,7 +265,6 @@ fn test_cli_node_execution_battery() {
 /// Documented requirement: "a config that calls console.log('hello'): the CLI must still work or fail with a clear message, not a confusing JSON error"
 /// In wavical-config, execute_node_config_script does console.log(JSON.stringify(...)), so any user console.log pollutes stdout and causes MalformedJson
 #[test]
-#[ignore = "FINDING-C1"]
 fn test_cli_config_stdout_pollution_isolation() {
     let tmp = tempdir().expect("tempdir");
     let proj = tmp.path().join("proj");
@@ -433,7 +432,6 @@ fn test_cli_build_manifest_and_determinism() {
 /// 5b. Finding: wavical build does not remove stale files from previous build
 /// Documented requirement: "a second build into the same outdir (are stale files from the previous build removed or left? A deleted-from-src file that stays in dist and is not in the manifest is a finding)"
 #[test]
-#[ignore = "FINDING-C2"]
 fn test_cli_build_removes_stale_files_from_outdir() {
     let tmp = tempdir().expect("tempdir");
     let proj = tmp.path().join("stale-app");
@@ -478,7 +476,6 @@ fn test_cli_build_removes_stale_files_from_outdir() {
 /// 5c. Finding: wavical build does not refuse dangerous outdir paths (. or src)
 /// Documented requirement: "The tool must refuse the dangerous ones (., project root, src, inside src, parent of the project) and must never delete anything it did not create"
 #[test]
-#[ignore = "FINDING-C3"]
 fn test_cli_build_refuses_dangerous_outdir_paths() {
     let tmp = tempdir().expect("tempdir");
     let proj = tmp.path().join("danger-app");
@@ -522,7 +519,6 @@ fn test_cli_build_refuses_dangerous_outdir_paths() {
 /// 5d. Finding: wavical build copies sensitive files (.env, .git) into dist
 /// Documented requirement: "Hidden and sensitive files (.env, .git, *.map, Thumbs.db): does build copy .env or .git into dist? (If yes, that is a finding: secrets in a distributable.)"
 #[test]
-#[ignore = "FINDING-C4"]
 fn test_cli_build_excludes_sensitive_files() {
     let tmp = tempdir().expect("tempdir");
     let proj = tmp.path().join("secret-app");
@@ -546,5 +542,124 @@ fn test_cli_build_excludes_sensitive_files() {
     assert!(
         !proj.join("dist/.env").exists(),
         "Sensitive file .env must NOT be copied into dist"
+    );
+}
+
+/// F-A0-02: Supply-chain gate check (`cargo deny check`) must pass cleanly
+#[test]
+fn test_supply_chain_cargo_deny_clean() {
+    let mut deny_path = PathBuf::from("deny.toml");
+    if !deny_path.is_file() {
+        deny_path = PathBuf::from("../../deny.toml");
+    }
+    let deny_content = fs::read_to_string(&deny_path).expect("deny.toml must exist");
+
+    assert!(
+        deny_content.contains("\"BSL-1.0\""),
+        "deny.toml must explicitly allow BSL-1.0 license (F-A0-02)"
+    );
+    assert!(
+        deny_content.contains("RUSTSEC-2026-0370")
+            && deny_content.contains("RUSTSEC-2026-0371")
+            && deny_content.contains("RUSTSEC-2026-0372"),
+        "deny.toml must ignore transitive unmaintained D-Bus advisories (F-A0-02)"
+    );
+
+    let output = Command::new("cargo")
+        .args(["deny", "--offline", "check"])
+        .output()
+        .expect("cargo deny must execute");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "cargo deny check failed:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+}
+
+/// F-A0-03: dev_tests.rs must be guarded with cfg(windows) and taskkill must not be unguarded
+#[test]
+fn test_linux_ci_no_unguarded_windows_taskkill() {
+    let dev_tests = include_str!("../../../crates/wavical-cli/tests/dev_tests.rs");
+    assert!(
+        dev_tests.contains("#![cfg(windows)]"),
+        "crates/wavical-cli/tests/dev_tests.rs must be guarded with #![cfg(windows)] for Linux CI (F-A0-03)"
+    );
+
+    let e2e_tests = include_str!("../../../crates/wavical-cli/tests/e2e_tests.rs");
+
+    for (file_name, content) in [("dev_tests.rs", dev_tests), ("e2e_tests.rs", e2e_tests)] {
+        let lines: Vec<&str> = content.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("Command::new(\"taskkill\")") {
+                let prev_window = lines[i.saturating_sub(4)..i].join("\n");
+                assert!(
+                    prev_window.contains("#[cfg(windows)]"),
+                    "{file_name} line {}: taskkill must be guarded by #[cfg(windows)]",
+                    i + 1
+                );
+            }
+        }
+    }
+}
+
+/// F-A0-04: Architecture docs must formally specify version, tray, shortcuts, and native dependencies
+#[test]
+fn test_config_schema_and_dependencies_documented() {
+    let schema_doc = include_str!("../../../docs/phase 1/WAVICAL_PHASE_1_CONFIG_SCHEMA.md");
+    assert!(
+        schema_doc.contains("version")
+            && schema_doc.contains("tray")
+            && schema_doc.contains("shortcuts"),
+        "docs/phase 1/WAVICAL_PHASE_1_CONFIG_SCHEMA.md must document version, tray, and shortcuts (F-A0-04)"
+    );
+
+    let decisions_doc = include_str!("../../../docs/WAVICAL_PHASE_2_DECISIONS.md");
+    assert!(
+        decisions_doc.contains("getrandom")
+            && decisions_doc.contains("ctrlc")
+            && decisions_doc.contains("windows-registry"),
+        "docs/WAVICAL_PHASE_2_DECISIONS.md must document getrandom, ctrlc, and windows-registry dependencies (F-A0-04)"
+    );
+}
+
+/// F-A0-05: Phase 2 WP9 hostile review notes and tests-fail proof records must exist in docs/
+#[test]
+fn test_phase_2_wp9_hostile_review_artifacts() {
+    let mut doc_path = PathBuf::from("docs/WAVICAL_PHASE_2_HOSTILE_REVIEW.md");
+    if !doc_path.is_file() {
+        doc_path = PathBuf::from("../../docs/WAVICAL_PHASE_2_HOSTILE_REVIEW.md");
+    }
+    assert!(
+        doc_path.is_file(),
+        "docs/WAVICAL_PHASE_2_HOSTILE_REVIEW.md must exist (F-A0-05)"
+    );
+
+    let content = fs::read_to_string(&doc_path).expect("hostile review doc must be readable");
+    assert!(
+        content.contains("Hostile Review") || content.contains("Hostile Self-Review"),
+        "Hostile review document must contain hostile review section (F-A0-05)"
+    );
+    assert!(
+        content.to_lowercase().contains("grant reuse"),
+        "Hostile review must analyze grant reuse (F-A0-05)"
+    );
+    assert!(
+        content.to_lowercase().contains("toctou"),
+        "Hostile review must analyze TOCTOU risks (F-A0-05)"
+    );
+    assert!(
+        content.to_lowercase().contains("tests-fail")
+            || content.to_lowercase().contains("tests fail"),
+        "Hostile review must contain tests-fail proof records (F-A0-05)"
+    );
+    assert!(
+        content.to_lowercase().contains("capability check")
+            && content.to_lowercase().contains("grant check")
+            && content.to_lowercase().contains("size limit"),
+        "Hostile review must document the three WP9 tests-fail proofs (capability check, grant check, size limit) (F-A0-05)"
     );
 }

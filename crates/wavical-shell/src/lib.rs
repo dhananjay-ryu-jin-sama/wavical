@@ -33,7 +33,6 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
 
     const pending = new Map();
     let nextId = 1;
-    const menuListeners = new Set();
 
     function receiveResponse(response) {
         if (!response || typeof response.id !== 'number') return;
@@ -47,49 +46,8 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         }
     }
 
-    function dispatchMenuEvent(itemId) {
-        if (typeof itemId !== 'string') return;
-        const event = new CustomEvent('wavical:menu', { detail: { id: itemId } });
-        window.dispatchEvent(event);
-        for (const listener of menuListeners) {
-            try {
-                listener(itemId);
-            } catch (err) {
-                console.error("Error in menu listener:", err);
-            }
-        }
-    }
-
-    const shortcutListeners = new Set();
-    function dispatchShortcutEvent(shortcut) {
-        if (typeof shortcut !== 'string') return;
-        const event = new CustomEvent('wavical:shortcut', { detail: { shortcut } });
-        window.dispatchEvent(event);
-        for (const listener of shortcutListeners) {
-            try {
-                listener(shortcut);
-            } catch (err) {
-                console.error("Error in shortcut listener:", err);
-            }
-        }
-    }
-
     Object.defineProperty(window, '__wavical_receive__', {
         value: Object.freeze(receiveResponse),
-        writable: false,
-        configurable: false,
-        enumerable: false,
-    });
-
-    Object.defineProperty(window, '__wavical_event__', {
-        value: Object.freeze(dispatchMenuEvent),
-        writable: false,
-        configurable: false,
-        enumerable: false,
-    });
-
-    Object.defineProperty(window, '__wavical_shortcut_event__', {
-        value: Object.freeze(dispatchShortcutEvent),
         writable: false,
         configurable: false,
         enumerable: false,
@@ -117,26 +75,8 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         });
     }
 
-    function onMenu(callback) {
-        if (typeof callback !== 'function') {
-            throw new TypeError("Callback must be a function");
-        }
-        menuListeners.add(callback);
-        return () => menuListeners.delete(callback);
-    }
-
-    function onShortcut(callback) {
-        if (typeof callback !== 'function') {
-            throw new TypeError("Callback must be a function");
-        }
-        shortcutListeners.add(callback);
-        return () => shortcutListeners.delete(callback);
-    }
-
     const wavicalApi = Object.freeze({
         invoke: Object.freeze(invoke),
-        onMenu: Object.freeze(onMenu),
-        onShortcut: Object.freeze(onShortcut),
     });
 
     Object.defineProperty(window, 'wavical', {
@@ -370,7 +310,7 @@ pub fn build_delivery_script(
 pub fn build_menu_event_script(item_id: &str) -> String {
     let escaped_id = serde_json::to_string(item_id).unwrap_or_else(|_| "\"\"".to_string());
     format!(
-        "if (typeof window.__wavical_event__ === 'function') {{ window.__wavical_event__({escaped_id}); }}"
+        "window.dispatchEvent(new CustomEvent('wavical:menu', {{ detail: {{ id: {escaped_id} }} }}));"
     )
 }
 
@@ -461,11 +401,11 @@ pub fn check_webview2_runtime() -> Result<String, String> {
 
 /// Internal helper for runtime availability checking, parameterized for unit testing.
 pub fn check_webview2_runtime_with_override(
-    simulate_override: Option<&str>,
+    _simulate_override: Option<&str>,
 ) -> Result<String, String> {
     #[cfg(debug_assertions)]
     {
-        if simulate_override.is_some() {
+        if _simulate_override.is_some() {
             return Err(
                 "Simulated missing WebView2 runtime via WAVICAL_SIMULATE_NO_WEBVIEW2".to_string(),
             );
@@ -496,6 +436,40 @@ pub fn handle_missing_runtime_and_exit(error_detail: &str) -> ! {
         wavical_native::show_missing_webview2_dialog();
     }
     process::exit(1);
+}
+
+/// Compute the isolated WebView2 user data directory for an application:
+/// `%LOCALAPPDATA%\wavical\<appId>\EBWebView` (with fallbacks to `%APPDATA%`, `%USERPROFILE%`, or temp dir).
+pub fn get_webview_data_directory(app_id: &str) -> PathBuf {
+    let base = if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        PathBuf::from(local_appdata).join("wavical")
+    } else if let Ok(appdata) = std::env::var("APPDATA") {
+        PathBuf::from(appdata).join("wavical")
+    } else if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        PathBuf::from(userprofile)
+            .join("AppData")
+            .join("Local")
+            .join("wavical")
+    } else {
+        std::env::temp_dir().join("wavical")
+    };
+
+    let sanitized_id = if app_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !app_id.is_empty()
+    {
+        app_id
+    } else {
+        "default"
+    };
+
+    base.join(sanitized_id).join("EBWebView")
+}
+
+/// Helper checking whether dynamic capability reloading via standard input is enabled in current build.
+pub fn is_stdin_capability_reload_enabled() -> bool {
+    cfg!(debug_assertions)
 }
 
 /// Initialize window with tao.
@@ -703,6 +677,7 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
         }
     }
 
+    #[cfg(debug_assertions)]
     if config.listen_stdin {
         let stdin_proxy = proxy.clone();
         std::thread::spawn(move || {
@@ -749,6 +724,11 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
             // When stdin is closed (parent process exited), shut down shell event loop cleanly
             let _ = stdin_proxy.send_event(UserEvent::Exit);
         });
+    }
+
+    #[cfg(not(debug_assertions))]
+    if config.listen_stdin {
+        tracing::warn!("Dynamic stdin command listener is disabled in release builds");
     }
 
     // 4. Initialize handler registry
@@ -831,6 +811,14 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     let devtools = is_devtools_enabled();
     tracing::info!("Initializing webview (devtools enabled: {devtools})");
 
+    let data_directory = get_webview_data_directory(&config.window_id);
+    if let Err(err) = std::fs::create_dir_all(&data_directory) {
+        tracing::warn!(
+            "Failed to create webview user data directory {:?}: {err}",
+            data_directory
+        );
+    }
+
     let protocol_asset_root = asset_root.clone();
     let protocol_csp = effective_csp.clone();
     let protocol_window_id = config.window_id.clone();
@@ -842,7 +830,9 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     let nav_window_id = config.window_id.clone();
     let popup_window_id = config.window_id.clone();
 
-    let webview = match WebViewBuilder::new()
+    let mut web_context = wry::WebContext::new(Some(data_directory));
+
+    let webview = match WebViewBuilder::new_with_web_context(&mut web_context)
         .with_devtools(devtools)
         .with_initialization_script(WAVICAL_INIT_SCRIPT)
         .with_custom_protocol("wavical".to_string(), move |_id, request| {
@@ -929,6 +919,7 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     let config_tray_icon = config.tray_icon.clone();
     let initial_shortcuts = config.shortcuts.clone();
     let _retained_server = single_instance_server;
+    let _retained_web_context = web_context;
     let mut crash_history: Vec<std::time::Instant> = Vec::new();
     let mut active_tray: Option<tray_icon::TrayIcon> = None;
     let shortcut_manager = wavical_native::ShortcutManager::new().ok();
@@ -950,7 +941,7 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     // 6. Run tao closure event loop
     tracing::info!("Entering event loop");
     event_loop.run(move |event, _, control_flow| {
-        let _ = &_retained_server;
+        let _ = (&_retained_server, &_retained_web_context);
         *control_flow = ControlFlow::Wait;
 
         match event {
@@ -1072,7 +1063,7 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 {
                     tracing::info!(shortcut = %name, "Global shortcut triggered; dispatching event to webview");
                     let script = format!(
-                        "if (window.__wavical_shortcut_event__) {{ window.__wavical_shortcut_event__({}); }}",
+                        "window.dispatchEvent(new CustomEvent('wavical:shortcut', {{ detail: {{ shortcut: {} }} }}));",
                         serde_json::to_string(&name).unwrap_or_default()
                     );
                     if let Err(err) = webview.evaluate_script(&script) {
@@ -1087,16 +1078,26 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 }
             }
             Event::UserEvent(UserEvent::UpdateCapabilities(new_caps)) => {
-                tracing::info!(
-                    "Updating capabilities via dev server control: {:?}",
-                    new_caps
-                );
-                if let Ok(mut lock) = dyn_caps.write() {
-                    let mut updated = wavical_ipc::Capabilities::new();
-                    for cap in new_caps {
-                        updated.grant(cap);
+                #[cfg(debug_assertions)]
+                {
+                    tracing::info!(
+                        "Updating capabilities via dev server control: {:?}",
+                        new_caps
+                    );
+                    if let Ok(mut lock) = dyn_caps.write() {
+                        let mut updated = wavical_ipc::Capabilities::new();
+                        for cap in new_caps {
+                            updated.grant(cap);
+                        }
+                        *lock = updated;
                     }
-                    *lock = updated;
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    tracing::warn!(
+                        "Dynamic capability update ignored in release mode: {:?}",
+                        new_caps
+                    );
                 }
             }
             Event::UserEvent(UserEvent::Exit) => {
@@ -1135,6 +1136,21 @@ mod tests {
     #[test]
     fn test_devtools_setting_matches_debug_assertions() {
         assert_eq!(is_devtools_enabled(), cfg!(debug_assertions));
+    }
+
+    #[test]
+    fn test_devtools_strictly_disabled_in_release() {
+        if !cfg!(debug_assertions) {
+            assert!(
+                !is_devtools_enabled(),
+                "Devtools must strictly return false in release builds"
+            );
+        } else {
+            assert!(
+                is_devtools_enabled(),
+                "Devtools must be enabled in debug builds"
+            );
+        }
     }
 
     #[test]
@@ -1619,9 +1635,44 @@ mod tests {
     #[test]
     fn test_build_menu_event_script_format() {
         let script = build_menu_event_script("item.open");
-        assert!(script.contains("__wavical_event__(\"item.open\")"));
+        assert!(script.contains("window.dispatchEvent"));
+        assert!(script.contains("'wavical:menu'"));
+        assert!(script.contains("\"item.open\""));
 
         let script_escaped = build_menu_event_script("item\"with'quotes");
         assert!(script_escaped.contains(r#"item\"with'quotes"#));
+    }
+
+    #[test]
+    fn test_bridge_script_only_exposes_invoke_and_no_other_globals() {
+        let script = WAVICAL_INIT_SCRIPT;
+        assert!(!script.contains("onMenu:"));
+        assert!(!script.contains("onShortcut:"));
+        assert!(!script.contains("__wavical_event__"));
+        assert!(!script.contains("__wavical_shortcut_event__"));
+    }
+
+    #[test]
+    fn test_webview_data_directory_isolation() {
+        let dir1 = get_webview_data_directory("app1");
+        let dir2 = get_webview_data_directory("app2");
+        assert_ne!(dir1, dir2);
+        assert!(dir1.ends_with(std::path::Path::new("app1").join("EBWebView")));
+        assert!(dir2.ends_with(std::path::Path::new("app2").join("EBWebView")));
+    }
+
+    #[test]
+    fn test_stdin_capability_reload_strictly_disabled_in_release() {
+        if !cfg!(debug_assertions) {
+            assert!(
+                !is_stdin_capability_reload_enabled(),
+                "Stdin capability reload must be strictly disabled in release builds"
+            );
+        } else {
+            assert!(
+                is_stdin_capability_reload_enabled(),
+                "Stdin capability reload enabled in debug builds"
+            );
+        }
     }
 }

@@ -339,7 +339,6 @@ fn test_part2_response_shape_and_id_echo() {
 /// so internal symbols, stack traces, database schema names, and memory addresses are never revealed to the page.
 /// FINDING-I1: `dispatch` only sanitizes errors containing '/', '\\', or ':'; arbitrary internal error strings pass unsanitized to the webview.
 #[test]
-#[ignore = "FINDING-I1"]
 fn test_part2_response_internal_leakage() {
     let mut caps = Capabilities::new();
     caps.grant("sensitive.action");

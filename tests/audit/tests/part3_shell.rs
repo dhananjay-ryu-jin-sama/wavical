@@ -27,14 +27,39 @@ fn test_shell_webview2_missing_runtime_simulation() {
     );
 }
 
-/// 1b. Devtools check matches debug assertions
+/// 1b. Devtools check matches debug assertions and strictly disabled in release (F-A5-01)
 #[test]
 fn test_shell_devtools_disabled_in_release() {
     let devtools = is_devtools_enabled();
     assert_eq!(
         devtools,
         cfg!(debug_assertions),
-        "Devtools must strictly match cfg!(debug_assertions)"
+        "Devtools must strictly match cfg!(debug_assertions) in debug profile"
+    );
+
+    // F-A5-01: Verify under release profile that is_devtools_enabled() returns false
+    let output = std::process::Command::new("cargo")
+        .args([
+            "test",
+            "-p",
+            "wavical-shell",
+            "--release",
+            "--lib",
+            "--",
+            "test_devtools_strictly_disabled_in_release",
+        ])
+        .output()
+        .expect("cargo test --release must execute");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success()
+            && stdout.contains("test tests::test_devtools_strictly_disabled_in_release ... ok"),
+        "DevTools must be verified in release profile and pass: status={:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        stdout,
+        stderr
     );
 }
 
@@ -86,7 +111,6 @@ fn test_shell_bridge_script_immutability_and_safety() {
 /// In wavical-shell, onMenu and onShortcut are exposed on window.wavical, and
 /// __wavical_receive__, __wavical_event__, __wavical_shortcut_event__ are added to window.
 #[test]
-#[ignore = "FINDING-S1"]
 fn test_shell_bridge_script_only_exposes_invoke_and_no_other_globals() {
     let script = WAVICAL_INIT_SCRIPT;
 
@@ -548,4 +572,81 @@ fn test_shell_truncate_payload_boundaries() {
     let trunc_crabs = truncate_payload(crabs, 6);
     // 6 bytes fits exactly one crab (4 bytes), cannot split second crab at byte 6
     assert_eq!(trunc_crabs, "🦀... [truncated]");
+}
+
+/// FINDING-S2: Integration harness must dynamic-match attack suites count and attack page must not hang on oversized payload
+#[test]
+fn test_integration_harness_dynamic_count_and_no_hang() {
+    let integration_main = include_str!("../../../tests/integration/src/main.rs");
+    assert!(
+        !integration_main.contains("report.summary.passed == 7"),
+        "tests/integration/src/main.rs must not hardcode 'report.summary.passed == 7' (FINDING-S2)"
+    );
+    assert!(
+        integration_main.contains("report.summary.passed == report.summary.total"),
+        "tests/integration/src/main.rs must match report.summary.passed == report.summary.total"
+    );
+
+    let attack_app = include_str!("../../../tests/attack-page/app.js");
+    assert!(
+        !attack_app
+            .contains("await window.wavical.invoke(\"clipboard.write\", { text: hugeText });"),
+        "tests/attack-page/app.js must not await unreplied oversized payload without timeout protection (FINDING-S2)"
+    );
+}
+
+/// FINDING-S3: WebView2 user data directory must be isolated per app ID and configured on WebViewBuilder
+#[test]
+fn test_shell_webview2_user_data_directory_isolated() {
+    let shell_src = include_str!("../../../crates/wavical-shell/src/lib.rs");
+    assert!(
+        shell_src.contains("new_with_web_context(")
+            && shell_src.contains("get_webview_data_directory("),
+        "crates/wavical-shell/src/lib.rs must configure isolated user data directory via WebContext (FINDING-S3)"
+    );
+
+    let data_dir1 = wavical_shell::get_webview_data_directory("my-app-1");
+    let data_dir2 = wavical_shell::get_webview_data_directory("my-app-2");
+
+    assert_ne!(
+        data_dir1, data_dir2,
+        "WebView2 user data directories must be isolated between different app IDs"
+    );
+    assert!(
+        data_dir1.to_string_lossy().contains("my-app-1"),
+        "Data directory must contain app ID: {:?}",
+        data_dir1
+    );
+    assert!(
+        data_dir1.to_string_lossy().contains("EBWebView"),
+        "Data directory must contain EBWebView subfolder: {:?}",
+        data_dir1
+    );
+}
+
+/// FINDING-S4: Dynamic capability reload and --listen-stdin must be gated behind debug_assertions
+#[test]
+fn test_shell_stdin_dynamic_capability_reload_gated_in_release() {
+    let main_src = include_str!("../../../crates/wavical-shell/src/main.rs");
+    assert!(
+        main_src.contains("#[cfg(debug_assertions)]\n    #[arg(long)]\n    pub listen_stdin: bool")
+            || main_src.contains(
+                "#[cfg(debug_assertions)]\r\n    #[arg(long)]\r\n    pub listen_stdin: bool"
+            ),
+        "crates/wavical-shell/src/main.rs must gate listen_stdin CLI flag behind #[cfg(debug_assertions)] (FINDING-S4)"
+    );
+
+    let lib_src = include_str!("../../../crates/wavical-shell/src/lib.rs");
+    assert!(
+        lib_src.contains("#[cfg(debug_assertions)]\n    if config.listen_stdin")
+            || lib_src.contains("#[cfg(debug_assertions)]\r\n    if config.listen_stdin"),
+        "crates/wavical-shell/src/lib.rs must gate stdin listener thread behind #[cfg(debug_assertions)] (FINDING-S4)"
+    );
+    assert!(
+        lib_src.contains("#[cfg(debug_assertions)]\n            Event::UserEvent(UserEvent::UpdateCapabilities")
+            || lib_src.contains("#[cfg(debug_assertions)]\r\n            Event::UserEvent(UserEvent::UpdateCapabilities")
+            || lib_src.contains("#[cfg(debug_assertions)]\n                {\n                    tracing::info!(\n                        \"Updating capabilities via dev server control")
+            || lib_src.contains("#[cfg(debug_assertions)]\r\n                {\r\n                    tracing::info!(\r\n                        \"Updating capabilities via dev server control"),
+        "crates/wavical-shell/src/lib.rs must gate UpdateCapabilities event handler behind #[cfg(debug_assertions)] (FINDING-S4)"
+    );
 }

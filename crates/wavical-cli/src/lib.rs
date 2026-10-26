@@ -139,6 +139,11 @@ pub enum CliError {
 
     #[error("file association error: {0}")]
     FileAssociation(#[from] wavical_ipc::FileAssocValidationError),
+
+    #[error(
+        "dangerous output directory '{0}': output directory cannot be project root, parent directory, or inside source directory"
+    )]
+    DangerousOutDir(PathBuf),
 }
 
 /// Summary returned after successful initialization of a new project.
@@ -591,6 +596,113 @@ fn has_javascript_files(dir: &Path) -> bool {
     false
 }
 
+/// Normalize a path by resolving '.' and '..' components without requiring the path to exist on disk.
+pub fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => {
+                normalized.push(std::path::Component::RootDir.as_os_str())
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::Normal(c) => normalized.push(c),
+        }
+    }
+    normalized
+}
+
+/// Validate that `out_dir` does not collide with dangerous paths (project root, parent of project, or inside source directory).
+pub fn validate_out_dir(
+    project_root: &Path,
+    src_dir: &Path,
+    out_dir: &Path,
+) -> Result<(), CliError> {
+    let norm_proj = normalize_path(project_root);
+    let norm_src = normalize_path(src_dir);
+    let norm_out = normalize_path(out_dir);
+
+    if norm_out == norm_proj {
+        return Err(CliError::DangerousOutDir(out_dir.to_path_buf()));
+    }
+    if norm_proj.starts_with(&norm_out) {
+        return Err(CliError::DangerousOutDir(out_dir.to_path_buf()));
+    }
+    if norm_out == norm_src || norm_out.starts_with(&norm_src) {
+        return Err(CliError::DangerousOutDir(out_dir.to_path_buf()));
+    }
+
+    // Also check canonicalized paths if available for symlink / verbatim prefix resolution
+    let can_proj = project_root.canonicalize().ok();
+    let can_src = src_dir.canonicalize().ok();
+    let can_out = out_dir.canonicalize().ok();
+
+    if let (Some(o), Some(p)) = (&can_out, &can_proj)
+        && (o == p || p.starts_with(o))
+    {
+        return Err(CliError::DangerousOutDir(out_dir.to_path_buf()));
+    }
+    if let (Some(o), Some(s)) = (&can_out, &can_src)
+        && (o == s || o.starts_with(s))
+    {
+        return Err(CliError::DangerousOutDir(out_dir.to_path_buf()));
+    }
+
+    Ok(())
+}
+
+/// Remove existing files and subdirectories inside `out_dir` to ensure stale assets are not retained.
+pub fn clean_out_dir(out_dir: &Path) -> Result<(), CliError> {
+    if !out_dir.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(out_dir).map_err(|e| CliError::CreateDirFailed {
+        path: out_dir.to_path_buf(),
+        source: e,
+    })? {
+        let entry = entry.map_err(|e| CliError::CreateDirFailed {
+            path: out_dir.to_path_buf(),
+            source: e,
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path).map_err(|e| CliError::WriteFileFailed {
+                path: path.clone(),
+                source: e,
+            })?;
+        } else if path.is_file() {
+            std::fs::remove_file(&path).map_err(|e| CliError::WriteFileFailed {
+                path: path.clone(),
+                source: e,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Check if a file or directory name matches sensitive, VCS, or OS metadata patterns that should be excluded from builds.
+pub fn is_excluded_asset(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+
+    if lower.starts_with(".env") {
+        return true;
+    }
+    if lower.starts_with(".git") || lower == ".svn" || lower == ".hg" {
+        return true;
+    }
+    if lower == ".ds_store" || lower == "thumbs.db" || lower == "desktop.ini" {
+        return true;
+    }
+    if lower.ends_with(".map") {
+        return true;
+    }
+
+    false
+}
+
 /// Recursively copy assets from `current_src` into `out_root`, computing SHA-256 for each file.
 pub fn copy_and_hash_assets(
     src_root: &Path,
@@ -607,6 +719,13 @@ pub fn copy_and_hash_assets(
             source: e,
         })?;
         let entry_path = entry.path();
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+
+        if is_excluded_asset(&file_name_str) {
+            continue;
+        }
+
         let file_type = entry.file_type().map_err(|e| CliError::CreateDirFailed {
             path: entry_path.clone(),
             source: e,
@@ -692,12 +811,19 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         );
     }
 
-    // 4. Resolve outdir and ensure it exists
+    // 4. Resolve outdir and validate it is not dangerous
     let out_dir = if args.outdir.is_absolute() {
         args.outdir.clone()
     } else {
         project_root.join(&args.outdir)
     };
+
+    validate_out_dir(&project_root, &src_dir, &out_dir)?;
+
+    // Clean existing outdir contents before copying to prevent stale file retention (FINDING-C2)
+    if out_dir.exists() {
+        clean_out_dir(&out_dir)?;
+    }
 
     std::fs::create_dir_all(&out_dir).map_err(|e| CliError::CreateDirFailed {
         path: out_dir.clone(),

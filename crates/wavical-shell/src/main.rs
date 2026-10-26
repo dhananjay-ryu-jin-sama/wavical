@@ -38,6 +38,7 @@ pub struct ShellCli {
     pub asset_root: Option<PathBuf>,
 
     /// Listen on stdin for dynamic dev commands (reload, update_capabilities, exit)
+    #[cfg(debug_assertions)]
     #[arg(long)]
     pub listen_stdin: bool,
 
@@ -98,7 +99,10 @@ fn main() {
         capabilities.grant("core.ping");
     }
 
+    #[cfg(debug_assertions)]
     let listen_stdin = args.listen_stdin || args.dev;
+    #[cfg(not(debug_assertions))]
+    let listen_stdin = false;
     let dyn_caps = Arc::new(RwLock::new(capabilities.clone()));
     let title = args
         .window_title
