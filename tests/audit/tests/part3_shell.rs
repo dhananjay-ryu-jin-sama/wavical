@@ -5,10 +5,9 @@ use tempfile::tempdir;
 use wavical_protocol::HEADER_NOSNIFF;
 use wavical_shell::{
     DEFAULT_CSP, HEADER_CSP, IpcOriginError, WAVICAL_INIT_SCRIPT, WindowConfig,
-    build_delivery_script, check_webview2_runtime_with_override,
-    handle_navigation_request, handle_new_window_request, handle_protocol_request,
-    is_devtools_enabled, is_navigation_allowed, is_origin_allowed, process_ipc_message,
-    truncate_payload,
+    build_delivery_script, check_webview2_runtime_with_override, handle_navigation_request,
+    handle_new_window_request, handle_protocol_request, is_devtools_enabled, is_navigation_allowed,
+    is_origin_allowed, process_ipc_message, truncate_payload,
 };
 use wry::NewWindowResponse;
 use wry::http::{Request, StatusCode, Uri};
@@ -45,10 +44,7 @@ fn test_shell_bridge_script_immutability_and_safety() {
     let script = WAVICAL_INIT_SCRIPT;
 
     // Must not use eval or new Function
-    assert!(
-        !script.contains("eval("),
-        "Bridge script must not use eval"
-    );
+    assert!(!script.contains("eval("), "Bridge script must not use eval");
     assert!(
         !script.contains("new Function"),
         "Bridge script must not use new Function"
@@ -127,9 +123,9 @@ fn test_shell_origin_check_vectors() {
         "wavical://localhost",
         "https://wavical.localhost",
         "http://wavical.localhost/path",
-        "http://wavical.localhost:80/path",    // default port stripped
-        "https://wavical.localhost:443/path",  // default port stripped
-        "http://WAVICAL.LOCALHOST/path",       // case insensitivity on host
+        "http://wavical.localhost:80/path", // default port stripped
+        "https://wavical.localhost:443/path", // default port stripped
+        "http://WAVICAL.LOCALHOST/path",    // case insensitivity on host
         "https://WAVICAL.LOCALHOST/index.html",
     ];
 
@@ -212,8 +208,8 @@ fn test_shell_response_delivery_escaping() {
         let payload = serde_json::json!({ "field": attack });
         let resp = wavical_ipc::Response::success(42, payload);
 
-        let script = build_delivery_script(&resp)
-            .expect("double JSON serialization should always succeed");
+        let script =
+            build_delivery_script(&resp).expect("double JSON serialization should always succeed");
 
         // Must strictly use JSON.parse wrapper without raw concatenation
         assert!(
@@ -358,7 +354,11 @@ fn test_shell_protocol_response_headers_on_all_responses() {
     let asset_root = tmp.path();
 
     // Create test files
-    fs::write(asset_root.join("index.html"), "<html><body>Hello</body></html>").unwrap();
+    fs::write(
+        asset_root.join("index.html"),
+        "<html><body>Hello</body></html>",
+    )
+    .unwrap();
     fs::write(asset_root.join("app.js"), "console.log('test');").unwrap();
     fs::write(asset_root.join("style.css"), "body { margin: 0; }").unwrap();
     fs::write(asset_root.join("image.png"), b"\x89PNG\r\n\x1a\n").unwrap();
@@ -453,7 +453,9 @@ fn test_shell_protocol_response_headers_on_all_responses() {
 fn test_shell_raw_ipc_channel_enforcement() {
     let config = WindowConfig::default();
     let registry = wavical_ipc::HandlerRegistry::with_core_handlers();
-    let valid_uri = "http://wavical.localhost/index.html".parse::<Uri>().unwrap();
+    let valid_uri = "http://wavical.localhost/index.html"
+        .parse::<Uri>()
+        .unwrap();
 
     // A. Method without capability (core.echo)
     let ungranted = r#"{"id": 1, "method": "core.echo", "params": "foo"}"#;

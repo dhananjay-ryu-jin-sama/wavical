@@ -3671,7 +3671,6 @@ dependencies = [
  "tray-icon",
  "wavical-ipc",
  "wavical-protocol",
- "webview2-com",
  "wry",
 ]
 

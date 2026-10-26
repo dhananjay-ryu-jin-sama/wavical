@@ -8,13 +8,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use wavical_ipc::{
-    Capabilities, GrantTable, HandlerRegistry, IpcError,
-    dispatch, parse_request, validate_raw_message,
-    GENERIC_METHOD_ERROR, MAX_MESSAGE_SIZE_BYTES,
-    MAX_JSON_DEPTH, ReadGrantedParams, WriteGrantedParams
+    Capabilities, GENERIC_METHOD_ERROR, GrantTable, HandlerRegistry, IpcError, MAX_JSON_DEPTH,
+    MAX_MESSAGE_SIZE_BYTES, ReadGrantedParams, WriteGrantedParams, dispatch, parse_request,
+    validate_raw_message,
 };
 use wavical_protocol::resolve_asset_path;
-use wavical_shell::{WindowConfig, process_ipc_message, is_navigation_allowed, extract_origin};
+use wavical_shell::{WindowConfig, extract_origin, is_navigation_allowed, process_ipc_message};
 use wry::http::Uri;
 
 // ============================================================================
@@ -48,7 +47,10 @@ fn test_g1_attempt1_casing_evasion() {
         let req = parse_res.unwrap();
 
         let resp = dispatch(&req, &caps, &registry);
-        assert!(!resp.ok, "Casing variant '{method}' MUST NOT bypass capability check");
+        assert!(
+            !resp.ok,
+            "Casing variant '{method}' MUST NOT bypass capability check"
+        );
         assert_eq!(
             resp.error.as_deref(),
             Some(GENERIC_METHOD_ERROR),
@@ -60,11 +62,11 @@ fn test_g1_attempt1_casing_evasion() {
 #[test]
 fn test_g1_attempt2_unicode_homoglyphs() {
     let homoglyph_methods = vec![
-        "c\u{043E}re.ping",   // Cyrillic small 'о' U+043E
-        "cor\u{0435}.ping",   // Cyrillic small 'е' U+0435
-        "core\u{FF0E}ping",   // Fullwidth full stop U+FF0E
-        "core.pin\u{0261}",   // Latin small script g U+0261
-        "core\u{200B}.ping",  // Zero-width space U+200B
+        "c\u{043E}re.ping",  // Cyrillic small 'о' U+043E
+        "cor\u{0435}.ping",  // Cyrillic small 'е' U+0435
+        "core\u{FF0E}ping",  // Fullwidth full stop U+FF0E
+        "core.pin\u{0261}",  // Latin small script g U+0261
+        "core\u{200B}.ping", // Zero-width space U+200B
     ];
 
     for method in homoglyph_methods {
@@ -84,16 +86,25 @@ fn test_g1_attempt3_duplicate_json_keys() {
 
     // Invariant: serde_json with deny_unknown_fields rejects duplicate keys
     let parse_res_a = parse_request(raw_a);
-    assert!(parse_res_a.is_err(), "Duplicate keys must be rejected by parser");
+    assert!(
+        parse_res_a.is_err(),
+        "Duplicate keys must be rejected by parser"
+    );
     match parse_res_a {
         Err(IpcError::InvalidJson(msg)) => {
-            assert!(msg.contains("duplicate field `method`"), "Expected duplicate field error, got: {msg}");
+            assert!(
+                msg.contains("duplicate field `method`"),
+                "Expected duplicate field error, got: {msg}"
+            );
         }
         other => panic!("Unexpected parse result: {:?}", other),
     }
 
     let parse_res_b = parse_request(raw_b);
-    assert!(parse_res_b.is_err(), "Duplicate keys must be rejected by parser");
+    assert!(
+        parse_res_b.is_err(),
+        "Duplicate keys must be rejected by parser"
+    );
 }
 
 #[test]
@@ -185,7 +196,10 @@ fn test_g1_attempt5_config_reload_race() {
     reloader.join().unwrap();
     invoker.join().unwrap();
 
-    assert!(!ungranted_executed.load(Ordering::SeqCst), "Ungranted method executed during reload race!");
+    assert!(
+        !ungranted_executed.load(Ordering::SeqCst),
+        "Ungranted method executed during reload race!"
+    );
 }
 
 #[test]
@@ -206,10 +220,16 @@ fn test_g2_attempt1_grant_forging() {
     let window_id = "test-window";
 
     // Insert legitimate grant
-    let real_id = grant_table.insert(window_id, "C:\\valid\\file.txt").unwrap();
+    let real_id = grant_table
+        .insert(window_id, "C:\\valid\\file.txt")
+        .unwrap();
 
     // Probe 1: Zeroed hex ID
-    assert!(grant_table.get("00000000000000000000000000000000", window_id).is_err());
+    assert!(
+        grant_table
+            .get("00000000000000000000000000000000", window_id)
+            .is_err()
+    );
     // Probe 2: Off-by-one hex ID
     let mut forged = real_id.clone();
     let last_char = forged.pop().unwrap();
@@ -270,7 +290,11 @@ fn test_g2_attempt4_protocol_out_of_src_escapes() {
     std::fs::create_dir_all(&src_dir).unwrap();
 
     // Sensitive files outside src/
-    std::fs::write(root.join("wavical.config.js"), "export default { appId: 'secret' };").unwrap();
+    std::fs::write(
+        root.join("wavical.config.js"),
+        "export default { appId: 'secret' };",
+    )
+    .unwrap();
     std::fs::write(root.join("Cargo.toml"), "[package]\nname = 'secret'").unwrap();
     std::fs::write(root.join(".env"), "SECRET_TOKEN=xyz123").unwrap();
     std::fs::write(src_dir.join("index.html"), "<h1>Hello</h1>").unwrap();
@@ -401,7 +425,8 @@ fn test_g4_attempt1_timing_side_channel_analysis() {
 
     let req_granted = parse_request(r#"{"id":1,"method":"core.ping","params":null}"#).unwrap();
     let req_ungranted = parse_request(r#"{"id":2,"method":"core.echo","params":null}"#).unwrap();
-    let req_unknown = parse_request(r#"{"id":3,"method":"core.nonexistent","params":null}"#).unwrap();
+    let req_unknown =
+        parse_request(r#"{"id":3,"method":"core.nonexistent","params":null}"#).unwrap();
 
     let iterations = 10_000;
 
@@ -454,7 +479,8 @@ fn test_g4_attempt2_error_body_byte_for_byte_comparison() {
     reg.register("core.echo", wavical_ipc::handle_core_echo);
 
     let req_ungranted = parse_request(r#"{"id":100,"method":"core.echo","params":null}"#).unwrap();
-    let req_unknown = parse_request(r#"{"id":100,"method":"core.nonexistent","params":null}"#).unwrap();
+    let req_unknown =
+        parse_request(r#"{"id":100,"method":"core.nonexistent","params":null}"#).unwrap();
 
     let resp_ungranted = dispatch(&req_ungranted, &caps, &reg);
     let resp_unknown = dispatch(&req_unknown, &caps, &reg);
@@ -479,11 +505,17 @@ fn test_g5_attempt1_message_size_boundary() {
     // Exact 1 MB limit, 1 MB + 1, and 50 MB
     let base = r#"{"id":1,"method":"core.ping","params":""}"#;
     let pad_len = MAX_MESSAGE_SIZE_BYTES - base.len();
-    let exact_1mb = format!(r#"{{"id":1,"method":"core.ping","params":"{}"}}"#, "a".repeat(pad_len));
+    let exact_1mb = format!(
+        r#"{{"id":1,"method":"core.ping","params":"{}"}}"#,
+        "a".repeat(pad_len)
+    );
     assert_eq!(exact_1mb.len(), MAX_MESSAGE_SIZE_BYTES);
     assert!(parse_request(&exact_1mb).is_ok());
 
-    let over_1mb = format!(r#"{{"id":1,"method":"core.ping","params":"{}"}}"#, "a".repeat(pad_len + 1));
+    let over_1mb = format!(
+        r#"{{"id":1,"method":"core.ping","params":"{}"}}"#,
+        "a".repeat(pad_len + 1)
+    );
     assert!(matches!(
         parse_request(&over_1mb),
         Err(IpcError::MessageTooLarge { .. })
@@ -549,7 +581,11 @@ fn test_g9_attempt1_node_timeout_protection() {
     // Verify that infinite loop in config is terminated after 5-second timeout
     let temp_dir = tempfile::tempdir().unwrap();
     let config_path = temp_dir.path().join("wavical.config.js");
-    std::fs::write(&config_path, "while(true){}; export default { appId: 'loop' };").unwrap();
+    std::fs::write(
+        &config_path,
+        "while(true){}; export default { appId: 'loop' };",
+    )
+    .unwrap();
 
     let start = Instant::now();
     let res = wavical_config::validate_config(temp_dir.path());

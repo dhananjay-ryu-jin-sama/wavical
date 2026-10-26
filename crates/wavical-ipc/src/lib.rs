@@ -662,14 +662,10 @@ pub fn dispatch(
                 error = %err,
                 "IPC handler execution failed"
             );
-            // INFORMATION LEAKAGE DEFENSE (WP7/WP8):
-            // If the handler error contains filesystem paths or internal symbols, sanitize it.
-            let safe_err = if err.contains('/') || err.contains('\\') || err.contains(':') {
-                GENERIC_HANDLER_ERROR.to_string()
-            } else {
-                err
-            };
-            Response::error(request.id, safe_err)
+            // INFORMATION LEAKAGE DEFENSE (WP4 / SECURITY_MODEL.md Invariant 3):
+            // All internal handler execution errors are sanitized to GENERIC_HANDLER_ERROR
+            // so internals (schema names, stack traces, paths, etc.) are never leaked to the webview.
+            Response::error(request.id, GENERIC_HANDLER_ERROR)
         }
     }
 }

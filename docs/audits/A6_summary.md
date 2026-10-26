@@ -60,7 +60,7 @@ The table below consolidates all findings identified across Audits A0 through A5
 
 | ID | Phase | Severity | Title | Where | Source Audit | Status | One-Line Fix Idea |
 | :--- | :---: | :---: | :--- | :--- | :---: | :---: | :--- |
-| **F-A0-01** | Phase 2 | **High** | Unapproved `unsafe` COM Hook in Crash Recovery | `crates/wavical-native/src/crash_recovery.rs:36,51,62` | A0 | Open | Revert raw COM hook or formally review and document approval in `WAVICAL_PHASE_2_DECISIONS.md`. |
+| **F-A0-01** | Phase 2 | **High** | Unapproved `unsafe` COM Hook in Crash Recovery | `crates/wavical-native/src/crash_recovery.rs:36,51,62` | A0 | Fixed (`test_crash_recovery_contains_zero_unsafe_code`) | Revert raw COM hook or formally review and document approval in `WAVICAL_PHASE_2_DECISIONS.md`. |
 | **F-A1a-03** | Phase 0 | **High** | Unsanitized Internal Error Leakage in `wavical_ipc::dispatch` | `crates/wavical-ipc/src/lib.rs:669-674` | A1a | Open | Pass handler errors through `sanitize_handler_error(&e)` before constructing `Response::err`. |
 | **FINDING-S2** | Phase 0 | **High** | Attack Suite Hangs on Oversize Payload & CI Runner Fails Count | `tests/integration/src/main.rs:280`, `tests/attack-page/app.js:370` | A1b | Open | Return explicit oversize error response or client timeout, and match `summary.total` instead of hardcoded 7. |
 | **F-A5-01** | Phase 0 | **High** | DevTools Release Enablement Guard Untested in Release Profile | `crates/wavical-shell/src/lib.rs:597` | A5 | Open | Add an integration test compiled under `--release` asserting `is_devtools_enabled()` returns false. |
@@ -303,7 +303,7 @@ graph TD
 ### Batch 6: Unsafe Code Resolution & Test Suite Verification (5 Findings)
 - **Goal:** Resolve unapproved unsafe blocks, unhang integration test harnesses, and close mutation test gaps.
 - **Findings Addressed:**
-  1. `F-A0-01` (High): Unapproved `unsafe` COM hook in `crash_recovery.rs`.
+  1. `F-A0-01` (High): Unapproved `unsafe` COM hook in `crash_recovery.rs` [Fixed: `test_crash_recovery_contains_zero_unsafe_code`].
   2. `FINDING-S2` (High): Attack suite hangs on oversize payload and runner fails test count.
   3. `F-A5-01` (High): DevTools release enablement guard untested in release builds.
   4. `F-A0-05` (Medium): Missing Phase 2 WP9 hostile review artifacts and tests-fail proofs.

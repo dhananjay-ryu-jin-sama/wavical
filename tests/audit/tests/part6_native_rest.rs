@@ -10,17 +10,16 @@ use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use wavical_config::parse_config_json;
 use wavical_ipc::{
-    decide_crash_recovery, parse_and_validate_badge_params, parse_and_validate_shortcut,
-    parse_and_validate_tray_params, parse_window_state, resolve_window_state,
-    validate_badge_count, validate_file_extension, validate_menu_items,
-    validate_shortcut_list, BadgeDisplay, BadgeValidationError, CrashRecoveryDecision,
-    MenuItem, MenuValidationError, Modifier, ScreenBounds, ShortcutValidationError,
-    WindowState, DEFAULT_SAVED_HEIGHT, DEFAULT_SAVED_WIDTH, MAX_MENU_ITEMS,
-    MAX_MENU_LABEL_CHARS,
+    BadgeDisplay, BadgeValidationError, CrashRecoveryDecision, DEFAULT_SAVED_HEIGHT,
+    DEFAULT_SAVED_WIDTH, MAX_MENU_ITEMS, MAX_MENU_LABEL_CHARS, MenuItem, MenuValidationError,
+    Modifier, ScreenBounds, ShortcutValidationError, WindowState, decide_crash_recovery,
+    parse_and_validate_badge_params, parse_and_validate_shortcut, parse_and_validate_tray_params,
+    parse_window_state, resolve_window_state, validate_badge_count, validate_file_extension,
+    validate_menu_items, validate_shortcut_list,
 };
 use wavical_native::{
-    check_single_instance, get_app_data_dir, load_window_state, save_window_state,
-    NativeService, SingleInstance,
+    NativeService, SingleInstance, check_single_instance, get_app_data_dir, load_window_state,
+    save_window_state,
 };
 
 // ============================================================================
@@ -581,4 +580,14 @@ fn test_file_assoc_register_preserves_existing_default_handler() {
     // A polite file association registrar should write to OpenWithProgids rather than
     // overwriting the default value of Software\Classes\.{ext}
     panic!("FINDING-R1: run_register_filetypes unconditionally overwrites default handler");
+}
+
+/// F-A0-01: crates/wavical-native/src/crash_recovery.rs must not contain unapproved unsafe COM hooks
+#[test]
+fn test_crash_recovery_contains_zero_unsafe_code() {
+    let crash_recovery_src = include_str!("../../../crates/wavical-native/src/crash_recovery.rs");
+    assert!(
+        !crash_recovery_src.contains("unsafe"),
+        "crates/wavical-native/src/crash_recovery.rs must not contain any unsafe blocks or allow(unsafe_code) (F-A0-01)"
+    );
 }

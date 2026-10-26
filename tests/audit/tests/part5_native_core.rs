@@ -6,16 +6,16 @@
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::tempdir;
 use wavical_ipc::{
+    Capabilities, GENERIC_CLIPBOARD_ERROR, GENERIC_METHOD_ERROR, GENERIC_NOTIFICATION_ERROR,
+    GrantError, GrantTable, MAX_CLIPBOARD_TEXT_BYTES, MAX_GRANTS_PER_WINDOW,
+    MAX_NOTIFICATION_BODY_CHARS, MAX_NOTIFICATION_TITLE_CHARS, MAX_WRITE_GRANTED_BYTES,
+    NATIVE_METHOD_NAMES, NativeHandler, OpenFileDialogParams, Request, SaveFileDialogParams,
     known_capabilities, registered_native_methods, validate_clipboard_read,
-    validate_clipboard_write, validate_notify_send, Capabilities, GrantError, GrantTable,
-    NativeHandler, OpenFileDialogParams, Request, SaveFileDialogParams,
-    GENERIC_CLIPBOARD_ERROR, GENERIC_METHOD_ERROR, GENERIC_NOTIFICATION_ERROR,
-    MAX_CLIPBOARD_TEXT_BYTES, MAX_GRANTS_PER_WINDOW, MAX_NOTIFICATION_BODY_CHARS,
-    MAX_NOTIFICATION_TITLE_CHARS, MAX_WRITE_GRANTED_BYTES, NATIVE_METHOD_NAMES,
+    validate_clipboard_write, validate_notify_send,
 };
 use wavical_native::NativeService;
 
@@ -60,8 +60,8 @@ fn test_part5_capability_and_method_registration() {
     );
 
     // Check example app's config
-    let hello_config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/hello/wavical.config.js");
+    let hello_config_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/hello/wavical.config.js");
     let content = std::fs::read_to_string(&hello_config_path).expect("read hello config");
 
     // core.echo must NOT be granted by default in the example app
@@ -260,9 +260,7 @@ fn test_part5_grant_limit_boundary() {
     assert_eq!(table.count_for_window(win), 64);
 
     // 65th grant fails
-    let err = table
-        .insert(win, PathBuf::from("file_65.txt"))
-        .unwrap_err();
+    let err = table.insert(win, PathBuf::from("file_65.txt")).unwrap_err();
     assert_eq!(err, GrantError::LimitReached);
 }
 
@@ -433,10 +431,14 @@ fn test_part5_grant_table_entropy_and_isolation() {
             .insert(&win_id, PathBuf::from(format!("file_{i}.txt")))
             .expect("insert grant");
         assert_eq!(gid.len(), 32);
-        assert!(gid
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
-        assert!(ids.insert(gid), "Grant ID was duplicated! Insufficient entropy");
+        assert!(
+            gid.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert!(
+            ids.insert(gid),
+            "Grant ID was duplicated! Insufficient entropy"
+        );
     }
 
     // Cross-window isolation
@@ -462,8 +464,8 @@ fn test_part5_grant_table_entropy_and_isolation() {
         "",
         "abc",
         "0123456789abcdef0123456789abcdef0", // 33 chars
-        "0123456789ABCDEF0123456789ABCDEF", // uppercase
-        "0123456789abcdef0123456789abcdeg", // 'g' non-hex
+        "0123456789ABCDEF0123456789ABCDEF",  // uppercase
+        "0123456789abcdef0123456789abcdeg",  // 'g' non-hex
     ];
 
     for forged in forged_cases {
@@ -536,10 +538,7 @@ fn test_part5_fs_read_write_granted_enforcements() {
     let zero_res = service
         .fs_read_granted(&serde_json::json!({ "grantId": zero_grant }), window_id)
         .unwrap();
-    assert_eq!(
-        zero_res.get("content").and_then(|v| v.as_str()),
-        Some("")
-    );
+    assert_eq!(zero_res.get("content").and_then(|v| v.as_str()), Some(""));
 
     // 6. Non-UTF-8 content rejected cleanly
     let binary_file = tmp.path().join("binary.bin");
@@ -590,7 +589,11 @@ fn test_grant_id_format_validated_before_lookup() {
     // A forged ID that is not 32 lowercase hex characters should be rejected at validation
     // with an explicit invalid-format error rather than silently doing a hashmap lookup
     let err = table.get("not-a-valid-hex-id", "win-1").unwrap_err();
-    assert_ne!(err, GrantError::NotFound, "Expected format validation error before lookup");
+    assert_ne!(
+        err,
+        GrantError::NotFound,
+        "Expected format validation error before lookup"
+    );
 }
 
 /// FINDING-G2: Grant table does not enforce read-only vs write-only mode
@@ -613,7 +616,10 @@ fn test_grant_enforces_read_vs_write_mode() {
     });
 
     let res = service.fs_write_granted(&write_params, "win-1");
-    assert!(res.is_err(), "Open file grant was allowed to be overwritten via fs.writeGranted");
+    assert!(
+        res.is_err(),
+        "Open file grant was allowed to be overwritten via fs.writeGranted"
+    );
 }
 
 /// FINDING-D1: Dialog title and defaultName have no length or character validation
@@ -626,7 +632,10 @@ fn test_dialog_params_length_validation() {
         "title": huge_title,
     });
     let res: Result<OpenFileDialogParams, _> = serde_json::from_value(params);
-    assert!(res.is_err(), "100,000 character dialog title should be rejected by validation");
+    assert!(
+        res.is_err(),
+        "100,000 character dialog title should be rejected by validation"
+    );
 }
 
 /// FINDING-N1: notify.send has no rate or queue limiting

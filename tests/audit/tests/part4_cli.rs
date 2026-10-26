@@ -97,11 +97,17 @@ fn test_cli_node_version_and_missing_behavior() {
 fn test_cli_config_validation_battery() {
     // A. Missing appId
     let err_missing = parse_config_json(r#"{}"#).unwrap_err();
-    assert_eq!(err_missing, ValidationError::MissingField("appId".to_string()));
+    assert_eq!(
+        err_missing,
+        ValidationError::MissingField("appId".to_string())
+    );
 
     // B. Empty appId
     let err_empty = parse_config_json(r#"{"appId": "   "}"#).unwrap_err();
-    assert_eq!(err_empty, ValidationError::MissingField("appId".to_string()));
+    assert_eq!(
+        err_empty,
+        ValidationError::MissingField("appId".to_string())
+    );
 
     // C. Invalid appId values
     for invalid in &["../x", "a b", "🦀", ".", "..", "my@app", "app$name"] {
@@ -125,36 +131,51 @@ fn test_cli_config_validation_battery() {
     assert!(err_top.to_string().contains("unknown field `windowTitle`"));
 
     // F. Unknown key inside window
-    let err_win = parse_config_json(r#"{"appId": "app", "window": {"width": 800, "unknownKey": true}}"#).unwrap_err();
+    let err_win =
+        parse_config_json(r#"{"appId": "app", "window": {"width": 800, "unknownKey": true}}"#)
+            .unwrap_err();
     assert!(matches!(err_win, ValidationError::MalformedJson(_)));
     assert!(err_win.to_string().contains("unknown field `unknownKey`"));
 
     // G. Unknown key inside dev
-    let err_dev = parse_config_json(r#"{"appId": "app", "dev": {"port": 7890, "unknownDev": 123}}"#).unwrap_err();
+    let err_dev =
+        parse_config_json(r#"{"appId": "app", "dev": {"port": 7890, "unknownDev": 123}}"#)
+            .unwrap_err();
     assert!(matches!(err_dev, ValidationError::MalformedJson(_)));
     assert!(err_dev.to_string().contains("unknown field `unknownDev`"));
 
     // H. Capabilities as an array
-    let err_arr = parse_config_json(r#"{"appId": "app", "capabilities": ["core.ping"]}"#).unwrap_err();
+    let err_arr =
+        parse_config_json(r#"{"appId": "app", "capabilities": ["core.ping"]}"#).unwrap_err();
     assert!(matches!(err_arr, ValidationError::MalformedJson(_)));
 
     // I. Capability values not boolean
-    let err_val_str = parse_config_json(r#"{"appId": "app", "capabilities": {"core.ping": "yes"}}"#).unwrap_err();
+    let err_val_str =
+        parse_config_json(r#"{"appId": "app", "capabilities": {"core.ping": "yes"}}"#).unwrap_err();
     assert!(matches!(err_val_str, ValidationError::MalformedJson(_)));
-    let err_val_num = parse_config_json(r#"{"appId": "app", "capabilities": {"core.ping": 1}}"#).unwrap_err();
+    let err_val_num =
+        parse_config_json(r#"{"appId": "app", "capabilities": {"core.ping": 1}}"#).unwrap_err();
     assert!(matches!(err_val_num, ValidationError::MalformedJson(_)));
-    let err_val_null = parse_config_json(r#"{"appId": "app", "capabilities": {"core.ping": null}}"#).unwrap_err();
+    let err_val_null =
+        parse_config_json(r#"{"appId": "app", "capabilities": {"core.ping": null}}"#).unwrap_err();
     assert!(matches!(err_val_null, ValidationError::MalformedJson(_)));
 
     // J. Unknown capability with close typo -> suggestion
-    let err_typo = parse_config_json(r#"{"appId": "app", "capabilities": {"core.echo2": true}}"#).unwrap_err();
+    let err_typo =
+        parse_config_json(r#"{"appId": "app", "capabilities": {"core.echo2": true}}"#).unwrap_err();
     assert!(matches!(err_typo, ValidationError::UnknownCapability(_, _)));
     assert_eq!(err_typo.suggestion(), Some("core.echo"));
     assert!(err_typo.to_string().contains("did you mean 'core.echo'?"));
 
     // K. Unknown capability with no close match -> no suggestion
-    let err_no_match = parse_config_json(r#"{"appId": "app", "capabilities": {"completely.unrelated.foo.bar": true}}"#).unwrap_err();
-    assert!(matches!(err_no_match, ValidationError::UnknownCapability(_, _)));
+    let err_no_match = parse_config_json(
+        r#"{"appId": "app", "capabilities": {"completely.unrelated.foo.bar": true}}"#,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        err_no_match,
+        ValidationError::UnknownCapability(_, _)
+    ));
     assert_eq!(err_no_match.suggestion(), None);
     assert!(!err_no_match.to_string().contains("did you mean"));
 
@@ -189,7 +210,11 @@ fn test_cli_node_execution_battery() {
     .unwrap();
     let err_throw = validate_config(&proj).unwrap_err();
     assert!(matches!(err_throw, ValidationError::NodeError(_)));
-    assert!(err_throw.to_string().contains("Config failed to initialize"));
+    assert!(
+        err_throw
+            .to_string()
+            .contains("Config failed to initialize")
+    );
 
     // C. process.exit(0) inside config
     fs::write(
@@ -307,7 +332,10 @@ fn test_cli_init_behavior_with_safety_sentinel() {
         .output()
         .expect("run wavical init force");
     assert!(init_force.status.success());
-    assert!(custom_file.is_file(), "Extra files must not be deleted by --force");
+    assert!(
+        custom_file.is_file(),
+        "Extra files must not be deleted by --force"
+    );
     assert_eq!(fs::read_to_string(&custom_file).unwrap(), "custom content");
 
     // Safety assertion
@@ -421,7 +449,11 @@ fn test_cli_build_removes_stale_files_from_outdir() {
     let wavical_bin = get_wavical_bin();
 
     // 1. First build
-    let b1 = Command::new(&wavical_bin).arg("build").current_dir(&proj).output().unwrap();
+    let b1 = Command::new(&wavical_bin)
+        .arg("build")
+        .current_dir(&proj)
+        .output()
+        .unwrap();
     assert!(b1.status.success());
     assert!(proj.join("dist/temp_deleted.txt").is_file());
 
@@ -429,7 +461,11 @@ fn test_cli_build_removes_stale_files_from_outdir() {
     fs::remove_file(proj.join("src/temp_deleted.txt")).unwrap();
 
     // 3. Second build
-    let b2 = Command::new(&wavical_bin).arg("build").current_dir(&proj).output().unwrap();
+    let b2 = Command::new(&wavical_bin)
+        .arg("build")
+        .current_dir(&proj)
+        .output()
+        .unwrap();
     assert!(b2.status.success());
 
     // Must be removed from dist
