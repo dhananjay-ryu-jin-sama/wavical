@@ -135,12 +135,14 @@ fn test_g1_attempt4_whitespace_and_control_chars() {
 
 #[test]
 fn test_g1_attempt5_config_reload_race() {
-    let mut cfg = WindowConfig::default();
-    cfg.window_id = "redteam-race-win".to_string();
-
     let dynamic_caps = Arc::new(std::sync::RwLock::new(Capabilities::new()));
     dynamic_caps.write().unwrap().grant("core.ping");
-    cfg.dynamic_capabilities = Some(Arc::clone(&dynamic_caps));
+
+    let cfg = WindowConfig {
+        window_id: "redteam-race-win".to_string(),
+        dynamic_capabilities: Some(Arc::clone(&dynamic_caps)),
+        ..Default::default()
+    };
 
     let window_config = Arc::new(cfg);
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -175,7 +177,7 @@ fn test_g1_attempt5_config_reload_race() {
     let stop_clone2 = Arc::clone(&stop_flag);
     let reg_clone2 = Arc::clone(&registry);
     let ungranted_flag = Arc::clone(&ungranted_executed);
-    let dyn_clone2 = Arc::clone(&dynamic_caps);
+    let _dyn_clone2 = Arc::clone(&dynamic_caps);
 
     let invoker = thread::spawn(move || {
         // Attempt to call clipboard.read which is NEVER granted during reload

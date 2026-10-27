@@ -285,10 +285,8 @@ impl ClipboardRestoreGuard {
 
 impl Drop for ClipboardRestoreGuard {
     fn drop(&mut self) {
-        if let Some(ref text) = self.saved_text {
-            if let Ok(mut cb) = arboard::Clipboard::new() {
-                let _ = cb.set_text(text);
-            }
+        if let (Some(text), Ok(mut cb)) = (&self.saved_text, arboard::Clipboard::new()) {
+            let _ = cb.set_text(text);
         }
     }
 }
@@ -544,7 +542,7 @@ fn test_part5_fs_read_write_granted_enforcements() {
 
     // 6. Non-UTF-8 content rejected cleanly
     let binary_file = tmp.path().join("binary.bin");
-    std::fs::write(&binary_file, &[0xFF, 0xFE, 0xFD, 0xFC]).expect("create binary file");
+    std::fs::write(&binary_file, [0xFF, 0xFE, 0xFD, 0xFC]).expect("create binary file");
     let bin_grant = table.insert(window_id, &binary_file).unwrap();
     let bin_err = service
         .fs_read_granted(&serde_json::json!({ "grantId": bin_grant }), window_id)
@@ -730,7 +728,8 @@ fn test_notify_send_rate_limiting() {
     let mut rate_limited = false;
     for _ in 0..100 {
         if let Err(e) = service.notify_send(&payload, window_id) {
-            if e.contains("rate") || e.contains("limit") {
+            let is_limit = e.contains("rate") || e.contains("limit");
+            if is_limit {
                 rate_limited = true;
                 break;
             }

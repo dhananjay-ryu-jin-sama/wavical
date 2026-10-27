@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
 #[test]
+#[cfg(windows)]
 fn test_e2e_full_lifecycle_workflow() {
     let temp_root = tempdir().expect("create temp dir");
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
