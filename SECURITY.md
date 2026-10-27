@@ -22,7 +22,7 @@ Please **DO NOT** report security vulnerabilities via public GitHub issues, disc
 ### Preferred Reporting Method
 1. **GitHub Private Vulnerability Reporting**: Use the "Report a vulnerability" button under the **Security** tab of the GitHub repository.
 2. **Email**: If GitHub Private Vulnerability Reporting is unavailable, send an encrypted report to our security contact:
-   - **Contact Email**: `security@example.com` <!-- ACTION REQUIRED: REPLACE THIS PLACEHOLDER WITH YOUR REAL SECURITY CONTACT EMAIL -->
+   - **Contact Email**: `dhananjay2k3148@gmail.com` <!-- ACTION REQUIRED: REPLACE THIS PLACEHOLDER WITH YOUR REAL SECURITY CONTACT EMAIL -->
    - If using PGP/GPG, include your public key for encrypted communications.
 
 ### What to Include in Your Report
