@@ -16,7 +16,7 @@ use wry::http::{Request, Response, StatusCode, Uri};
 use wry::{NewWindowResponse, WebViewBuilder};
 
 /// Strict Content-Security-Policy applied by default to all responses.
-pub const DEFAULT_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self';";
+pub const DEFAULT_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self';";
 
 /// Standard security header name for Content-Security-Policy.
 pub const HEADER_CSP: &str = "Content-Security-Policy";
@@ -157,6 +157,8 @@ pub struct WindowConfig {
     pub tray_icon: Option<String>,
     /// Optional initial global shortcuts list (WP8).
     pub shortcuts: Vec<String>,
+    /// Optional dialog filter mappings configured in app config (WP4).
+    pub dialog_filters: std::collections::HashMap<String, (String, Vec<String>)>,
 }
 
 impl Default for WindowConfig {
@@ -183,6 +185,7 @@ impl Default for WindowConfig {
             single_instance: true,
             tray_icon: None,
             shortcuts: Vec::new(),
+            dialog_filters: std::collections::HashMap::new(),
         }
     }
 }
@@ -377,7 +380,8 @@ pub fn process_ipc_message(
     let response = if registry.has_handler(&request.method) {
         wavical_ipc::dispatch(&request, &active_capabilities, registry)
     } else if wavical_ipc::is_native_method(&request.method) {
-        let native_service = wavical_native::NativeService::new();
+        let native_service =
+            wavical_native::NativeService::new().with_dialog_filters(config.dialog_filters.clone());
         wavical_ipc::dispatch_native(
             &request,
             &config.window_id,
@@ -785,7 +789,8 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     let native_service = std::sync::Arc::new(
         wavical_native::NativeService::new()
             .with_menu_provider(menu_provider)
-            .with_shortcut_provider(shortcut_provider),
+            .with_shortcut_provider(shortcut_provider)
+            .with_dialog_filters(config.dialog_filters.clone()),
     );
     registry.register_native(native_service.clone(), &config.window_id);
     let loop_native_service = native_service.clone();

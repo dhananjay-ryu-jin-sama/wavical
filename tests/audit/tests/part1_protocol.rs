@@ -11,7 +11,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use tempfile::{TempDir, tempdir};
 use wavical_protocol::{
-    HEADER_NOSNIFF, get_mime_type, is_windows_reserved_device, resolve_asset_path,
+    HEADER_NOSNIFF, PathRejectionReason, get_mime_type, is_windows_reserved_device,
+    resolve_asset_path, sanitize_path_segments,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -975,9 +976,8 @@ fn test_part1_error_information_leakage() {
 }
 
 /// Windows special console devices `CONIN$` and `CONOUT$` are reserved names in the Windows console subsystem.
-/// FINDING-P2: `is_windows_reserved_device` only matches CON, PRN, AUX, NUL, COM1-9, LPT1-9; it misses `CONIN$` and `CONOUT$`.
+/// FINDING-P2 / F-A1a-02: `is_windows_reserved_device` must match CONIN$ and CONOUT$.
 #[test]
-#[ignore = "FINDING-P2"]
 fn test_part1_reserved_device_conin_conout() {
     assert!(
         is_windows_reserved_device("CONIN$"),
@@ -986,6 +986,41 @@ fn test_part1_reserved_device_conin_conout() {
     assert!(
         is_windows_reserved_device("CONOUT$"),
         "CONOUT$ must be detected as reserved device"
+    );
+}
+
+/// F-A5-02: Raw unencoded null byte pre-check in resolve_asset_path must reject with PathRejectionReason::NullByte
+#[test]
+fn test_resolve_asset_path_unencoded_null_byte_rejected() {
+    let (_temp_guard, root) = setup_test_root();
+    let res = resolve_asset_path("index.html\0.png", &root);
+    assert_eq!(
+        res.unwrap_err(),
+        PathRejectionReason::NullByte,
+        "F-A5-02: Passing unencoded raw null byte 'index.html\\0.png' must return PathRejectionReason::NullByte"
+    );
+}
+
+/// F-A5-03: Raw UNC share prefix check in sanitize_path_segments must trigger early rejection
+/// at Step 3 (UncPath) before Step 4 percent-decoding runs.
+#[test]
+fn test_raw_unc_share_prefix_check_step3() {
+    assert_eq!(
+        sanitize_path_segments("//server/share"),
+        Err(PathRejectionReason::UncPath),
+        "F-A5-03: Raw '//server/share' must be rejected with UncPath"
+    );
+    assert_eq!(
+        sanitize_path_segments(r"\\server\share"),
+        Err(PathRejectionReason::UncPath),
+        "F-A5-03: Raw '\\\\server\\share' must be rejected with UncPath"
+    );
+    // Early Step 3 check must reject UNC before Step 4 percent-decoding:
+    // If Step 3 were bypassed, Step 4 percent-decoding would fail on '%ZZ' with InvalidEncoding.
+    assert_eq!(
+        sanitize_path_segments("//server/share%ZZ"),
+        Err(PathRejectionReason::UncPath),
+        "F-A5-03: Early Step 3 check must reject UNC before Step 4 percent-decoding"
     );
 }
 

@@ -22,6 +22,9 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait
 
 # WebView2 runtime (already on most Windows 11 machines; harmless to run)
 winget install --id Microsoft.EdgeWebView2Runtime -e
+
+# Node.js (>= 14.8.0, required for developer CLI evaluation of wavical.config.js)
+winget install --id OpenJS.NodeJS -e
 ```
 
 Close and reopen the terminal afterwards so PATH updates. If a newer Visual Studio Build Tools version exists, that works too. The key part is the **"Desktop development with C++"** workload.

@@ -439,6 +439,11 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     {
         cmd.arg("--shortcuts").arg(shortcuts_json);
     }
+    if let Some(dialog) = &config.dialog
+        && let Ok(filters_json) = serde_json::to_string(&dialog.filters)
+    {
+        cmd.arg("--dialog-filters").arg(filters_json);
+    }
 
     let mut child = cmd
         .stdin(Stdio::piped())

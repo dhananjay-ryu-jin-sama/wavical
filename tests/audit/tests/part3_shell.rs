@@ -371,6 +371,20 @@ fn test_shell_csp_directives_strictness() {
     );
 }
 
+/// FINDING-S5: Default CSP must explicitly declare connect-src 'self' and frame-src 'none'
+#[test]
+fn test_shell_csp_explicit_connect_and_frame_src() {
+    let csp = DEFAULT_CSP;
+    assert!(
+        csp.contains("connect-src 'self'"),
+        "DEFAULT_CSP must explicitly declare connect-src 'self' (FINDING-S5)"
+    );
+    assert!(
+        csp.contains("frame-src 'none'"),
+        "DEFAULT_CSP must explicitly declare frame-src 'none' (FINDING-S5)"
+    );
+}
+
 /// 7b. Protocol handler attaches CSP and nosniff to all responses (200, 404, rejection)
 #[test]
 fn test_shell_protocol_response_headers_on_all_responses() {

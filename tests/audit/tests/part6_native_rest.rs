@@ -18,8 +18,8 @@ use wavical_ipc::{
     validate_menu_items, validate_shortcut_list,
 };
 use wavical_native::{
-    NativeService, SingleInstance, check_single_instance, get_app_data_dir, load_window_state,
-    save_window_state,
+    NativeService, SingleInstance, check_single_instance, get_app_data_dir, load_tray_icon,
+    load_window_state, save_window_state,
 };
 
 // ============================================================================
@@ -565,7 +565,6 @@ fn test_part6_phase_2_config_fields_validation() {
 
 /// FINDING-W1: get_app_data_dir does not reject Windows reserved device names (CON, AUX, NUL)
 #[test]
-#[ignore = "FINDING-W1"]
 fn test_app_data_dir_rejects_reserved_device_names() {
     assert!(
         get_app_data_dir("con").is_err(),
@@ -748,5 +747,45 @@ fn test_crash_recovery_contains_zero_unsafe_code() {
     assert!(
         !crash_recovery_src.contains("unsafe"),
         "crates/wavical-native/src/crash_recovery.rs must not contain any unsafe blocks or allow(unsafe_code) (F-A0-01)"
+    );
+}
+
+/// FINDING-W2: load_window_state must check file metadata length (max 64 KB)
+/// and reject oversized state files without unbounded memory ingestion.
+#[test]
+fn test_window_state_unbounded_file_ingestion_rejected() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state_file = temp.path().join("window-state.json");
+
+    // Create an oversized file > 64 KB (65 KB) with valid JSON padded with characters
+    let mut oversized = Vec::with_capacity(65 * 1024 + 100);
+    oversized.extend_from_slice(b"{\n  \"width\": 1024,\n  \"height\": 768,\n  \"padding\": \"");
+    oversized.resize(65 * 1024, b'A');
+    oversized.extend_from_slice(b"\"\n}");
+
+    std::fs::write(&state_file, &oversized).expect("write oversized state file");
+
+    assert!(
+        load_window_state(&state_file).is_none(),
+        "FINDING-W2: load_window_state must reject state files exceeding 64 KB"
+    );
+}
+
+/// FINDING-T1: load_tray_icon must check file size (max 1 MB) before passing asset path to image decoder.
+#[test]
+fn test_tray_icon_unbounded_file_size_rejected() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let oversized_icon = temp.path().join("oversized.png");
+
+    // Write a dummy file exceeding 1 MB (1 MB + 1 byte)
+    let dummy_data = vec![0u8; 1024 * 1024 + 1];
+    std::fs::write(&oversized_icon, &dummy_data).expect("write oversized icon file");
+
+    let res = load_tray_icon(&oversized_icon);
+    assert!(res.is_err(), "Oversized tray icon must be rejected");
+    let err = res.unwrap_err();
+    assert!(
+        err.contains("exceeds maximum allowed size of 1 MB"),
+        "FINDING-T1: load_tray_icon must reject file exceeding 1 MB with size error, but got: {err}"
     );
 }

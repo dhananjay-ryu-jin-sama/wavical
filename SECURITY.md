@@ -39,3 +39,14 @@ To help us triage and resolve the issue quickly, please provide:
 - **Triage & Assessment**: We will validate the severity and discuss the disclosure timeline.
 - **Remediation**: A security patch will be prepared and tested against our security test bench.
 - **Public Disclosure**: Once fixed and deployed, coordinated public disclosure will follow with attribution to the reporter (unless anonymity is requested).
+
+---
+
+## Threat Model & Configuration Execution Trust
+
+### `wavical.config.js` Local Execution Boundary
+Wavical projects use `wavical.config.js` for project configuration and manifest generation. This file is an executable JavaScript module evaluated via Node.js during developer CLI commands (`wavical dev` and `wavical build`).
+
+> [!WARNING]
+> `wavical.config.js` executes arbitrary JavaScript code with the developer's local user permissions and privileges. Downloading a third-party project and running `wavical dev` or `wavical build` without inspection allows arbitrary code execution on the local host. Always review `wavical.config.js` in untrusted or third-party repositories before executing developer CLI commands.
+

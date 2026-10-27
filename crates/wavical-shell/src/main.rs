@@ -58,6 +58,10 @@ pub struct ShellCli {
     #[arg(long, env = "WAVICAL_SHORTCUTS")]
     pub shortcuts: Option<String>,
 
+    /// Dialog filter mappings (JSON object) (WP4)
+    #[arg(long, env = "WAVICAL_DIALOG_FILTERS")]
+    pub dialog_filters: Option<String>,
+
     /// Run in development server mode
     #[arg(long)]
     pub dev: bool,
@@ -124,6 +128,31 @@ fn main() {
         Vec::new()
     };
 
+    let initial_dialog_filters = if let Some(ref raw) = args.dialog_filters {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, (String, Vec<String>)>>(raw) {
+            map
+        } else if let Ok(map) = serde_json::from_str::<HashMap<String, serde_json::Value>>(raw) {
+            let mut res = HashMap::new();
+            for (k, v) in map {
+                if let (Some(name), Some(exts)) = (
+                    v.get("name").and_then(|n| n.as_str()),
+                    v.get("extensions").and_then(|e| e.as_array()),
+                ) {
+                    let exts_vec: Vec<String> = exts
+                        .iter()
+                        .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                        .collect();
+                    res.insert(k, (name.to_string(), exts_vec));
+                }
+            }
+            res
+        } else {
+            HashMap::new()
+        }
+    } else {
+        HashMap::new()
+    };
+
     let config = WindowConfig {
         window_id: args.app_id,
         allowed_origins: vec![
@@ -142,6 +171,7 @@ fn main() {
         single_instance: args.single_instance.unwrap_or(true),
         tray_icon: args.tray_icon,
         shortcuts: initial_shortcuts,
+        dialog_filters: initial_dialog_filters,
     };
 
     run_with_config(asset_root, config);

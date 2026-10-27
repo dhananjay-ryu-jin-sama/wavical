@@ -147,14 +147,14 @@ fn hex_digit_val(c: u8) -> Option<u8> {
     }
 }
 
-/// Checks if a component matches a Windows reserved device name (CON, PRN, AUX, NUL, COM0-9, LPT0-9).
+/// Checks if a component matches a Windows reserved device name (CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-9, LPT0-9).
 /// Uses prefix matching rather than byte slicing to avoid non-ASCII char boundary panics.
 pub fn is_windows_reserved_device(segment: &str) -> bool {
     let base = segment.split('.').next().unwrap_or(segment).trim();
     let base_upper = base.to_ascii_uppercase();
 
     match base_upper.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" => true,
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$" => true,
         s => {
             if let Some(rest) = s.strip_prefix("COM").or_else(|| s.strip_prefix("LPT")) {
                 rest.len() == 1 && rest.chars().next().is_some_and(|c| c.is_ascii_digit())
@@ -409,6 +409,11 @@ mod tests {
             resolve_asset_path("/index.html%2500.exe", dir.path()).unwrap_err(),
             PathRejectionReason::NullByte
         );
+        // F-A5-02: Passing raw unencoded null byte must return PathRejectionReason::NullByte
+        assert_eq!(
+            resolve_asset_path("index.html\0.png", dir.path()).unwrap_err(),
+            PathRejectionReason::NullByte
+        );
     }
 
     #[test]
@@ -443,6 +448,15 @@ mod tests {
             resolve_asset_path(r"\\?\C:\secret.txt", dir.path()).unwrap_err(),
             PathRejectionReason::UncPath
         );
+        // F-A5-03: Early Step 3 raw UNC pre-check rejection before percent-decoding
+        assert_eq!(
+            sanitize_path_segments("//server/share"),
+            Err(PathRejectionReason::UncPath)
+        );
+        assert_eq!(
+            sanitize_path_segments("//server/share%ZZ"),
+            Err(PathRejectionReason::UncPath)
+        );
     }
 
     #[test]
@@ -466,8 +480,30 @@ mod tests {
     fn test_rejection_windows_reserved_device_names() {
         let dir = tempdir().unwrap();
         let devices = [
-            "CON", "con", "PRN", "prn", "AUX", "aux", "NUL", "nul", "COM1", "com1", "COM9", "LPT1",
-            "lpt1", "LPT9", "con.txt", "nul.json", "aux.html", "com3.js",
+            "CON",
+            "con",
+            "PRN",
+            "prn",
+            "AUX",
+            "aux",
+            "NUL",
+            "nul",
+            "CONIN$",
+            "conin$",
+            "CONOUT$",
+            "conout$",
+            "COM1",
+            "com1",
+            "COM9",
+            "LPT1",
+            "lpt1",
+            "LPT9",
+            "con.txt",
+            "nul.json",
+            "aux.html",
+            "com3.js",
+            "conin$.txt",
+            "conout$.json",
         ];
 
         for dev in &devices {

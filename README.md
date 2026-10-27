@@ -55,6 +55,7 @@ winget install --id Git.Git -e
 winget install --id Rustlang.Rustup -e
 winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 winget install --id Microsoft.EdgeWebView2Runtime -e   # usually preinstalled on Windows 11
+winget install --id OpenJS.NodeJS -e                   # Node.js (>= 14.8.0, required for CLI evaluation of wavical.config.js)
 
 rustup default stable
 rustup component add rustfmt clippy
@@ -279,6 +280,16 @@ Every rejected action emits a `tracing` event with a consistent `security_event`
 | `popup_blocked` | Page tries to open a new window |
 
 Logged payloads are truncated to 64 bytes on UTF-8 boundaries. Secrets are never logged.
+
+</details>
+
+<details>
+<summary><b>⚙️ Config execution trust model (<code>wavical.config.js</code>)</b></summary>
+
+Wavical evaluates `wavical.config.js` via Node.js during developer CLI workflows (`wavical dev` and `wavical build`).
+
+> [!WARNING]
+> Because `wavical.config.js` is an executable JavaScript module, it executes arbitrary code with the local developer's user permissions and privileges. Downloading third-party repositories and executing `wavical dev` without inspecting the config carries arbitrary code execution risks. Always review `wavical.config.js` before running CLI commands on untrusted projects.
 
 </details>
 

@@ -79,7 +79,7 @@ wavical/
 └─ SECURITY.md
 ```
 
-**Key design rule:** keep `wavical-ipc` and `wavical-protocol` free of any windowing or webview dependency. That makes them testable and fuzzable on Linux and fast in CI, and it keeps the security-critical logic small and separate from the glue code.
+**Key design rule:** keep `wavical-ipc` and `wavical-protocol` free of any windowing or webview dependency. That makes them testable and fuzzable on Linux and fast in CI, and it keeps the security-critical logic small and separate from the glue code. (Dev-only test exception F-A0-08: standard dev-dependencies `proptest` and `tempfile` pull `windows-sys` transitively on Windows dev builds; production builds `-e normal` strictly contain zero prohibited/OS dependencies).
 
 ---
 

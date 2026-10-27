@@ -27,6 +27,12 @@ pub fn get_app_data_dir(app_id: &str) -> Result<PathBuf, String> {
         ));
     }
 
+    if wavical_protocol::is_windows_reserved_device(trimmed) {
+        return Err(format!(
+            "Invalid appId '{app_id}': reserved Windows device name"
+        ));
+    }
+
     let base = if let Ok(appdata) = std::env::var("APPDATA") {
         PathBuf::from(appdata)
     } else if let Ok(userprofile) = std::env::var("USERPROFILE") {
@@ -95,10 +101,18 @@ pub fn save_window_state(path: &Path, state: &WindowState) -> std::io::Result<()
     write_file_atomic(path, json.as_bytes())
 }
 
+/// Maximum allowed file size for window state ingestion (64 KB).
+pub const MAX_WINDOW_STATE_FILE_BYTES: u64 = 64 * 1024;
+
 /// Load window state from target path.
 ///
-/// Returns `None` if the file does not exist or if the content is corrupt JSON.
+/// Returns `None` if the file does not exist, if the file size exceeds 64 KB,
+/// or if the content is corrupt JSON.
 pub fn load_window_state(path: &Path) -> Option<WindowState> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.len() > MAX_WINDOW_STATE_FILE_BYTES {
+        return None;
+    }
     let content = std::fs::read_to_string(path).ok()?;
     wavical_ipc::parse_window_state(&content).ok()
 }
@@ -119,6 +133,13 @@ mod tests {
         assert!(get_app_data_dir("app/nested").is_err());
         assert!(get_app_data_dir("app\\nested").is_err());
         assert!(get_app_data_dir("app:stream").is_err());
+
+        // FINDING-W1: Rejection of Windows reserved device names
+        assert!(get_app_data_dir("con").is_err());
+        assert!(get_app_data_dir("aux").is_err());
+        assert!(get_app_data_dir("prn").is_err());
+        assert!(get_app_data_dir("nul").is_err());
+        assert!(get_app_data_dir("COM1").is_err());
     }
 
     #[test]
@@ -169,6 +190,11 @@ mod tests {
 
         // Corrupt file -> returns None
         std::fs::write(&state_path, "invalid corrupt json {{{{").expect("corrupt write");
+        assert_eq!(load_window_state(&state_path), None);
+
+        // Oversized file > 64 KB -> returns None
+        let oversized = vec![b' '; 65 * 1024];
+        std::fs::write(&state_path, &oversized).expect("write oversized file");
         assert_eq!(load_window_state(&state_path), None);
     }
 }

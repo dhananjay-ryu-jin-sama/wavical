@@ -81,36 +81,36 @@ The table below consolidates all findings identified across Audits A0 through A5
 | **FINDING-R1** | Phase 2 | **Medium** | Default File Extension Handler Hijacking in HKCU | `crates/wavical-cli/src/lib.rs:836-838` | A3b | Fixed (`test_file_assoc_register_preserves_existing_default_handler`) | Register under `Software\Classes\.{ext}\OpenWithProgids` instead of overwriting `(Default)`. |
 | **FINDING-R2** | Phase 2 | **Medium** | Destructive Recursive Deletion of `Software\Classes\.{ext}` | `crates/wavical-cli/src/lib.rs:894` | A3b | Fixed (`test_file_assoc_unregister_preserves_existing_extension_keys`) | Delete only the specific `Wavical.{appId}` entry under `OpenWithProgids` rather than `remove_tree`. |
 | **F-A0-06** | Phase 2 | **Low** | Grant Table `RwLock .unwrap()` Poisoning Risk | `crates/wavical-ipc/src/grants.rs:80,122,131,137,143,149` | A0 | Fixed (`test_grant_table_rwlock_poisoning_handled_gracefully`) | Handle poisoned read/write locks gracefully with `map_err(|_| GrantError::InternalLockError)`. |
+| **F-A0-07** | Phase 0 | **Low** | CI Hygiene: Unpinned Action Tags & Missing Permissions | `.github/workflows/ci.yml:18,21,48,53,77,82` | A0 | Fixed (`test_ci_hygiene_pinned_actions_and_permissions`) | Declare top-level `permissions: { contents: read }` and pin actions to full commit SHAs. |
+| **F-A0-08** | Phase 0 | **Low** | Transitive `windows-sys` in Pure Crates Under `-e dev` | `crates/wavical-ipc/Cargo.toml:16` | A0 | Fixed (`test_pure_crates_production_dependency_purity_and_dev_exception`) | Formally document that test framework dependencies (`proptest`, `tempfile`) pull dev-only OS bindings. |
+| **F-A1a-02** | Phase 0 | **Low** | Incomplete Windows Reserved Device Blocklist (`CONIN$`/`CONOUT$`) | `crates/wavical-protocol/src/lib.rs:153-167` | A1a | Fixed (`test_part1_reserved_device_conin_conout`) | Add `"CONIN$"` and `"CONOUT$"` to `RESERVED_NAMES` array in `wavical-protocol`. |
+| **FINDING-S5** | Phase 0 | **Low** | Omission of Explicit `connect-src` & `frame-src` in Default CSP | `crates/wavical-shell/src/lib.rs:19` | A1b | Fixed (`test_shell_csp_explicit_connect_and_frame_src`) | Append `connect-src 'self'; frame-src 'none';` explicitly to `DEFAULT_CSP`. |
+| **FINDING-C5** | Phase 1 | **Low** | Missing Config Execution Trust Model Disclosure | `README.md`, `docs/`, `SECURITY.md` | A2 | Fixed (`test_config_execution_trust_model_documented`) | Add security note explaining that `wavical.config.js` executes with local developer privileges. |
+| **FINDING-C6** | Phase 1 | **Low** | Node.js Prerequisite Omitted from Developer Setup Guides | `docs/WAVICAL_SETUP.md`, `README.md` | A2 | Fixed (`test_setup_documentation_declares_nodejs_prerequisite`) | Explicitly state Node.js (>= 14.8.0) as a prerequisite in setup documentation. |
+| **FINDING-G1** | Phase 2 | **Low** | Grant ID Hex Format & Length Not Validated Before Lookup | `crates/wavical-ipc/src/grants.rs:120` | A3a | Fixed (`test_grant_id_format_validated_before_lookup`) | Validate that `grant_id` is exactly 32 hex ASCII characters before searching the hash map. |
+| **FINDING-F2** | Phase 2 | **Low** | Non-Atomic File Writes Risk File Truncation on Abort | `crates/wavical-native/src/lib.rs:474` | A3a | Fixed (`test_fs_write_granted_atomic_replacement_avoids_in_place_truncation`) | Write payload to a sibling `.tmp` file, flush to disk, and atomically rename over destination. |
+| **FINDING-N1** | Phase 2 | **Low** | `notify.send` Lacks Rate Limiting or Queue Depth Bounds | `crates/wavical-native/src/lib.rs:280-300` | A3a | Fixed (`test_notify_send_rate_limiting`) | Enforce sliding window rate limit (e.g., max 5 toasts per 10 seconds per window). |
+| **FINDING-D1** | Phase 2 | **Low** | Dialog `title` and `defaultName` Lack Length Sanitization | `crates/wavical-native/src/lib.rs:326,360` | A3a | Fixed (`test_dialog_params_length_validation`) | Sanitize dialog strings to max 255 chars and strip non-printable/control characters. |
+| **FINDING-D2** | Phase 2 | **Low** | Config-Defined Dialog Filters Ignored for Hardcoded List | `crates/wavical-native/src/lib.rs:37-45` | A3a | Fixed (`test_dialog_config_defined_filters_resolved`) | Pass `dialog.filters` from validated config into native file dialog invocations. |
+| **FINDING-L1** | Phase 2 | **Low** | Internal Filesystem Paths Logged in `tracing::warn!` | `crates/wavical-native/src/lib.rs:415,420,434,475` | A3a | Fixed (`test_fs_read_write_logging_redacts_filesystem_paths`) | Redact file paths from warning logs, emitting only grant IDs and generic OS error codes. |
+| **FINDING-W1** | Phase 2 | **Low** | Windows Reserved DOS Names Accepted in `appId` Path | `crates/wavical-native/src/window_state.rs:21-28` | A3b | Fixed (`test_app_data_dir_rejects_reserved_device_names`) | Reject `is_windows_reserved_device(app_id)` inside `get_app_data_dir`. |
+| **FINDING-W2** | Phase 2 | **Low** | Unbounded Window State File Ingestion into Memory | `crates/wavical-native/src/window_state.rs:102` | A3b | Fixed (`test_window_state_unbounded_file_ingestion_rejected`) | Check file metadata length (max 64 KB) before calling `read_to_string`. |
+| **FINDING-T1** | Phase 2 | **Low** | Unbounded Tray Icon Image Decoding | `crates/wavical-native/src/tray.rs:42-48` | A3b | Fixed (`test_tray_icon_unbounded_file_size_rejected`) | Check file size (max 1 MB) before passing asset path to image decoder. |
+| **F-A5-02** | Phase 0 | **Low** | Raw Unencoded Null Byte Pre-check Untested in Protocol | `crates/wavical-protocol/src/lib.rs:176` | A5 | Fixed (`test_resolve_asset_path_unencoded_null_byte_rejected`) | Add unit test passing `"index.html\0.png"` to `resolve_asset_path` asserting `NullByte`. |
+| **F-A5-03** | Phase 0 | **Low** | Raw UNC Share Prefix Check Untested in Protocol | `crates/wavical-protocol/src/lib.rs:181` | A5 | Fixed (`test_raw_unc_share_prefix_check_step3`) | Add unit test verifying that raw `//server/share` triggers early rejection at Step 3. |
 
-| **F-A0-07** | Phase 0 | **Low** | CI Hygiene: Unpinned Action Tags & Missing Permissions | `.github/workflows/ci.yml:18,21,48,53,77,82` | A0 | Open | Declare top-level `permissions: { contents: read }` and pin actions to full commit SHAs. |
-
-| **F-A0-08** | Phase 0 | **Low** | Transitive `windows-sys` in Pure Crates Under `-e dev` | `crates/wavical-ipc/Cargo.toml:16` | A0 | Open | Formally document that test framework dependencies (`proptest`, `tempfile`) pull dev-only OS bindings. |
-
-| **F-A1a-02** | Phase 0 | **Low** | Incomplete Windows Reserved Device Blocklist (`CONIN$`/`CONOUT$`) | `crates/wavical-protocol/src/lib.rs:153-167` | A1a | Open | Add `"CONIN$"` and `"CONOUT$"` to `RESERVED_NAMES` array in `wavical-protocol`. |
-
-| **FINDING-S5** | Phase 0 | **Low** | Omission of Explicit `connect-src` & `frame-src` in Default CSP | `crates/wavical-shell/src/lib.rs:19` | A1b | Open | Append `connect-src 'self'; frame-src 'none';` explicitly to `DEFAULT_CSP`. |
-
-| **FINDING-C5** | Phase 1 | **Low** | Missing Config Execution Trust Model Disclosure | `README.md`, `docs/`, `SECURITY.md` | A2 | Open | Add security note explaining that `wavical.config.js` executes with local developer privileges. |
-
-| **FINDING-C6** | Phase 1 | **Low** | Node.js Prerequisite Omitted from Developer Setup Guides | `docs/WAVICAL_SETUP.md`, `README.md` | A2 | Open | Explicitly state Node.js (>= 14.8.0) as a prerequisite in setup documentation. |
-
-| **FINDING-G1** | Phase 2 | **Low** | Grant ID Hex Format & Length Not Validated Before Lookup | `crates/wavical-ipc/src/grants.rs:120` | A3a | Open | Validate that `grant_id` is exactly 32 hex ASCII characters before searching the hash map. |
-| **FINDING-F2** | Phase 2 | **Low** | Non-Atomic File Writes Risk File Truncation on Abort | `crates/wavical-native/src/lib.rs:474` | A3a | Open | Write payload to a sibling `.tmp` file, flush to disk, and atomically rename over destination. |
-| **FINDING-N1** | Phase 2 | **Low** | `notify.send` Lacks Rate Limiting or Queue Depth Bounds | `crates/wavical-native/src/lib.rs:280-300` | A3a | Open | Enforce sliding window rate limit (e.g., max 5 toasts per 10 seconds per window). |
-| **FINDING-D1** | Phase 2 | **Low** | Dialog `title` and `defaultName` Lack Length Sanitization | `crates/wavical-native/src/lib.rs:326,360` | A3a | Open | Sanitize dialog strings to max 255 chars and strip non-printable/control characters. |
-| **FINDING-D2** | Phase 2 | **Low** | Config-Defined Dialog Filters Ignored for Hardcoded List | `crates/wavical-native/src/lib.rs:37-45` | A3a | Open | Pass `dialog.filters` from validated config into native file dialog invocations. |
-| **FINDING-L1** | Phase 2 | **Low** | Internal Filesystem Paths Logged in `tracing::warn!` | `crates/wavical-native/src/lib.rs:415,420,434,475` | A3a | Open | Redact file paths from warning logs, emitting only grant IDs and generic OS error codes. |
-| **FINDING-W1** | Phase 2 | **Low** | Windows Reserved DOS Names Accepted in `appId` Path | `crates/wavical-native/src/window_state.rs:21-28` | A3b | Open | Reject `is_windows_reserved_device(app_id)` inside `get_app_data_dir`. |
-| **FINDING-W2** | Phase 2 | **Low** | Unbounded Window State File Ingestion into Memory | `crates/wavical-native/src/window_state.rs:102` | A3b | Open | Check file metadata length (max 64 KB) before calling `read_to_string`. |
-| **FINDING-T1** | Phase 2 | **Low** | Unbounded Tray Icon Image Decoding | `crates/wavical-native/src/tray.rs:42-48` | A3b | Open | Check file size (max 1 MB) before passing asset path to image decoder. |
-| **F-A5-02** | Phase 0 | **Low** | Raw Unencoded Null Byte Pre-check Untested in Protocol | `crates/wavical-protocol/src/lib.rs:176` | A5 | Open | Add unit test passing `"index.html\0.png"` to `resolve_asset_path` asserting `NullByte`. |
-| **F-A5-03** | Phase 0 | **Low** | Raw UNC Share Prefix Check Untested in Protocol | `crates/wavical-protocol/src/lib.rs:181` | A5 | Open | Add unit test verifying that raw `//server/share` triggers early rejection at Step 3. |
 | **F-A5-04** | Phase 0 | **Low** | Raw Null Byte Pre-check Untested in IPC Validator | `crates/wavical-ipc/src/lib.rs:275` | A5 | Open | Add unit test asserting `validate_raw_message` specifically returns `IpcError::NullByteDetected`. |
+
 | **F-A5-05** | Phase 0 | **Low** | Empty Raw Message Guard Untested in IPC Validator | `crates/wavical-ipc/src/lib.rs:270` | A5 | Open | Add unit test asserting `validate_raw_message("")` specifically returns `IpcError::EmptyMessage`. |
+
 | **F-A5-06** | Phase 0 | **Low** | Userinfo `@` Credential Guard Untested in Origin Extractor | `crates/wavical-shell/src/lib.rs:293` | A5 | Open | Add unit test passing `"https://user:pass@host/path"` to `extract_origin` asserting `None`. |
+
 | **F-A5-07** | Phase 2 | **Low** | Boundary Lengths & Empty String Untested in `validate_assoc_app_id` | `crates/wavical-ipc/src/file_assoc.rs:69` | A5 | Open | Add boundary tests asserting empty string rejected, 64 chars accepted, 65 chars rejected. |
+
 | **F-A0-09** | Phase 2 | **Info** | `wavical-native` Uses `#![deny(unsafe_code)]` Not `forbid` | `crates/wavical-native/src/lib.rs:1` | A0 | Open | Keep as documented exception for Win32 popup menu hook. |
+
 | **F-A0-10** | Phase 2 | **Info** | Taskbar Overlay Badge Unsupported at OS Level | `crates/wavical-native/src/lib.rs:549` | A0 | Open | Keep documented as open exception until safe COM abstractions exist. |
+
 | **F-A1a-04** | Phase 0 | **Info** | Secondary MIME Type Match Arms Untested | `crates/wavical-protocol/src/lib.rs:72-77` | A1a | Open | Expand `test_mime_type_mappings` to assert `gif`, `webp`, `ico`, `woff`, and `ttf`. |
 
 ---
@@ -233,7 +233,7 @@ graph TD
 - **Goal:** Unbreak supply chain gate, establish immutable CI pipelines, and eliminate release mode backdoors.
 - **Findings Addressed:**
   1. `F-A0-02` (Medium): Supply-chain gate failure (`cargo deny check`) [Fixed: `test_supply_chain_cargo_deny_clean`].
-  2. `F-A0-07` (Low): CI hygiene (unpinned actions and missing permissions).
+  2. `F-A0-07` (Low): CI hygiene (unpinned actions and missing permissions) [Fixed: `test_ci_hygiene_pinned_actions_and_permissions`].
   3. `FINDING-S4` (Medium): Stdin capability reload active in release mode [Fixed: `test_shell_stdin_dynamic_capability_reload_gated_in_release`].
   4. `FINDING-S3` (Medium): Missing WebView2 user data directory isolation [Fixed: `test_shell_webview2_user_data_directory_isolated`].
 - **Dependencies:** None (foundational).
@@ -250,7 +250,7 @@ graph TD
 - **Findings Addressed:**
   1. `F-A1a-03` (High): Unsanitized internal error leakage in public `wavical_ipc::dispatch` [Fixed: `test_part2_response_internal_leakage`].
   2. `F-A1a-01` (Medium): Path segment leakage in `ProtocolError::TrailingDotOrSpace` [Fixed: `test_part1_error_information_leakage`].
-  3. `F-A1a-02` (Low): Incomplete Windows reserved device blocklist (`CONIN$`, `CONOUT$`).
+  3. `F-A1a-02` (Low): Incomplete Windows reserved device blocklist (`CONIN$`, `CONOUT$`) [Fixed: `test_part1_reserved_device_conin_conout`].
   4. `FINDING-S1` (Medium): Bridge script namespace pollution (`onMenu`, `onShortcut`) [Fixed: `test_shell_bridge_script_only_exposes_invoke_and_no_other_globals`].
 - **Dependencies:** None.
 - **Files Touched:**
@@ -281,8 +281,8 @@ graph TD
 - **Findings Addressed:**
   1. `FINDING-G2` (Medium): Grant table lacks permission mode scoping (read vs. write) — **Fixed** via regression test `test_grant_enforces_read_vs_write_mode`.
   2. `FINDING-F1` (Medium): TOCTOU window between path check and `std::fs::write` — **Fixed** via regression test `test_fs_write_granted_toctou_handle_validation`.
-  3. `FINDING-F2` (Low): Non-atomic file writes risk truncation on abort.
-  4. `FINDING-G1` (Low): Grant ID hex format and length not validated before lookup.
+  3. `FINDING-F2` (Low): Non-atomic file writes risk truncation on abort — **Fixed** via regression test `test_fs_write_granted_atomic_replacement_avoids_in_place_truncation`.
+  4. `FINDING-G1` (Low): Grant ID hex format and length not validated before lookup [Fixed: `test_grant_id_format_validated_before_lookup`].
   5. `FINDING-L1` (Low): Internal filesystem paths logged in `tracing::warn!`.
 - **Dependencies:** Batch 2 (`wavical-ipc` clean).
 - **Files Touched:**
@@ -314,7 +314,7 @@ graph TD
   2. `FINDING-S2` (High): Attack suite hangs on oversize payload and runner fails test count [Fixed: `test_integration_harness_dynamic_count_and_no_hang`].
   3. `F-A5-01` (High): DevTools release enablement guard untested in release builds [Fixed: `test_shell_devtools_disabled_in_release`].
   4. `F-A0-05` (Medium): Missing Phase 2 WP9 hostile review artifacts and tests-fail proofs [Fixed: `test_phase_2_wp9_hostile_review_artifacts`].
-  5. `F-A0-06` (Low): Grant Table `RwLock .unwrap()` lock poisoning risk.
+  5. `F-A0-06` (Low): Grant Table `RwLock .unwrap()` lock poisoning risk [Fixed: `test_grant_table_rwlock_poisoning_handled_gracefully`].
 - **Dependencies:** Batches 1 through 5.
 - **Files Touched:**
   - [`crates/wavical-native/src/crash_recovery.rs`](file:///c:/Users/DHANANS/OneDrive%20-%20Daimler%20Truck/Documents/Dhananjay/coading/Arka-Wavical/crates/wavical-native/src/crash_recovery.rs)

@@ -9,6 +9,8 @@ publish.workspace = true
 thiserror = "2.0.21"
 tracing = "0.1.44"
 
+# Dev-only test exception (F-A0-08): proptest and tempfile pull windows-sys transitively on Windows dev builds.
+# Production dependency tree (-e normal) strictly contains zero prohibited or OS dependencies.
 [dev-dependencies]
 proptest = "1.11.0"
 tempfile = "3.27.0"

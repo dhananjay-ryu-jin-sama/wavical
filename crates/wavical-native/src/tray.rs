@@ -38,8 +38,30 @@ pub fn build_muda_menu(items: &[MenuItem]) -> muda::Menu {
     menu
 }
 
+/// Maximum allowed file size for tray icon image decoding (1 MB).
+pub const MAX_TRAY_ICON_FILE_BYTES: u64 = 1024 * 1024;
+
 /// Load an icon from a resolved filesystem path.
+///
+/// Security:
+/// Checks file metadata length before passing to the image decoder (capped at 1 MB)
+/// to protect against decompression bombs and excessive resource consumption.
 pub fn load_tray_icon(path: &Path) -> Result<tray_icon::Icon, String> {
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        format!(
+            "Failed to read tray icon metadata for path '{}': {e}",
+            path.display()
+        )
+    })?;
+
+    if metadata.len() > MAX_TRAY_ICON_FILE_BYTES {
+        return Err(format!(
+            "Tray icon file '{}' exceeds maximum allowed size of 1 MB (actual: {} bytes)",
+            path.display(),
+            metadata.len()
+        ));
+    }
+
     tray_icon::Icon::from_path(path, Some((32, 32))).map_err(|e| {
         format!(
             "Failed to load tray icon from path '{}': {e}",
@@ -128,5 +150,20 @@ mod tests {
         ];
         let menu = build_muda_menu(&items);
         assert_eq!(menu.items().len(), 3);
+    }
+
+    #[test]
+    fn test_load_tray_icon_oversized_rejected() {
+        let dir = tempdir().expect("tempdir");
+        let icon_path = dir.path().join("oversized.png");
+        let oversized_data = vec![0u8; 1024 * 1024 + 1];
+        std::fs::write(&icon_path, &oversized_data).expect("write oversized icon");
+
+        let res = load_tray_icon(&icon_path);
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .contains("exceeds maximum allowed size of 1 MB")
+        );
     }
 }

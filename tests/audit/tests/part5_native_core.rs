@@ -469,9 +469,17 @@ fn test_part5_grant_table_entropy_and_isolation() {
     for forged in forged_cases {
         assert_eq!(
             table.get(forged, "window-B").unwrap_err(),
-            GrantError::NotFound
+            GrantError::InvalidFormat
         );
     }
+
+    // A well-formed 32-character hex ID that does not exist returns NotFound
+    assert_eq!(
+        table
+            .get("0123456789abcdef0123456789abcdef", "window-B")
+            .unwrap_err(),
+        GrantError::NotFound
+    );
 }
 
 // ============================================================================
@@ -583,7 +591,6 @@ fn test_part5_fs_use_time_recheck_file_removed_or_directory() {
 
 /// FINDING-G1: Grant ID format (length and charset) is not validated before HashMap lookup
 #[test]
-#[ignore = "FINDING-G1"]
 fn test_grant_id_format_validated_before_lookup() {
     let table = GrantTable::new();
     // A forged ID that is not 32 lowercase hex characters should be rejected at validation
@@ -593,6 +600,43 @@ fn test_grant_id_format_validated_before_lookup() {
         err,
         GrantError::NotFound,
         "Expected format validation error before lookup"
+    );
+    assert_eq!(err, GrantError::InvalidFormat);
+
+    // Empty string
+    assert_eq!(
+        table.get("", "win-1").unwrap_err(),
+        GrantError::InvalidFormat
+    );
+
+    // Truncated (16 chars)
+    assert_eq!(
+        table.get("0123456789abcdef", "win-1").unwrap_err(),
+        GrantError::InvalidFormat
+    );
+
+    // Oversized (33 chars)
+    assert_eq!(
+        table
+            .get("0123456789abcdef0123456789abcdef0", "win-1")
+            .unwrap_err(),
+        GrantError::InvalidFormat
+    );
+
+    // Uppercase hex
+    assert_eq!(
+        table
+            .get("0123456789ABCDEF0123456789abcdef", "win-1")
+            .unwrap_err(),
+        GrantError::InvalidFormat
+    );
+
+    // Non-hex character
+    assert_eq!(
+        table
+            .get("0123456789abcdef0123456789abcdeg", "win-1")
+            .unwrap_err(),
+        GrantError::InvalidFormat
     );
 }
 
@@ -618,7 +662,7 @@ fn test_grant_table_rwlock_poisoning_handled_gracefully() {
     .join();
 
     // 1. get() returns Err(GrantError::InternalLockError) instead of panicking
-    let get_res = table.get("any-grant-id", "win-1");
+    let get_res = table.get("0123456789abcdef0123456789abcdef", "win-1");
     assert_eq!(
         get_res,
         Err(GrantError::InternalLockError),
@@ -741,11 +785,62 @@ fn test_fs_write_granted_toctou_handle_validation() {
     assert_eq!(content2, "second safe payload via fs_write_granted");
 }
 
+/// FINDING-F2: File writes must be atomic (sibling .tmp file + atomic rename) to avoid in-place truncation
+#[test]
+fn test_fs_write_granted_atomic_replacement_avoids_in_place_truncation() {
+    let tmp = tempdir().unwrap();
+    let file = tmp.path().join("atomic_target.txt");
+    let hardlink = tmp.path().join("atomic_hardlink.txt");
+    std::fs::write(&file, b"initial uncorrupted data").unwrap();
+    std::fs::hard_link(&file, &hardlink).expect("hardlink creation must succeed");
+
+    let table = Arc::new(GrantTable::new());
+    let service = NativeService::with_grant_table(table.clone());
+    let window_id = "win-atomic";
+
+    let grant_id = table
+        .insert_with_mode(window_id, &file, GrantMode::WriteOnly)
+        .unwrap();
+
+    let write_params = serde_json::json!({
+        "grantId": grant_id,
+        "content": "atomic updated payload"
+    });
+
+    let res = service.fs_write_granted(&write_params, window_id);
+    assert!(res.is_ok(), "fs_write_granted must succeed: {:?}", res);
+
+    // Target file received the new content
+    let new_content = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(new_content, "atomic updated payload");
+
+    // FINDING-F2 assertion: In an atomic write (temporary file + rename),
+    // the original file's inode/contents are not truncated in place, so hardlink
+    // preserves the original uncorrupted data.
+    // In a non-atomic in-place write, hardlink would be overwritten with the new payload.
+    let link_content = std::fs::read_to_string(&hardlink).unwrap();
+    assert_eq!(
+        link_content, "initial uncorrupted data",
+        "Non-atomic write truncated or mutated existing file in place (FINDING-F2)"
+    );
+
+    // Verify temporary .tmp files are cleaned up
+    let entries: Vec<String> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| name.ends_with(".tmp"))
+        .collect();
+    assert!(
+        entries.is_empty(),
+        "Temporary .tmp files were not cleaned up: {:?}",
+        entries
+    );
+}
+
 /// FINDING-D1: Dialog title and defaultName have no length or character validation
 #[test]
-#[ignore = "FINDING-D1"]
 fn test_dialog_params_length_validation() {
-    // A 100,000 character title or default name should be rejected by validation
+    // 1. A 100,000 character title or default name should be rejected by validation
     let huge_title = "A".repeat(100_000);
     let params = serde_json::json!({
         "title": huge_title,
@@ -755,11 +850,57 @@ fn test_dialog_params_length_validation() {
         res.is_err(),
         "100,000 character dialog title should be rejected by validation"
     );
+
+    // 2. Exact boundary tests: 256 rejected, 255 accepted
+    let title_256 = "A".repeat(256);
+    let res_256: Result<OpenFileDialogParams, _> = serde_json::from_value(serde_json::json!({
+        "title": title_256,
+    }));
+    assert!(res_256.is_err(), "256 character title must be rejected");
+
+    let title_255 = "A".repeat(255);
+    let res_255: Result<OpenFileDialogParams, _> = serde_json::from_value(serde_json::json!({
+        "title": title_255.clone(),
+    }));
+    assert!(res_255.is_ok(), "255 character title must be accepted");
+    assert_eq!(res_255.unwrap().title.as_deref(), Some(title_255.as_str()));
+
+    // 3. SaveFileDialogParams defaultName length validation
+    let huge_default_name = "B".repeat(100_000);
+    let save_huge: Result<SaveFileDialogParams, _> = serde_json::from_value(serde_json::json!({
+        "defaultName": huge_default_name,
+    }));
+    assert!(
+        save_huge.is_err(),
+        "100,000 character defaultName must be rejected"
+    );
+
+    let default_256 = "B".repeat(256);
+    let save_256: Result<SaveFileDialogParams, _> = serde_json::from_value(serde_json::json!({
+        "defaultName": default_256,
+    }));
+    assert!(
+        save_256.is_err(),
+        "256 character defaultName must be rejected"
+    );
+
+    // 4. Control characters stripping
+    let control_title = "File\x00\x07Dialog\x1bTitle\n";
+    let open_clean: OpenFileDialogParams = serde_json::from_value(serde_json::json!({
+        "title": control_title,
+    }))
+    .expect("control characters should be sanitized/stripped");
+    assert_eq!(open_clean.title.as_deref(), Some("FileDialogTitle"));
+
+    let control_save: SaveFileDialogParams = serde_json::from_value(serde_json::json!({
+        "defaultName": "file\x00\x08name\r.txt",
+    }))
+    .expect("control characters in defaultName should be stripped");
+    assert_eq!(control_save.default_name.as_deref(), Some("filename.txt"));
 }
 
 /// FINDING-N1: notify.send has no rate or queue limiting
 #[test]
-#[ignore = "FINDING-N1"]
 fn test_notify_send_rate_limiting() {
     let service = NativeService::new();
     let window_id = "test-notify-rate";
@@ -780,4 +921,73 @@ fn test_notify_send_rate_limiting() {
         }
     }
     assert!(rate_limited, "No rate limiting on desktop notifications");
+}
+
+/// FINDING-D2: Config-defined dialog filters must be resolved and passed to native file dialogs
+#[test]
+fn test_dialog_config_defined_filters_resolved() {
+    let service = NativeService::new();
+
+    // Built-in filters must resolve
+    let text_filter = service.resolve_filter_id("text");
+    assert!(text_filter.is_some(), "Built-in filter 'text' must resolve");
+
+    // Custom config-defined filter 'audio' before registration should fail / return None
+    assert!(
+        service.resolve_filter_id("audio").is_none(),
+        "Unregistered filter 'audio' must return None"
+    );
+
+    // Register custom filter (simulating config.dialog.filters)
+    service.register_dialog_filter(
+        "audio",
+        "Audio Files",
+        vec!["mp3".to_string(), "wav".to_string(), "flac".to_string()],
+    );
+
+    // FINDING-D2 assertion: Custom filter defined in config must now resolve
+    let custom_filter = service.resolve_filter_id("audio");
+    assert!(
+        custom_filter.is_some(),
+        "Custom filter 'audio' defined in config must resolve (FINDING-D2)"
+    );
+    let (name, exts) = custom_filter.unwrap();
+    assert_eq!(name, "Audio Files");
+    assert_eq!(exts, vec!["mp3", "wav", "flac"]);
+
+    // Test with_dialog_filters constructor
+    let mut custom_map = std::collections::HashMap::new();
+    custom_map.insert(
+        "database".to_string(),
+        (
+            "Database Files".to_string(),
+            vec!["db".to_string(), "sqlite".to_string()],
+        ),
+    );
+    let configured_service = NativeService::new().with_dialog_filters(custom_map);
+    let db_filter = configured_service.resolve_filter_id("database");
+    assert!(
+        db_filter.is_some(),
+        "Filter 'database' configured via with_dialog_filters must resolve"
+    );
+    let (db_name, db_exts) = db_filter.unwrap();
+    assert_eq!(db_name, "Database Files");
+    assert_eq!(db_exts, vec!["db", "sqlite"]);
+}
+
+/// FINDING-L1: Warning logs in fs_read_granted and fs_write_granted must redact raw filesystem paths,
+/// emitting only grant IDs and generic OS error codes.
+#[test]
+fn test_fs_read_write_logging_redacts_filesystem_paths() {
+    let native_lib_src = include_str!("../../../crates/wavical-native/src/lib.rs");
+
+    // FINDING-L1 assertion: ensure no tracing events in wavical-native log raw entry paths
+    assert!(
+        !native_lib_src.contains("path = ?entry.path"),
+        "crates/wavical-native/src/lib.rs must not log raw filesystem paths (path = ?entry.path) in tracing warning events (FINDING-L1)"
+    );
+    assert!(
+        !native_lib_src.contains("path = ?"),
+        "crates/wavical-native/src/lib.rs must not log raw filesystem paths (path = ?) in tracing warning events (FINDING-L1)"
+    );
 }

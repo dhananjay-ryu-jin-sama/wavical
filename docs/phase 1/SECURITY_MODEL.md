@@ -37,6 +37,11 @@ Wavical enforces a strict two-tier security model with a clear isolation boundar
 3. **Information Leakage Prevention**: Protocol rejections and IPC errors returned to the webview never leak internal OS paths, rejection enum reasons, or filesystem layouts.
 4. **Default Deny Everywhere**: All capabilities, origins, popups, and external navigations are denied unless explicitly allowlisted.
 
+### Developer Environment & Config Execution (`wavical.config.js`)
+- **Trust Boundary**: `wavical.config.js` is an executable JavaScript module evaluated via Node.js during CLI execution (`wavical dev`, `wavical build`).
+- **Permissions**: `wavical.config.js` executes with the local developer's user permissions and privileges.
+- **Threat Assumption**: Running CLI commands on untrusted third-party repositories carries arbitrary code execution risks. Developers must review third-party configuration files before executing developer CLI commands.
+
 ---
 
 ## 2. Enforcement Architecture

@@ -23,13 +23,23 @@ pub use tray::*;
 pub mod shortcut;
 pub use shortcut::*;
 
+pub type DialogFilterMap = std::collections::HashMap<String, (String, Vec<String>)>;
+pub type SharedDialogFilters = Arc<std::sync::RwLock<DialogFilterMap>>;
+
 static GLOBAL_GRANT_TABLE: OnceLock<Arc<GrantTable>> = OnceLock::new();
+static GLOBAL_DIALOG_FILTERS: OnceLock<SharedDialogFilters> = OnceLock::new();
 #[cfg(test)]
 static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn default_grant_table() -> Arc<GrantTable> {
     GLOBAL_GRANT_TABLE
         .get_or_init(|| Arc::new(GrantTable::new()))
+        .clone()
+}
+
+fn default_dialog_filters() -> SharedDialogFilters {
+    GLOBAL_DIALOG_FILTERS
+        .get_or_init(|| Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())))
         .clone()
 }
 
@@ -171,6 +181,9 @@ pub struct NativeService {
     grant_table: Arc<GrantTable>,
     menu_provider: Option<Arc<dyn MenuProvider>>,
     shortcut_provider: Option<Arc<dyn ShortcutProvider>>,
+    notification_rate_limiter:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<std::time::Instant>>>>,
+    dialog_filters: SharedDialogFilters,
 }
 
 impl std::fmt::Debug for NativeService {
@@ -179,6 +192,7 @@ impl std::fmt::Debug for NativeService {
             .field("grant_table", &self.grant_table)
             .field("has_menu_provider", &self.menu_provider.is_some())
             .field("has_shortcut_provider", &self.shortcut_provider.is_some())
+            .field("dialog_filters", &self.dialog_filters)
             .finish()
     }
 }
@@ -196,6 +210,10 @@ impl NativeService {
             grant_table: default_grant_table(),
             menu_provider: None,
             shortcut_provider: None,
+            notification_rate_limiter: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            dialog_filters: default_dialog_filters(),
         }
     }
 
@@ -205,6 +223,10 @@ impl NativeService {
             grant_table,
             menu_provider: None,
             shortcut_provider: None,
+            notification_rate_limiter: Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            dialog_filters: default_dialog_filters(),
         }
     }
 
@@ -225,9 +247,65 @@ impl NativeService {
         &self.grant_table
     }
 
-    /// Clear all grants for the given window ID.
+    /// Clear all grants and notification rate limits for the given window ID.
     pub fn clear_window(&self, window_id: &str) {
         self.grant_table.clear_window(window_id);
+        let mut limiter = match self.notification_rate_limiter.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        limiter.remove(window_id);
+    }
+
+    /// Resolve a filter ID into a human-readable title and allowed file extensions.
+    ///
+    /// Checks built-in hardcoded filters first ("text", "images", "documents", "all"),
+    /// followed by instance-configured custom filters, and finally global dialog filters.
+    pub fn resolve_filter_id(&self, filter_id: &str) -> Option<(String, Vec<String>)> {
+        // 1. Built-in hardcoded filters
+        if let Some((name, exts)) = resolve_filter_id(filter_id) {
+            return Some((
+                name.to_string(),
+                exts.iter().map(|s| s.to_string()).collect(),
+            ));
+        }
+
+        // 2. Instance-specific dialog filters
+        if let Ok(guard) = self.dialog_filters.read()
+            && let Some((name, exts)) = guard.get(filter_id)
+        {
+            return Some((name.clone(), exts.clone()));
+        }
+
+        // 3. Global fallback dialog filters
+        if let Ok(guard) = default_dialog_filters().read()
+            && let Some((name, exts)) = guard.get(filter_id)
+        {
+            return Some((name.clone(), exts.clone()));
+        }
+
+        None
+    }
+
+    /// Attach custom dialog filters configured in wavical.config.js (WP4).
+    pub fn with_dialog_filters(
+        mut self,
+        filters: std::collections::HashMap<String, (String, Vec<String>)>,
+    ) -> Self {
+        self.dialog_filters = Arc::new(std::sync::RwLock::new(filters));
+        self
+    }
+
+    /// Register a custom dialog filter (WP4).
+    pub fn register_dialog_filter(
+        &self,
+        filter_id: impl Into<String>,
+        name: impl Into<String>,
+        extensions: Vec<String>,
+    ) {
+        if let Ok(mut map) = self.dialog_filters.write() {
+            map.insert(filter_id.into(), (name.into(), extensions));
+        }
     }
 
     /// Read text from clipboard (WP3).
@@ -278,12 +356,39 @@ impl NativeService {
     }
 
     /// Show desktop notification (WP3).
+    ///
+    /// Rate limited to max 5 notifications per 10 seconds per window (FINDING-N1).
     pub fn notify_send(
         &self,
         params: &serde_json::Value,
-        _window_id: &str,
+        window_id: &str,
     ) -> Result<serde_json::Value, String> {
         let payload = wavical_ipc::validate_notify_send(params).map_err(|err| err.to_string())?;
+
+        // FINDING-N1: Enforce sliding window rate limit (max 5 toasts per 10 seconds per window)
+        const MAX_NOTIFICATIONS_PER_WINDOW: usize = 5;
+        const NOTIFICATION_WINDOW_DURATION: std::time::Duration =
+            std::time::Duration::from_secs(10);
+
+        let now = std::time::Instant::now();
+        {
+            let mut limiter = match self.notification_rate_limiter.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
+            let timestamps = limiter.entry(window_id.to_string()).or_default();
+            timestamps.retain(|&t| now.saturating_duration_since(t) < NOTIFICATION_WINDOW_DURATION);
+
+            if timestamps.len() >= MAX_NOTIFICATIONS_PER_WINDOW {
+                return Err(
+                    "Notification rate limit exceeded (maximum 5 notifications per 10 seconds)"
+                        .to_string(),
+                );
+            }
+
+            timestamps.push(now);
+        }
 
         notify_rust::Notification::new()
             .appname("Wavical")
@@ -315,14 +420,17 @@ impl NativeService {
         let mut dialog = rfd::FileDialog::new();
 
         if let Some(ref title) = parsed.title {
-            dialog = dialog.set_title(title);
+            let sanitized = wavical_ipc::sanitize_dialog_string(title)
+                .map_err(|e| format!("Invalid open file dialog title: {e}"))?;
+            dialog = dialog.set_title(&sanitized);
         }
 
         if let Some(ref filter_id) = parsed.filter_id {
-            let (filter_name, extensions) = resolve_filter_id(filter_id).ok_or_else(|| {
+            let (filter_name, extensions) = self.resolve_filter_id(filter_id).ok_or_else(|| {
                 format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected.")
             })?;
-            dialog = dialog.add_filter(filter_name, extensions);
+            let exts: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+            dialog = dialog.add_filter(&filter_name, &exts);
         }
 
         let chosen_path = dialog.pick_file();
@@ -359,18 +467,23 @@ impl NativeService {
         let mut dialog = rfd::FileDialog::new();
 
         if let Some(ref title) = parsed.title {
-            dialog = dialog.set_title(title);
+            let sanitized = wavical_ipc::sanitize_dialog_string(title)
+                .map_err(|e| format!("Invalid save file dialog title: {e}"))?;
+            dialog = dialog.set_title(&sanitized);
         }
 
         if let Some(ref default_name) = parsed.default_name {
-            dialog = dialog.set_file_name(default_name);
+            let sanitized = wavical_ipc::sanitize_dialog_string(default_name)
+                .map_err(|e| format!("Invalid save file dialog defaultName: {e}"))?;
+            dialog = dialog.set_file_name(&sanitized);
         }
 
         if let Some(ref filter_id) = parsed.filter_id {
-            let (filter_name, extensions) = resolve_filter_id(filter_id).ok_or_else(|| {
+            let (filter_name, extensions) = self.resolve_filter_id(filter_id).ok_or_else(|| {
                 format!("Unknown dialog filter ID: '{filter_id}'. Raw filter strings are rejected.")
             })?;
-            dialog = dialog.add_filter(filter_name, extensions);
+            let exts: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+            dialog = dialog.add_filter(&filter_name, &exts);
         }
 
         let chosen_path = dialog.save_file();
@@ -417,12 +530,20 @@ impl NativeService {
         validate_granted_target(&entry, true).map_err(|err| err.to_string())?;
 
         let mut file = std::fs::File::open(&entry.path).map_err(|e| {
-            tracing::warn!(error = %e, path = ?entry.path, "Failed to open granted file for reading");
+            tracing::warn!(
+                grant_id = %parsed.grant_id,
+                os_error = ?e.raw_os_error(),
+                "Failed to open granted file for reading"
+            );
             "Failed to open granted file".to_string()
         })?;
 
         let meta = file.metadata().map_err(|e| {
-            tracing::warn!(error = %e, path = ?entry.path, "Failed to read metadata on opened file handle");
+            tracing::warn!(
+                grant_id = %parsed.grant_id,
+                os_error = ?e.raw_os_error(),
+                "Failed to read metadata on opened file handle"
+            );
             "Failed to read granted file metadata".to_string()
         })?;
 
@@ -436,7 +557,11 @@ impl NativeService {
             .take(MAX_READ_GRANTED_BYTES as u64 + 1)
             .read_to_end(&mut buffer)
             .map_err(|e| {
-                tracing::warn!(error = %e, path = ?entry.path, "Failed to read content from granted file");
+                tracing::warn!(
+                    grant_id = %parsed.grant_id,
+                    os_error = ?e.raw_os_error(),
+                    "Failed to read content from granted file"
+                );
                 "Failed to read granted file".to_string()
             })?;
 
@@ -469,19 +594,65 @@ impl NativeService {
             return Err("Payload exceeds 10 MB limit".to_string());
         }
 
-        // FINDING-F1: Open handle once with Win32 share flags, validate handle metadata, and write via that handle
-        let (mut file, entry) = self.open_granted_write_handle(&parsed.grant_id, window_id)?;
+        let entry = self
+            .grant_table
+            .get(&parsed.grant_id, window_id)
+            .map_err(|_| "Grant not found or not owned by this window".to_string())?;
 
-        use std::io::Write;
-        file.write_all(parsed.content.as_bytes()).map_err(|e| {
-            tracing::warn!(error = %e, path = ?entry.path, "Failed to write content to granted file");
-            "Failed to write granted file".to_string()
-        })?;
+        if !entry.mode.can_write() {
+            return Err("Grant does not permit writing".to_string());
+        }
 
-        file.flush().map_err(|e| {
-            tracing::warn!(error = %e, path = ?entry.path, "Failed to flush granted file");
-            "Failed to flush granted file".to_string()
-        })?;
+        validate_granted_target(&entry, false).map_err(|err| err.to_string())?;
+
+        let parent = entry
+            .path
+            .parent()
+            .ok_or_else(|| "Target path must have a parent directory".to_string())?;
+
+        // FINDING-F2: Write payload to a sibling .tmp file in the same directory, flush and sync to disk,
+        // and atomically rename over destination. This prevents truncation of destination file on abort.
+        let pid = std::process::id();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let file_name = entry
+            .path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "granted".to_string());
+        let temp_name = format!(".{file_name}-{pid}-{now}.tmp");
+        let temp_path = parent.join(temp_name);
+
+        let write_result = (|| -> std::io::Result<()> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                // Restrictive share mode
+                options.share_mode(1);
+            }
+            let mut file = options.open(&temp_path)?;
+            use std::io::Write;
+            file.write_all(parsed.content.as_bytes())?;
+            file.flush()?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temp_path, &entry.path)?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_result {
+            let _ = std::fs::remove_file(&temp_path);
+            tracing::warn!(
+                grant_id = %parsed.grant_id,
+                os_error = ?e.raw_os_error(),
+                "Failed to write content to granted file atomically"
+            );
+            return Err("Failed to write granted file".to_string());
+        }
 
         Ok(serde_json::json!({
             "success": true,
@@ -518,12 +689,20 @@ impl NativeService {
         }
 
         let file = options.open(&entry.path).map_err(|e| {
-            tracing::warn!(error = %e, path = ?entry.path, "Failed to open granted file for writing");
+            tracing::warn!(
+                grant_id = %grant_id,
+                os_error = ?e.raw_os_error(),
+                "Failed to open granted file for writing"
+            );
             "Failed to open granted file for writing".to_string()
         })?;
 
         let meta = file.metadata().map_err(|e| {
-            tracing::warn!(error = %e, path = ?entry.path, "Failed to inspect granted file handle metadata");
+            tracing::warn!(
+                grant_id = %grant_id,
+                os_error = ?e.raw_os_error(),
+                "Failed to inspect granted file handle metadata"
+            );
             "Failed to read granted file metadata".to_string()
         })?;
 
@@ -532,7 +711,11 @@ impl NativeService {
         }
 
         let symlink_meta = std::fs::symlink_metadata(&entry.path).map_err(|e| {
-            tracing::warn!(error = %e, path = ?entry.path, "Failed to inspect symlink metadata on opened target");
+            tracing::warn!(
+                grant_id = %grant_id,
+                os_error = ?e.raw_os_error(),
+                "Failed to inspect symlink metadata on opened target"
+            );
             "Failed to read file metadata".to_string()
         })?;
         if symlink_meta.is_symlink() {
@@ -541,7 +724,11 @@ impl NativeService {
 
         if let Some(ref orig_canonical) = entry.canonical_path {
             let current_canonical = entry.path.canonicalize().map_err(|e| {
-                tracing::warn!(error = %e, path = ?entry.path, "Failed to canonicalize opened target");
+                tracing::warn!(
+                    grant_id = %grant_id,
+                    os_error = ?e.raw_os_error(),
+                    "Failed to canonicalize opened target"
+                );
                 "Failed to canonicalize path".to_string()
             })?;
             if &current_canonical != orig_canonical {

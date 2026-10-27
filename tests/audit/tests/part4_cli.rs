@@ -674,3 +674,219 @@ fn test_phase_2_wp9_hostile_review_artifacts() {
         "Hostile review must document the three WP9 tests-fail proofs (capability check, grant check, size limit) (F-A0-05)"
     );
 }
+
+/// F-A0-07: CI hygiene - GitHub Actions workflow must declare top-level permissions and pin actions to full commit SHAs
+#[test]
+fn test_ci_hygiene_pinned_actions_and_permissions() {
+    let mut ci_path = PathBuf::from(".github/workflows/ci.yml");
+    if !ci_path.is_file() {
+        ci_path = PathBuf::from("../../.github/workflows/ci.yml");
+    }
+    assert!(
+        ci_path.is_file(),
+        ".github/workflows/ci.yml must exist (F-A0-07)"
+    );
+
+    let content = fs::read_to_string(&ci_path).expect("ci.yml must be readable");
+
+    // 1. Top-level permissions block must restrict default GITHUB_TOKEN permissions
+    assert!(
+        content.contains("permissions:") && content.contains("contents: read"),
+        "ci.yml must declare explicit top-level permissions: {{ contents: read }} (F-A0-07)"
+    );
+
+    // 2. All actions must be pinned to full 40-character commit SHAs instead of mutable tags/branches
+    let mut uses_count = 0;
+    for (line_idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("uses:") {
+            let action_spec = rest.split('#').next().unwrap().trim();
+            if action_spec.is_empty() {
+                continue;
+            }
+            uses_count += 1;
+            let parts: Vec<&str> = action_spec.split('@').collect();
+            assert_eq!(
+                parts.len(),
+                2,
+                "Line {}: Action reference '{}' must follow 'action@ref' format (F-A0-07)",
+                line_idx + 1,
+                action_spec
+            );
+
+            let action_name = parts[0].trim();
+            let action_ref = parts[1].trim();
+
+            assert_eq!(
+                action_ref.len(),
+                40,
+                "Line {}: Action '{}' uses mutable ref '{}' instead of a 40-character commit SHA (F-A0-07)",
+                line_idx + 1,
+                action_name,
+                action_ref
+            );
+            assert!(
+                action_ref.chars().all(|c| c.is_ascii_hexdigit()),
+                "Line {}: Action ref '{}' must be a valid hex commit SHA (F-A0-07)",
+                line_idx + 1,
+                action_ref
+            );
+        }
+    }
+
+    assert!(
+        uses_count >= 8,
+        "Expected at least 8 action invocations in ci.yml, found {}",
+        uses_count
+    );
+}
+
+/// F-A0-08: Pure crates production dependency purity (-e normal) and documented dev-only test exception
+#[test]
+fn test_pure_crates_production_dependency_purity_and_dev_exception() {
+    let prohibited_crates = [
+        "tao",
+        "wry",
+        "rfd",
+        "arboard",
+        "notify-rust",
+        "global-hotkey",
+        "tray-icon",
+        "muda",
+        "windows",
+        "windows-sys",
+        "winreg",
+        "windows-registry",
+        "webview2-com",
+    ];
+
+    // 1. Verify production dependency trees (-e normal) strictly contain zero prohibited crates
+    for crate_name in ["wavical-ipc", "wavical-protocol"] {
+        let output = Command::new("cargo")
+            .args(["tree", "-p", crate_name, "-e", "normal"])
+            .output()
+            .expect("cargo tree must succeed");
+        assert!(
+            output.status.success(),
+            "cargo tree -p {crate_name} -e normal failed"
+        );
+        let tree_stdout = String::from_utf8_lossy(&output.stdout);
+
+        for prohibited in prohibited_crates {
+            assert!(
+                !tree_stdout.contains(prohibited),
+                "Pure crate {crate_name} in production (-e normal) must not contain prohibited dependency '{prohibited}' (F-A0-08)"
+            );
+        }
+    }
+
+    // 2. Formally verify that crates/wavical-ipc/Cargo.toml documents the dev-only test exception
+    let mut ipc_cargo_path = PathBuf::from("crates/wavical-ipc/Cargo.toml");
+    if !ipc_cargo_path.is_file() {
+        ipc_cargo_path = PathBuf::from("../../crates/wavical-ipc/Cargo.toml");
+    }
+    let ipc_toml = fs::read_to_string(&ipc_cargo_path).expect("wavical-ipc Cargo.toml must exist");
+    assert!(
+        ipc_toml.contains("Dev-only test exception") || ipc_toml.contains("F-A0-08"),
+        "crates/wavical-ipc/Cargo.toml must formally document the dev-only test exception for transitive windows-sys (F-A0-08)"
+    );
+
+    // 3. Formally verify that crates/wavical-protocol/Cargo.toml documents the dev-only test exception
+    let mut proto_cargo_path = PathBuf::from("crates/wavical-protocol/Cargo.toml");
+    if !proto_cargo_path.is_file() {
+        proto_cargo_path = PathBuf::from("../../crates/wavical-protocol/Cargo.toml");
+    }
+    let proto_toml =
+        fs::read_to_string(&proto_cargo_path).expect("wavical-protocol Cargo.toml must exist");
+    assert!(
+        proto_toml.contains("Dev-only test exception") || proto_toml.contains("F-A0-08"),
+        "crates/wavical-protocol/Cargo.toml must formally document the dev-only test exception for transitive windows-sys (F-A0-08)"
+    );
+
+    // 4. Formally verify that architecture documents record this exception
+    let mut plan_path = PathBuf::from("docs/phase 0/WAVICAL_PHASE_0_BUILD_PLAN.md");
+    if !plan_path.is_file() {
+        plan_path = PathBuf::from("../../docs/phase 0/WAVICAL_PHASE_0_BUILD_PLAN.md");
+    }
+    let plan_content = fs::read_to_string(&plan_path).expect("Phase 0 build plan must exist");
+    assert!(
+        plan_content.contains("windows-sys") || plan_content.contains("dev-dependencies"),
+        "docs/phase 0/WAVICAL_PHASE_0_BUILD_PLAN.md must formally document the dev-only test dependency exception (F-A0-08)"
+    );
+}
+
+/// FINDING-C5: Config execution trust model must be documented in README.md, SECURITY.md, and docs
+#[test]
+fn test_config_execution_trust_model_documented() {
+    let mut readme_path = PathBuf::from("README.md");
+    if !readme_path.is_file() {
+        readme_path = PathBuf::from("../../README.md");
+    }
+    let readme_content = fs::read_to_string(&readme_path).expect("README.md must exist");
+    assert!(
+        readme_content.contains("wavical.config.js"),
+        "README.md must document wavical.config.js execution trust model (FINDING-C5)"
+    );
+    assert!(
+        readme_content.to_lowercase().contains("developer")
+            && (readme_content.to_lowercase().contains("privilege")
+                || readme_content.to_lowercase().contains("permission")),
+        "README.md must warn that config executes with developer privileges (FINDING-C5)"
+    );
+
+    let mut security_path = PathBuf::from("SECURITY.md");
+    if !security_path.is_file() {
+        security_path = PathBuf::from("../../SECURITY.md");
+    }
+    let security_content = fs::read_to_string(&security_path).expect("SECURITY.md must exist");
+    assert!(
+        security_content.contains("wavical.config.js"),
+        "SECURITY.md must document wavical.config.js execution trust model (FINDING-C5)"
+    );
+    assert!(
+        security_content.to_lowercase().contains("developer")
+            && (security_content.to_lowercase().contains("privilege")
+                || security_content.to_lowercase().contains("permission")),
+        "SECURITY.md must warn that config executes with developer privileges (FINDING-C5)"
+    );
+
+    let mut sec_model_path = PathBuf::from("docs/phase 1/SECURITY_MODEL.md");
+    if !sec_model_path.is_file() {
+        sec_model_path = PathBuf::from("../../docs/phase 1/SECURITY_MODEL.md");
+    }
+    let sec_model_content =
+        fs::read_to_string(&sec_model_path).expect("docs/phase 1/SECURITY_MODEL.md must exist");
+    assert!(
+        sec_model_content.contains("wavical.config.js"),
+        "docs/phase 1/SECURITY_MODEL.md must document wavical.config.js trust boundary (FINDING-C5)"
+    );
+}
+
+/// FINDING-C6: Node.js (>= 14.8.0) prerequisite must be declared in setup guides and README
+#[test]
+fn test_setup_documentation_declares_nodejs_prerequisite() {
+    let mut setup_path = PathBuf::from("docs/WAVICAL_SETUP.md");
+    if !setup_path.is_file() {
+        setup_path = PathBuf::from("../../docs/WAVICAL_SETUP.md");
+    }
+    let setup_content = fs::read_to_string(&setup_path).expect("docs/WAVICAL_SETUP.md must exist");
+    assert!(
+        setup_content.contains("Node.js") && setup_content.contains("14.8"),
+        "docs/WAVICAL_SETUP.md must explicitly declare Node.js (>= 14.8.0) as a prerequisite (FINDING-C6)"
+    );
+    assert!(
+        setup_content.contains("OpenJS.NodeJS"),
+        "docs/WAVICAL_SETUP.md must provide installation command for Node.js (FINDING-C6)"
+    );
+
+    let mut readme_path = PathBuf::from("README.md");
+    if !readme_path.is_file() {
+        readme_path = PathBuf::from("../../README.md");
+    }
+    let readme_content = fs::read_to_string(&readme_path).expect("README.md must exist");
+    assert!(
+        readme_content.contains("OpenJS.NodeJS")
+            && (readme_content.contains("Node.js") && readme_content.contains("14.8")),
+        "README.md must include Node.js prerequisite in Quick Start setup commands (FINDING-C6)"
+    );
+}
