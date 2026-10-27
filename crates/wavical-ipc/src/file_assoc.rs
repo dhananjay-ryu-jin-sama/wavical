@@ -12,6 +12,8 @@ pub struct FileAssociationKeys {
     pub extension: String,
     /// Registry key for the extension: `Software\Classes\.{ext}`.
     pub ext_key: String,
+    /// Registry key for OpenWithProgids: `Software\Classes\.{ext}\OpenWithProgids`.
+    pub open_with_progids_key: String,
     /// Generated ProgID: `Wavical.{appId}`.
     pub prog_id: String,
     /// Registry key for the ProgID: `Software\Classes\{prog_id}`.
@@ -87,6 +89,7 @@ pub fn build_association_keys(
     let valid_ext = validate_file_extension(ext)?;
 
     let ext_key = format!(r"Software\Classes\.{valid_ext}");
+    let open_with_progids_key = format!(r"Software\Classes\.{valid_ext}\OpenWithProgids");
     let prog_id = format!("Wavical.{valid_app_id}");
     let prog_id_key = format!(r"Software\Classes\{prog_id}");
     let open_command_key = format!(r"Software\Classes\{prog_id}\shell\open\command");
@@ -94,6 +97,7 @@ pub fn build_association_keys(
     Ok(FileAssociationKeys {
         extension: valid_ext.to_string(),
         ext_key,
+        open_with_progids_key,
         prog_id,
         prog_id_key,
         open_command_key,
@@ -179,6 +183,10 @@ mod tests {
         let keys = build_association_keys("my-app", "wavdemo").unwrap();
         assert_eq!(keys.extension, "wavdemo");
         assert_eq!(keys.ext_key, r"Software\Classes\.wavdemo");
+        assert_eq!(
+            keys.open_with_progids_key,
+            r"Software\Classes\.wavdemo\OpenWithProgids"
+        );
         assert_eq!(keys.prog_id, "Wavical.my-app");
         assert_eq!(keys.prog_id_key, r"Software\Classes\Wavical.my-app");
         assert_eq!(

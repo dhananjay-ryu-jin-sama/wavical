@@ -596,6 +596,50 @@ fn test_grant_id_format_validated_before_lookup() {
     );
 }
 
+/// F-A0-06: Grant Table RwLock unwrap lock poisoning risk
+#[test]
+fn test_grant_table_rwlock_poisoning_handled_gracefully() {
+    use wavical_ipc::{GrantError, GrantMode, GrantTable};
+
+    struct PanickingPath;
+    impl From<PanickingPath> for std::path::PathBuf {
+        fn from(_: PanickingPath) -> Self {
+            panic!("intentional panic to poison grant table RwLock");
+        }
+    }
+
+    let table = Arc::new(GrantTable::new());
+    let t_clone = Arc::clone(&table);
+
+    // Intentionally panic inside a worker thread while holding the write lock
+    let _ = std::thread::spawn(move || {
+        let _ = t_clone.insert_with_mode("win-poison", PanickingPath, GrantMode::ReadOnly);
+    })
+    .join();
+
+    // 1. get() returns Err(GrantError::InternalLockError) instead of panicking
+    let get_res = table.get("any-grant-id", "win-1");
+    assert_eq!(
+        get_res,
+        Err(GrantError::InternalLockError),
+        "Expected InternalLockError on poisoned grant table get()"
+    );
+
+    // 2. insert() returns Err(GrantError::InternalLockError) instead of panicking
+    let insert_res = table.insert("win-1", "some_file.txt");
+    assert_eq!(
+        insert_res,
+        Err(GrantError::InternalLockError),
+        "Expected InternalLockError on poisoned grant table insert()"
+    );
+
+    // 3. Helper methods do not panic
+    table.clear_window("win-1");
+    assert_eq!(table.count_for_window("win-1"), 0);
+    assert_eq!(table.total_count(), 0);
+    assert!(!table.remove_grant("any-grant-id", "win-1"));
+}
+
 /// FINDING-G2: Grant table does not enforce read-only vs write-only mode
 #[test]
 fn test_grant_enforces_read_vs_write_mode() {

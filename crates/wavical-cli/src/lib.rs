@@ -2,6 +2,9 @@
 
 mod sha256;
 
+#[cfg(windows)]
+pub use windows_registry;
+
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -956,11 +959,19 @@ pub fn run_register_filetypes(dir: &Path) -> Result<(), CliError> {
         for ext in exts {
             let keys = wavical_ipc::build_association_keys(&config.app_id, ext)?;
 
-            let ext_key = CURRENT_USER.create(&keys.ext_key).map_err(|e| {
-                CliError::RegistryError(format!("Failed to create {}: {e}", keys.ext_key))
-            })?;
-            ext_key.set_string("", &keys.prog_id).map_err(|e| {
-                CliError::RegistryError(format!("Failed to set {}: {e}", keys.ext_key))
+            let open_with_key = CURRENT_USER
+                .create(&keys.open_with_progids_key)
+                .map_err(|e| {
+                    CliError::RegistryError(format!(
+                        "Failed to create {}: {e}",
+                        keys.open_with_progids_key
+                    ))
+                })?;
+            open_with_key.set_string(&keys.prog_id, "").map_err(|e| {
+                CliError::RegistryError(format!(
+                    "Failed to register ProgID in {}: {e}",
+                    keys.open_with_progids_key
+                ))
             })?;
 
             let cmd_key = CURRENT_USER.create(&keys.open_command_key).map_err(|e| {
@@ -1017,7 +1028,9 @@ pub fn run_unregister_filetypes(dir: &Path) -> Result<(), CliError> {
         use windows_registry::CURRENT_USER;
         for ext in exts {
             let keys = wavical_ipc::build_association_keys(&config.app_id, ext)?;
-            let _ = CURRENT_USER.remove_tree(&keys.ext_key);
+            if let Ok(open_with_key) = CURRENT_USER.create(&keys.open_with_progids_key) {
+                let _ = open_with_key.remove_value(&keys.prog_id);
+            }
             let _ = CURRENT_USER.remove_tree(&keys.prog_id_key);
             println!("✓ Unregistered file association: .{}", keys.extension);
         }
@@ -1170,14 +1183,17 @@ mod tests {
         #[cfg(windows)]
         {
             use windows_registry::CURRENT_USER;
-            let ext_key = CURRENT_USER.open(r"Software\Classes\.wavlife");
+            let open_with_key = CURRENT_USER.open(r"Software\Classes\.wavlife\OpenWithProgids");
             assert!(
-                ext_key.is_ok(),
-                "Registry key for .wavlife should exist in HKCU"
+                open_with_key.is_ok(),
+                "Registry key for .wavlife\\OpenWithProgids should exist in HKCU"
             );
-            if let Ok(k) = ext_key {
-                let val: Result<String, _> = k.get_string("");
-                assert_eq!(val.unwrap(), "Wavical.test-filetypes-lifecycle");
+            if let Ok(k) = open_with_key {
+                let val: Result<String, _> = k.get_string("Wavical.test-filetypes-lifecycle");
+                assert!(
+                    val.is_ok(),
+                    "ProgID should be registered in OpenWithProgids"
+                );
             }
         }
 
@@ -1187,16 +1203,21 @@ mod tests {
         #[cfg(windows)]
         {
             use windows_registry::CURRENT_USER;
-            let ext_key = CURRENT_USER.open(r"Software\Classes\.wavlife");
-            assert!(
-                ext_key.is_err(),
-                "Registry key for .wavlife must be completely removed"
-            );
+            let open_with_key = CURRENT_USER.open(r"Software\Classes\.wavlife\OpenWithProgids");
+            if let Ok(ref k) = open_with_key {
+                let val: Result<String, _> = k.get_string("Wavical.test-filetypes-lifecycle");
+                assert!(
+                    val.is_err(),
+                    "ProgID should be removed from OpenWithProgids on unregister"
+                );
+            }
             let prog_key = CURRENT_USER.open(r"Software\Classes\Wavical.test-filetypes-lifecycle");
             assert!(
                 prog_key.is_err(),
                 "Registry key for ProgID must be completely removed"
             );
+            // Cleanup test extension key completely so tests leave no trace
+            let _ = CURRENT_USER.remove_tree(r"Software\Classes\.wavlife");
         }
     }
 }

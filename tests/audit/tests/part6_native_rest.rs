@@ -491,6 +491,10 @@ fn test_part6_file_association_validation_battery() {
     let keys = wavical_ipc::build_association_keys("my-app", "wavdemo").expect("build keys");
     assert_eq!(keys.extension, "wavdemo");
     assert_eq!(keys.ext_key, r"Software\Classes\.wavdemo");
+    assert_eq!(
+        keys.open_with_progids_key,
+        r"Software\Classes\.wavdemo\OpenWithProgids"
+    );
     assert_eq!(keys.prog_id, "Wavical.my-app");
     assert_eq!(keys.prog_id_key, r"Software\Classes\Wavical.my-app");
     assert_eq!(
@@ -575,11 +579,166 @@ fn test_app_data_dir_rejects_reserved_device_names() {
 
 /// FINDING-R1: run_register_filetypes hijacks existing default file handler instead of using OpenWithProgids
 #[test]
-#[ignore = "FINDING-R1"]
 fn test_file_assoc_register_preserves_existing_default_handler() {
-    // A polite file association registrar should write to OpenWithProgids rather than
-    // overwriting the default value of Software\Classes\.{ext}
-    panic!("FINDING-R1: run_register_filetypes unconditionally overwrites default handler");
+    #[cfg(windows)]
+    {
+        use wavical_cli::windows_registry::CURRENT_USER;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project_dir = temp.path();
+
+        let config_js = r#"export default {
+            appId: 'test-polite-app',
+            fileAssociations: ['wavr1test']
+        };"#;
+        std::fs::write(project_dir.join("wavical.config.js"), config_js).expect("write config");
+
+        // 1. Simulate an existing pre-configured default file handler
+        let ext_key = CURRENT_USER
+            .create(r"Software\Classes\.wavr1test")
+            .expect("create pre-existing ext key");
+        ext_key
+            .set_string("", "PreexistingDefaultHandler.App")
+            .expect("set preexisting default handler");
+
+        // 2. Run file association registration
+        let res = wavical_cli::run_register_filetypes(project_dir);
+        assert!(res.is_ok(), "run_register_filetypes failed: {:?}", res);
+
+        // 3. Verify that the default handler was NOT hijacked/overwritten
+        let reopened_ext_key = CURRENT_USER
+            .open(r"Software\Classes\.wavr1test")
+            .expect("open .wavr1test key");
+        let default_val: Result<String, _> = reopened_ext_key.get_string("");
+        let default_val = default_val.expect("must have a default value");
+
+        // 4. Also check that OpenWithProgids exists and contains our ProgID
+        let open_with_key = CURRENT_USER.open(r"Software\Classes\.wavr1test\OpenWithProgids");
+        let has_prog_id = open_with_key
+            .as_ref()
+            .map(|k| k.get_string("Wavical.test-polite-app").is_ok())
+            .unwrap_or(false);
+
+        // Cleanup after reading all registry values
+        let _ = CURRENT_USER.remove_tree(r"Software\Classes\.wavr1test");
+        let _ = CURRENT_USER.remove_tree(r"Software\Classes\Wavical.test-polite-app");
+
+        assert_eq!(
+            default_val, "PreexistingDefaultHandler.App",
+            "FINDING-R1: run_register_filetypes hijacked existing (Default) handler instead of preserving it"
+        );
+
+        assert!(
+            open_with_key.is_ok(),
+            "FINDING-R1: Software\\Classes\\.wavr1test\\OpenWithProgids subkey was not created"
+        );
+        assert!(
+            has_prog_id,
+            "FINDING-R1: ProgID was not registered under OpenWithProgids"
+        );
+    }
+
+    #[cfg(not(windows))]
+    {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project_dir = temp.path();
+        let config_js = r#"export default {
+            appId: 'test-polite-app',
+            fileAssociations: ['wavr1test']
+        };"#;
+        std::fs::write(project_dir.join("wavical.config.js"), config_js).expect("write config");
+        assert!(wavical_cli::run_register_filetypes(project_dir).is_ok());
+    }
+}
+
+/// FINDING-R2: run_unregister_filetypes recursively deletes entire Software\Classes\.{ext} instead of deleting only specific ProgID from OpenWithProgids
+#[test]
+fn test_file_assoc_unregister_preserves_existing_extension_keys() {
+    #[cfg(windows)]
+    {
+        use wavical_cli::windows_registry::CURRENT_USER;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project_dir = temp.path();
+
+        let config_js = r#"export default {
+            appId: 'test-unregister-app',
+            fileAssociations: ['wavr2test']
+        };"#;
+        std::fs::write(project_dir.join("wavical.config.js"), config_js).expect("write config");
+
+        // 1. Simulate an existing pre-configured default file handler
+        let ext_key = CURRENT_USER
+            .create(r"Software\Classes\.wavr2test")
+            .expect("create pre-existing ext key");
+        ext_key
+            .set_string("", "PreexistingDefaultHandler.App")
+            .expect("set preexisting default handler");
+
+        // 2. Register file association
+        let res_reg = wavical_cli::run_register_filetypes(project_dir);
+        assert!(
+            res_reg.is_ok(),
+            "run_register_filetypes failed: {:?}",
+            res_reg
+        );
+
+        // 3. Unregister file association
+        let res_unreg = wavical_cli::run_unregister_filetypes(project_dir);
+        assert!(
+            res_unreg.is_ok(),
+            "run_unregister_filetypes failed: {:?}",
+            res_unreg
+        );
+
+        // 4. Check if Software\Classes\.wavr2test survived and still has its preexisting handler
+        let reopened_ext_key = CURRENT_USER.open(r"Software\Classes\.wavr2test");
+        let default_val = reopened_ext_key
+            .as_ref()
+            .ok()
+            .and_then(|k| k.get_string("").ok());
+
+        // 5. Check if OpenWithProgids no longer contains our ProgID
+        let open_with_key = CURRENT_USER.open(r"Software\Classes\.wavr2test\OpenWithProgids");
+        let has_prog_id = open_with_key
+            .as_ref()
+            .map(|k| k.get_string("Wavical.test-unregister-app").is_ok())
+            .unwrap_or(false);
+
+        let prog_key = CURRENT_USER.open(r"Software\Classes\Wavical.test-unregister-app");
+
+        // Cleanup before asserts
+        let _ = CURRENT_USER.remove_tree(r"Software\Classes\.wavr2test");
+        let _ = CURRENT_USER.remove_tree(r"Software\Classes\Wavical.test-unregister-app");
+
+        assert!(
+            reopened_ext_key.is_ok(),
+            "FINDING-R2: run_unregister_filetypes deleted the entire Software\\Classes\\.wavr2test key"
+        );
+        assert_eq!(
+            default_val.as_deref(),
+            Some("PreexistingDefaultHandler.App"),
+            "FINDING-R2: preexisting default handler was wiped out on unregister"
+        );
+        assert!(
+            !has_prog_id,
+            "ProgID should be removed from OpenWithProgids on unregister"
+        );
+        assert!(
+            prog_key.is_err(),
+            "ProgID key Software\\Classes\\Wavical.test-unregister-app should be removed on unregister"
+        );
+    }
+
+    #[cfg(not(windows))]
+    {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project_dir = temp.path();
+        let config_js = r#"export default {
+            appId: 'test-unregister-app',
+            fileAssociations: ['wavr2test']
+        };"#;
+        std::fs::write(project_dir.join("wavical.config.js"), config_js).expect("write config");
+        assert!(wavical_cli::run_unregister_filetypes(project_dir).is_ok());
+    }
 }
 
 /// F-A0-01: crates/wavical-native/src/crash_recovery.rs must not contain unapproved unsafe COM hooks

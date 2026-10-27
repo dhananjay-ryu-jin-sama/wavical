@@ -61,50 +61,39 @@ The table below consolidates all findings identified across Audits A0 through A5
 | ID | Phase | Severity | Title | Where | Source Audit | Status | One-Line Fix Idea |
 | :--- | :---: | :---: | :--- | :--- | :---: | :---: | :--- |
 | **F-A0-01** | Phase 2 | **High** | Unapproved `unsafe` COM Hook in Crash Recovery | `crates/wavical-native/src/crash_recovery.rs:36,51,62` | A0 | Fixed (`test_crash_recovery_contains_zero_unsafe_code`) | Revert raw COM hook or formally review and document approval in `WAVICAL_PHASE_2_DECISIONS.md`. |
-
 | **F-A1a-03** | Phase 0 | **High** | Unsanitized Internal Error Leakage in `wavical_ipc::dispatch` | `crates/wavical-ipc/src/lib.rs:669-674` | A1a | Fixed (`test_part2_response_internal_leakage`) | Pass handler errors through `sanitize_handler_error(&e)` before constructing `Response::err`. |
-
 | **FINDING-S2** | Phase 0 | **High** | Attack Suite Hangs on Oversize Payload & CI Runner Fails Count | `tests/integration/src/main.rs:280`, `tests/attack-page/app.js:370` | A1b | Fixed (`test_integration_harness_dynamic_count_and_no_hang`) | Return explicit oversize error response or client timeout, and match `summary.total` instead of hardcoded 7. |
-
 | **F-A5-01** | Phase 0 | **High** | DevTools Release Enablement Guard Untested in Release Profile | `crates/wavical-shell/src/lib.rs:597` | A5 | Fixed (`test_shell_devtools_disabled_in_release`) | Add an integration test compiled under `--release` asserting `is_devtools_enabled()` returns false. |
-
 | **F-A0-02** | Phase 0 | **Medium** | Supply-Chain Gate Failure (`cargo deny check`) | `deny.toml:12-33`, `Cargo.lock` | A0 | Fixed (`test_supply_chain_cargo_deny_clean`) | Add `BSL-1.0` to allowed licenses in `deny.toml` and explicitly ignore unmaintained D-Bus advisories. |
-
 | **F-A0-03** | Phase 1 | **Medium** | Linux CI Test Fragility Due to Windows `taskkill` | `crates/wavical-cli/tests/dev_tests.rs:270`, `.github/workflows/ci.yml:64` | A0 | Fixed (`test_linux_ci_no_unguarded_windows_taskkill`) | Guard Windows-specific test cases with `#[cfg(windows)]` or use cross-platform child process killing. |
-
 | **F-A0-04** | Phase 1/2 | **Medium** | Scope Creep in Config Schema Fields & Crate Dependencies | `crates/wavical-config/src/lib.rs:36`, `Cargo.toml` files | A0 | Fixed (`test_config_schema_and_dependencies_documented`) | Formally document `version`, `tray`, `shortcuts`, and native dependencies in architecture specifications. |
-
 | **F-A0-05** | Phase 2 | **Medium** | Missing Phase 2 WP9 Hostile Review Artifacts | `docs/`, `tests/` | A0 | Fixed (`test_phase_2_wp9_hostile_review_artifacts`) | Conduct formal hostile review, generate "tests-fail" proof records, and commit to `docs/`. |
-
 | **F-A1a-01** | Phase 0 | **Medium** | Information Leakage in `ProtocolError::TrailingDotOrSpace` | `crates/wavical-protocol/src/lib.rs:56` | A1a | Fixed (`test_part1_error_information_leakage`) | Omit raw segment text from `TrailingDotOrSpace` Display implementation. |
-
 | **FINDING-S1** | Phase 0 | **Medium** | Bridge Script Namespace Pollution & Non-Minimal API | `crates/wavical-shell/src/lib.rs:77-96,136-140` | A1b | Fixed (`test_shell_bridge_script_only_exposes_invoke_and_no_other_globals`) | Encapsulate event dispatching within closure state and expose only `window.wavical.invoke`. |
-
 | **FINDING-S3** | Phase 0 | **Medium** | Missing App-Specific WebView2 User Data Directory Isolation | `crates/wavical-shell/src/lib.rs:845-896` | A1b | Fixed (`test_shell_webview2_user_data_directory_isolated`) | Configure isolated user data directory via `wry::WebContext::new(Some(data_directory))` derived from `%LOCALAPPDATA%\wavical\<appId>\EBWebView`. |
-
 | **FINDING-S4** | Phase 0/1 | **Medium** | Unauthenticated Stdin Capability Reload Active in Release | `crates/wavical-shell/src/main.rs:41`, `crates/wavical-shell/src/lib.rs:706` | A1b | Fixed (`test_shell_stdin_dynamic_capability_reload_gated_in_release`) | Gate CLI flag `--listen-stdin` and capability update thread behind `#[cfg(debug_assertions)]`. |
-
 | **FINDING-C1** | Phase 1 | **Medium** | User `console.log` in Config Pollutes Stdout & Breaks JSON | `crates/wavical-config/src/lib.rs:530-536` | A2 | Fixed (`test_cli_config_stdout_pollution_isolation`) | Use an isolated file descriptor or unique delimiter token to separate JSON payload from stdout logs. |
-
 | **FINDING-C2** | Phase 1 | **Medium** | Stale / Deleted File Retention in Production `dist/` | `crates/wavical-cli/src/lib.rs:707-710` | A2 | Fixed (`test_cli_build_removes_stale_files_from_outdir`) | Clear existing `outdir` contents prior to copying or remove orphaned files absent from `src/`. |
-
 | **FINDING-C3** | Phase 1 | **Medium** | Dangerous `--outdir` Paths (`.`, `src`, `..`) Accepted | `crates/wavical-cli/src/lib.rs:696-705` | A2 | Fixed (`test_cli_build_refuses_dangerous_outdir_paths`) | Canonicalize `outdir` and reject paths colliding with project root, parent directories, or `src/`. |
-
 | **FINDING-C4** | Phase 1 | **Medium** | Sensitive Files (`.env`, `.git`) Copied into Distributable | `crates/wavical-cli/src/lib.rs:595-653` | A2 | Fixed (`test_cli_build_excludes_sensitive_files`) | Add exclusion filter in `copy_and_hash_assets` for `.env*`, `.git*`, `*.map`, `.DS_Store`, and `Thumbs.db`. |
-
 | **FINDING-G2** | Phase 2 | **Medium** | Grant Table Lacks Permission Mode Scoping (Read vs. Write) | `crates/wavical-ipc/src/grants.rs:46-53`, `wavical-native` | A3a | Fixed (`test_grant_enforces_read_vs_write_mode`) | Add `GrantMode::ReadOnly` vs `GrantMode::WriteOnly` enum to `GrantEntry` and enforce at dispatch. |
-
 | **FINDING-F1** | Phase 2 | **Medium** | TOCTOU Race Window Between Validation and `std::fs::write` | `crates/wavical-native/src/lib.rs:472-474` | A3a | Fixed (`test_fs_write_granted_toctou_handle_validation`) | Open file handle once with Win32 share flags, validate handle metadata, and write via that handle. |
+| **FINDING-R1** | Phase 2 | **Medium** | Default File Extension Handler Hijacking in HKCU | `crates/wavical-cli/src/lib.rs:836-838` | A3b | Fixed (`test_file_assoc_register_preserves_existing_default_handler`) | Register under `Software\Classes\.{ext}\OpenWithProgids` instead of overwriting `(Default)`. |
+| **FINDING-R2** | Phase 2 | **Medium** | Destructive Recursive Deletion of `Software\Classes\.{ext}` | `crates/wavical-cli/src/lib.rs:894` | A3b | Fixed (`test_file_assoc_unregister_preserves_existing_extension_keys`) | Delete only the specific `Wavical.{appId}` entry under `OpenWithProgids` rather than `remove_tree`. |
+| **F-A0-06** | Phase 2 | **Low** | Grant Table `RwLock .unwrap()` Poisoning Risk | `crates/wavical-ipc/src/grants.rs:80,122,131,137,143,149` | A0 | Fixed (`test_grant_table_rwlock_poisoning_handled_gracefully`) | Handle poisoned read/write locks gracefully with `map_err(|_| GrantError::InternalLockError)`. |
 
-| **FINDING-R1** | Phase 2 | **Medium** | Default File Extension Handler Hijacking in HKCU | `crates/wavical-cli/src/lib.rs:836-838` | A3b | Open | Register under `Software\Classes\.{ext}\OpenWithProgids` instead of overwriting `(Default)`. |
-| **FINDING-R2** | Phase 2 | **Medium** | Destructive Recursive Deletion of `Software\Classes\.{ext}` | `crates/wavical-cli/src/lib.rs:894` | A3b | Open | Delete only the specific `Wavical.{appId}` entry under `OpenWithProgids` rather than `remove_tree`. |
-| **F-A0-06** | Phase 2 | **Low** | Grant Table `RwLock .unwrap()` Poisoning Risk | `crates/wavical-ipc/src/grants.rs:80,122,131,137,143,149` | A0 | Open | Handle poisoned read/write locks gracefully with `map_err(|_| GrantError::InternalLockError)`. |
 | **F-A0-07** | Phase 0 | **Low** | CI Hygiene: Unpinned Action Tags & Missing Permissions | `.github/workflows/ci.yml:18,21,48,53,77,82` | A0 | Open | Declare top-level `permissions: { contents: read }` and pin actions to full commit SHAs. |
+
 | **F-A0-08** | Phase 0 | **Low** | Transitive `windows-sys` in Pure Crates Under `-e dev` | `crates/wavical-ipc/Cargo.toml:16` | A0 | Open | Formally document that test framework dependencies (`proptest`, `tempfile`) pull dev-only OS bindings. |
+
 | **F-A1a-02** | Phase 0 | **Low** | Incomplete Windows Reserved Device Blocklist (`CONIN$`/`CONOUT$`) | `crates/wavical-protocol/src/lib.rs:153-167` | A1a | Open | Add `"CONIN$"` and `"CONOUT$"` to `RESERVED_NAMES` array in `wavical-protocol`. |
+
 | **FINDING-S5** | Phase 0 | **Low** | Omission of Explicit `connect-src` & `frame-src` in Default CSP | `crates/wavical-shell/src/lib.rs:19` | A1b | Open | Append `connect-src 'self'; frame-src 'none';` explicitly to `DEFAULT_CSP`. |
+
 | **FINDING-C5** | Phase 1 | **Low** | Missing Config Execution Trust Model Disclosure | `README.md`, `docs/`, `SECURITY.md` | A2 | Open | Add security note explaining that `wavical.config.js` executes with local developer privileges. |
+
 | **FINDING-C6** | Phase 1 | **Low** | Node.js Prerequisite Omitted from Developer Setup Guides | `docs/WAVICAL_SETUP.md`, `README.md` | A2 | Open | Explicitly state Node.js (>= 14.8.0) as a prerequisite in setup documentation. |
+
 | **FINDING-G1** | Phase 2 | **Low** | Grant ID Hex Format & Length Not Validated Before Lookup | `crates/wavical-ipc/src/grants.rs:120` | A3a | Open | Validate that `grant_id` is exactly 32 hex ASCII characters before searching the hash map. |
 | **FINDING-F2** | Phase 2 | **Low** | Non-Atomic File Writes Risk File Truncation on Abort | `crates/wavical-native/src/lib.rs:474` | A3a | Open | Write payload to a sibling `.tmp` file, flush to disk, and atomically rename over destination. |
 | **FINDING-N1** | Phase 2 | **Low** | `notify.send` Lacks Rate Limiting or Queue Depth Bounds | `crates/wavical-native/src/lib.rs:280-300` | A3a | Open | Enforce sliding window rate limit (e.g., max 5 toasts per 10 seconds per window). |
