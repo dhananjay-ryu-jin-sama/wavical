@@ -534,9 +534,15 @@ pub fn validate_search_request(req: &SearchRequest) -> Result<(), AiValidationEr
     Ok(())
 }
 
+/// Approved Phase 3 model catalog identifiers.
+pub const CATALOG_MODEL_IDS: &[&str] = &["bge-small-en-v1.5", "qwen2.5-1.5b-instruct"];
+
+/// Check if a model identifier belongs to the approved Phase 3 catalog.
+pub fn is_known_catalog_model(id: &str) -> bool {
+    CATALOG_MODEL_IDS.contains(&id)
+}
+
 /// Validate catalog model identifier format (`^[a-z0-9._-]{1,64}$`).
-///
-/// This serves as the hook for Phase 3 WP3 where catalog membership will be checked.
 pub fn validate_catalog_model_id(id: &str) -> Result<(), AiValidationError> {
     let char_count = id.chars().count();
     if !(MIN_COLLECTION_NAME_CHARS..=MAX_COLLECTION_NAME_CHARS).contains(&char_count) {

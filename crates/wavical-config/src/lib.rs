@@ -687,10 +687,19 @@ pub fn is_valid_env_var_name(name: &str) -> bool {
 }
 
 /// Hook for catalog membership validation. In WP2, validates catalog model ID format.
-/// In WP3, this will check membership in the verified model catalog registry.
+/// Validate catalog model identifier format and catalog membership.
 pub fn validate_catalog_membership_hook(id: &str) -> Result<(), ValidationError> {
     wavical_ipc::validate_catalog_model_id(id)
-        .map_err(|e| ValidationError::InvalidAiConfig(e.to_string()))
+        .map_err(|e| ValidationError::InvalidAiConfig(e.to_string()))?;
+
+    if !wavical_ipc::is_known_catalog_model(id) {
+        let known = wavical_ipc::CATALOG_MODEL_IDS.join(", ");
+        return Err(ValidationError::InvalidAiConfig(format!(
+            "model '{id}' is not in the approved model catalog; select an approved model ID (known: {known})"
+        )));
+    }
+
+    Ok(())
 }
 
 /// Validate the `ai` section of `wavical.config.js`.

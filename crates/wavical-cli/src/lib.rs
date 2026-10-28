@@ -49,6 +49,50 @@ pub enum Commands {
     /// Unregister file associations declared in wavical.config.js under HKCU\Software\Classes (WP8)
     #[command(name = "unregister-filetypes")]
     UnregisterFiletypes(FiletypesArgs),
+
+    /// Manage local AI inference models (Phase 3 WP3)
+    Model(ModelArgs),
+}
+
+/// Arguments for the `model` subcommand.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ModelArgs {
+    #[command(subcommand)]
+    pub command: ModelCommands,
+}
+
+/// Model management subcommands (`wavical model <COMMAND>`).
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum ModelCommands {
+    /// List all catalog models and local installation status
+    List,
+
+    /// Download and verify a catalog model
+    Pull(ModelPullArgs),
+
+    /// Remove an installed model from local storage
+    Remove(ModelIdArgs),
+
+    /// Verify SHA-256 integrity and GGUF header of an installed model
+    Verify(ModelIdArgs),
+}
+
+/// Arguments for `wavical model pull`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ModelPullArgs {
+    /// Catalog identifier of the model to download (e.g. 'qwen2.5-1.5b-instruct')
+    pub id: String,
+
+    /// Explicitly accept the model license non-interactively by exact license ID (e.g. 'Apache-2.0')
+    #[arg(long = "accept-license")]
+    pub accept_license: Option<String>,
+}
+
+/// Arguments for model commands requiring a model ID.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ModelIdArgs {
+    /// Catalog identifier of the model
+    pub id: String,
 }
 
 /// Arguments for the `register-filetypes` and `unregister-filetypes` subcommands.
@@ -147,6 +191,9 @@ pub enum CliError {
         "dangerous output directory '{0}': output directory cannot be project root, parent directory, or inside source directory"
     )]
     DangerousOutDir(PathBuf),
+
+    #[error("model error: {0}")]
+    ModelError(#[from] wavical_ai::CommandError),
 }
 
 /// Summary returned after successful initialization of a new project.
@@ -927,6 +974,13 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::Model(args) => match run_model(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -1052,6 +1106,87 @@ pub fn run_unregister_filetypes(dir: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Execute `wavical model <COMMAND>` subcommands.
+pub fn run_model(args: &ModelArgs) -> Result<(), CliError> {
+    let models_dir = wavical_ai::wavical_models_dir();
+    let data_dir = wavical_ai::wavical_data_dir();
+
+    match args.command {
+        ModelCommands::List => {
+            let list = wavical_ai::list_models(&models_dir, None);
+            println!(
+                "{:<24} {:<12} {:<12} {:<12} {:<12}",
+                "ID", "KIND", "INSTALLED", "SIZE", "LICENSE"
+            );
+            println!("{}", "-".repeat(72));
+            for info in list {
+                let installed_str = if info.installed { "yes" } else { "no" };
+                let size_str = wavical_ai::format_size_human(info.size_bytes);
+                println!(
+                    "{:<24} {:<12} {:<12} {:<12} {:<12}",
+                    info.id,
+                    info.kind.to_string(),
+                    installed_str,
+                    size_str,
+                    info.license_name
+                );
+            }
+        }
+        ModelCommands::Pull(ref pull_args) => {
+            let mut stdin = std::io::stdin().lock();
+            let mut stdout = std::io::stdout();
+            wavical_ai::pull_model(
+                &pull_args.id,
+                &models_dir,
+                &data_dir,
+                pull_args.accept_license.as_deref(),
+                &wavical_ai::DownloadOptions::default(),
+                Some(&mut |current, total| {
+                    let percent = if total > 0 {
+                        (current as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    print!(
+                        "\rDownloading {}: {:.2} MB / {:.2} MB ({:.1}%)",
+                        pull_args.id,
+                        current as f64 / (1024.0 * 1024.0),
+                        total as f64 / (1024.0 * 1024.0),
+                        percent
+                    );
+                    let _ = std::io::stdout().flush();
+                }),
+                &mut stdin,
+                &mut stdout,
+                None,
+            )?;
+            println!();
+        }
+        ModelCommands::Remove(ref id_args) => {
+            let target = wavical_ai::remove_model(&id_args.id, &models_dir, None)?;
+            println!(
+                "✓ Successfully removed model '{}' ({})",
+                id_args.id,
+                target.display()
+            );
+        }
+        ModelCommands::Verify(ref id_args) => {
+            println!(
+                "Verifying SHA-256 digest and GGUF header for '{}' ...",
+                id_args.id
+            );
+            let target = wavical_ai::verify_model(&id_args.id, &models_dir, None)?;
+            println!(
+                "✓ Model '{}' is verified and intact ({})",
+                id_args.id,
+                target.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1169,6 +1304,73 @@ mod tests {
             }
             _ => panic!("expected unregister-filetypes subcommand"),
         }
+
+        // Test model subcommands
+        let model_list_cli =
+            Cli::try_parse_from(["wavical", "model", "list"]).expect("parse model list");
+        match model_list_cli.command {
+            Commands::Model(args) => match args.command {
+                ModelCommands::List => {}
+                _ => panic!("expected model list"),
+            },
+            _ => panic!("expected model command"),
+        }
+
+        let model_pull_cli = Cli::try_parse_from([
+            "wavical",
+            "model",
+            "pull",
+            "qwen2.5-1.5b-instruct",
+            "--accept-license",
+            "Apache-2.0",
+        ])
+        .expect("parse model pull");
+        match model_pull_cli.command {
+            Commands::Model(args) => match args.command {
+                ModelCommands::Pull(pull_args) => {
+                    assert_eq!(pull_args.id, "qwen2.5-1.5b-instruct");
+                    assert_eq!(pull_args.accept_license.as_deref(), Some("Apache-2.0"));
+                }
+                _ => panic!("expected model pull"),
+            },
+            _ => panic!("expected model command"),
+        }
+
+        let model_remove_cli =
+            Cli::try_parse_from(["wavical", "model", "remove", "qwen2.5-1.5b-instruct"])
+                .expect("parse model remove");
+        match model_remove_cli.command {
+            Commands::Model(args) => match args.command {
+                ModelCommands::Remove(target) => {
+                    assert_eq!(target.id, "qwen2.5-1.5b-instruct");
+                }
+                _ => panic!("expected model remove"),
+            },
+            _ => panic!("expected model command"),
+        }
+
+        let model_verify_cli =
+            Cli::try_parse_from(["wavical", "model", "verify", "qwen2.5-1.5b-instruct"])
+                .expect("parse model verify");
+        match model_verify_cli.command {
+            Commands::Model(args) => match args.command {
+                ModelCommands::Verify(target) => {
+                    assert_eq!(target.id, "qwen2.5-1.5b-instruct");
+                }
+                _ => panic!("expected model verify"),
+            },
+            _ => panic!("expected model command"),
+        }
+
+        // Blanket --yes or -y flag MUST fail to parse
+        assert!(
+            Cli::try_parse_from(["wavical", "model", "pull", "qwen2.5-1.5b-instruct", "--yes"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["wavical", "model", "pull", "qwen2.5-1.5b-instruct", "-y"])
+                .is_err()
+        );
     }
 
     #[test]

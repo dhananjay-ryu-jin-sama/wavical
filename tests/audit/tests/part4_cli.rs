@@ -628,25 +628,25 @@ fn test_config_schema_and_dependencies_documented() {
         "docs/phase 1/WAVICAL_PHASE_1_CONFIG_SCHEMA.md must document version, tray, and shortcuts (F-A0-04)"
     );
 
-    let decisions_doc = include_str!("../../../docs/WAVICAL_PHASE_2_DECISIONS.md");
+    let decisions_doc = include_str!("../../../docs/phase 2/WAVICAL_PHASE_2_DECISIONS.md");
     assert!(
         decisions_doc.contains("getrandom")
             && decisions_doc.contains("ctrlc")
             && decisions_doc.contains("windows-registry"),
-        "docs/WAVICAL_PHASE_2_DECISIONS.md must document getrandom, ctrlc, and windows-registry dependencies (F-A0-04)"
+        "docs/phase 2/WAVICAL_PHASE_2_DECISIONS.md must document getrandom, ctrlc, and windows-registry dependencies (F-A0-04)"
     );
 }
 
 /// F-A0-05: Phase 2 WP9 hostile review notes and tests-fail proof records must exist in docs/
 #[test]
 fn test_phase_2_wp9_hostile_review_artifacts() {
-    let mut doc_path = PathBuf::from("docs/WAVICAL_PHASE_2_HOSTILE_REVIEW.md");
+    let mut doc_path = PathBuf::from("docs/phase 2/WAVICAL_PHASE_2_HOSTILE_REVIEW.md");
     if !doc_path.is_file() {
-        doc_path = PathBuf::from("../../docs/WAVICAL_PHASE_2_HOSTILE_REVIEW.md");
+        doc_path = PathBuf::from("../../docs/phase 2/WAVICAL_PHASE_2_HOSTILE_REVIEW.md");
     }
     assert!(
         doc_path.is_file(),
-        "docs/WAVICAL_PHASE_2_HOSTILE_REVIEW.md must exist (F-A0-05)"
+        "docs/phase 2/WAVICAL_PHASE_2_HOSTILE_REVIEW.md must exist (F-A0-05)"
     );
 
     let content = fs::read_to_string(&doc_path).expect("hostile review doc must be readable");

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "qwen2.5-1.5b-instruct",
+      "name": "Qwen2.5-1.5B-Instruct",
+      "kind": "chat",
+      "fileName": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "sizeBytes": 1117320736,
+      "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+      "licenseName": "Apache-2.0",
+      "licenseUrl": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/main/LICENSE",
+      "minRamBytes": 2147483648,
+      "notes": "Default Q4_K_M quantized chat completion model"
+    },
+    {
+      "id": "bge-small-en-v1.5",
+      "name": "bge-small-en-v1.5",
+      "kind": "embedding",
+      "fileName": "bge-small-en-v1.5-q4_k_m.gguf",
+      "url": "https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/bge-small-en-v1.5-q4_k_m.gguf",
+      "sizeBytes": 24808576,
+      "sha256": "363a0a4855dff6c653e06efe3209157debcf7f74e52d0d7c71e2747cd523043e",
+      "licenseName": "MIT",
+      "licenseUrl": "https://huggingface.co/BAAI/bge-small-en-v1.5",
+      "minRamBytes": 262144000,
+      "notes": "Default Q4_K_M quantized embedding model (dimension 384)"
+    }
+  ]
+}

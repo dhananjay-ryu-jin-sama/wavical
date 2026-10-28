@@ -34,6 +34,7 @@ allow = [
     "0BSD",
     "MPL-2.0",
     "BSL-1.0",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 unused-allowed-license = "allow"
