@@ -261,6 +261,69 @@ fn handle_client(
                 let _ = stream.flush();
             }
         }
+    } else if path == "/v1/embeddings" {
+        if body_str.contains("test:embedding_failure") {
+            let resp = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+            return;
+        }
+
+        if body_str.contains("test:embedding_crash") {
+            std::process::exit(42);
+        }
+
+        let dim = if body_str.contains("nomic") { 768 } else { 384 };
+
+        // Parse input: either a single string or an array of strings
+        let parsed: serde_json::Value = serde_json::from_str(&body_str).unwrap_or_default();
+        let inputs: Vec<String> = if let Some(arr) = parsed.get("input").and_then(|v| v.as_array())
+        {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(|t| t.to_string()))
+                .collect()
+        } else if let Some(s) = parsed.get("input").and_then(|v| v.as_str()) {
+            vec![s.to_string()]
+        } else {
+            vec!["default".to_string()]
+        };
+
+        let data: Vec<serde_json::Value> = inputs
+            .iter()
+            .enumerate()
+            .map(|(i, text)| {
+                let mut vec = vec![0.0f32; dim];
+                for (char_idx, b) in text.as_bytes().iter().enumerate() {
+                    vec[char_idx % dim] += (*b as f32) / 255.0;
+                    vec[(char_idx * 7 + 3) % dim] += ((*b as f32) * 1.5) / 255.0;
+                }
+                let norm = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+                let norm = if norm > 0.0 { norm } else { 1.0 };
+                for val in vec.iter_mut() {
+                    *val /= norm;
+                }
+
+                serde_json::json!({
+                    "object": "embedding",
+                    "index": i,
+                    "embedding": vec
+                })
+            })
+            .collect();
+
+        let resp_json = serde_json::json!({
+            "object": "list",
+            "data": data,
+            "model": parsed.get("model").and_then(|m| m.as_str()).unwrap_or("bge-small-en-v1.5")
+        });
+
+        let body = resp_json.to_string();
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(resp.as_bytes());
     } else {
         let body = r#"{"status":"ok"}"#;
         let resp = format!(

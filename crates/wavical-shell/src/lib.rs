@@ -452,6 +452,56 @@ pub fn process_ipc_message(
         }
     }
 
+    if request.method == "ai.index" {
+        if !active_capabilities.is_allowed("ai.index") {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+        let index_req: wavical_ipc::IndexRequest =
+            match serde_json::from_value(request.params.clone()) {
+                Ok(r) => r,
+                Err(_) => {
+                    return Ok(Some(wavical_ipc::Response::error(
+                        request.id,
+                        wavical_ipc::GENERIC_METHOD_ERROR,
+                    )));
+                }
+            };
+        if wavical_ipc::ai::validate_index_request(&index_req).is_err() {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+    }
+
+    if request.method == "ai.search" {
+        if !active_capabilities.is_allowed("ai.search") {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+        let search_req: wavical_ipc::SearchRequest =
+            match serde_json::from_value(request.params.clone()) {
+                Ok(r) => r,
+                Err(_) => {
+                    return Ok(Some(wavical_ipc::Response::error(
+                        request.id,
+                        wavical_ipc::GENERIC_METHOD_ERROR,
+                    )));
+                }
+            };
+        if wavical_ipc::ai::validate_search_request(&search_req).is_err() {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+    }
+
     let response = if registry.has_handler(&request.method) {
         wavical_ipc::dispatch(&request, &active_capabilities, registry)
     } else if wavical_ipc::is_native_method(&request.method) {

@@ -251,6 +251,33 @@ pub struct SearchRequest {
     pub top_k: usize,
 }
 
+/// Single search hit returned from `ai.search`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchHit {
+    pub id: String,
+    pub score: f32,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<HashMap<String, MetadataValue>>,
+}
+
+/// Response payload for `ai.search`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchResponse {
+    pub hits: Vec<SearchHit>,
+}
+
+/// Response payload for `ai.index`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IndexResponse {
+    pub ok: bool,
+    pub documents_indexed: usize,
+    pub chunks_created: usize,
+}
+
 // ============================================================================
 // Error Types
 // ============================================================================
@@ -396,10 +423,28 @@ pub fn validate_chat_request(req: &ChatRequest) -> Result<(), AiValidationError>
     Ok(())
 }
 
+/// Standard Windows DOS reserved device names.
+pub const RESERVED_DEVICE_NAMES: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
+/// Helper checking if a name or stem matches Windows reserved device names or path traversal.
+pub fn is_reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    RESERVED_DEVICE_NAMES.contains(&stem.to_ascii_lowercase().as_str())
+        || name == "."
+        || name == ".."
+}
+
 /// Validate that a collection name matches `^[a-z0-9._-]{1,64}$`.
 pub fn validate_collection_name(name: &str) -> Result<(), AiValidationError> {
     let char_count = name.chars().count();
     if !(MIN_COLLECTION_NAME_CHARS..=MAX_COLLECTION_NAME_CHARS).contains(&char_count) {
+        return Err(AiValidationError::InvalidCollectionName(name.to_string()));
+    }
+
+    if is_reserved_name(name) {
         return Err(AiValidationError::InvalidCollectionName(name.to_string()));
     }
 
@@ -418,6 +463,10 @@ pub fn validate_collection_name(name: &str) -> Result<(), AiValidationError> {
 pub fn validate_document_id(id: &str) -> Result<(), AiValidationError> {
     let char_count = id.chars().count();
     if !(MIN_DOCUMENT_ID_CHARS..=MAX_DOCUMENT_ID_CHARS).contains(&char_count) {
+        return Err(AiValidationError::InvalidDocumentId(id.to_string()));
+    }
+
+    if is_reserved_name(id) {
         return Err(AiValidationError::InvalidDocumentId(id.to_string()));
     }
 
