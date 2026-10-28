@@ -150,6 +150,123 @@ pub struct AppConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub file_associations: Option<Vec<String>>,
+
+    /// Optional AI subsystem configuration (Phase 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai: Option<AiConfig>,
+}
+
+/// Configuration options for the AI subsystem (`ai` section).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiConfig {
+    /// Enable AI features (default: false). Everything below is ignored if false.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Inference routing mode ('local', 'cloud', or 'local-first', default: 'local').
+    #[serde(default = "default_ai_mode")]
+    pub mode: AiMode,
+
+    /// Local inference engine configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<AiLocalConfig>,
+
+    /// Cloud inference fallback and direct provider configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<AiCloudConfig>,
+}
+
+fn default_ai_mode() -> AiMode {
+    AiMode::Local
+}
+
+/// AI execution routing mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AiMode {
+    #[default]
+    Local,
+    Cloud,
+    LocalFirst,
+}
+
+/// Local inference model configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiLocalConfig {
+    /// Catalog identifier for the chat completion model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_model: Option<String>,
+
+    /// Catalog identifier for the document embedding model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_model: Option<String>,
+
+    /// Context window size in tokens (ceiling 8192, default 4096).
+    #[serde(default = "default_context_size")]
+    pub context_size: usize,
+
+    /// Maximum tokens per generated response (ceiling 4096, default 1024).
+    #[serde(default = "default_local_max_tokens")]
+    pub max_tokens: u32,
+
+    /// Inactivity idle timeout in minutes before engine process shutdown (default 10).
+    #[serde(default = "default_idle_minutes")]
+    pub idle_minutes: u32,
+
+    /// Compute threads ('auto' or count between 1 and 128, default: 'auto').
+    #[serde(default = "default_threads")]
+    pub threads: AiThreads,
+}
+
+fn default_context_size() -> usize {
+    wavical_ipc::DEFAULT_LOCAL_CONTEXT_SIZE
+}
+
+fn default_local_max_tokens() -> u32 {
+    wavical_ipc::DEFAULT_CHAT_MAX_TOKENS
+}
+
+fn default_idle_minutes() -> u32 {
+    10
+}
+
+fn default_threads() -> AiThreads {
+    AiThreads::Auto("auto".to_string())
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Thread allocation setting for local engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AiThreads {
+    Auto(String),
+    Count(usize),
+}
+
+/// Cloud provider configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiCloudConfig {
+    /// Cloud API protocol ('openai-compatible').
+    pub protocol: String,
+
+    /// Base URL of provider endpoint (strictly HTTPS, no userinfo).
+    pub base_url: String,
+
+    /// Model name at provider (e.g. 'gpt-4o-mini').
+    pub model: String,
+
+    /// Environment variable name holding the API key (e.g. 'OPENAI_API_KEY').
+    pub api_key_env: String,
+
+    /// Require explicit native consent dialog before first cloud call (default: true).
+    #[serde(default = "default_true")]
+    pub require_consent: bool,
 }
 
 /// System tray configuration options.
@@ -192,6 +309,7 @@ impl AppConfig {
             tray: None,
             shortcuts: None,
             file_associations: None,
+            ai: None,
         }
     }
 
@@ -408,6 +526,14 @@ pub enum ValidationError {
 
     #[error("invalid shortcut specification: {0}")]
     InvalidShortcut(String),
+
+    #[error("AI configuration error: {0}")]
+    InvalidAiConfig(String),
+
+    #[error(
+        "in 'capabilities.{0}': capability '{0}' requires 'ai.enabled: true'; set 'ai: {{ enabled: true }}' in wavical.config.js to enable AI capabilities"
+    )]
+    AiCapabilityRequiresAiEnabled(String),
 }
 
 impl ValidationError {
@@ -527,7 +653,162 @@ pub fn parse_config_json(json_str: &str) -> Result<AppConfig, ValidationError> {
             .map_err(|e| ValidationError::InvalidShortcut(e.to_string()))?;
     }
 
+    if let Some(ref ai) = config.ai {
+        validate_ai_config(ai)?;
+    }
+
+    // Phase 3 rule: any ai.* capability requires ai.enabled: true
+    let ai_enabled = config.ai.as_ref().map(|a| a.enabled).unwrap_or(false);
+    if let Some(ref caps) = config.capabilities {
+        let mut sorted_caps: Vec<&String> = caps.keys().collect();
+        sorted_caps.sort();
+        for cap in sorted_caps {
+            let is_granted = *caps.get(cap).unwrap_or(&false);
+            if is_granted && cap.starts_with("ai.") && !ai_enabled {
+                return Err(ValidationError::AiCapabilityRequiresAiEnabled(cap.clone()));
+            }
+        }
+    }
+
     Ok(config)
+}
+
+/// Validate an environment variable name (`^[A-Z][A-Z0-9_]*$`).
+pub fn is_valid_env_var_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_uppercase() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Hook for catalog membership validation. In WP2, validates catalog model ID format.
+/// In WP3, this will check membership in the verified model catalog registry.
+pub fn validate_catalog_membership_hook(id: &str) -> Result<(), ValidationError> {
+    wavical_ipc::validate_catalog_model_id(id)
+        .map_err(|e| ValidationError::InvalidAiConfig(e.to_string()))
+}
+
+/// Validate the `ai` section of `wavical.config.js`.
+pub fn validate_ai_config(ai: &AiConfig) -> Result<(), ValidationError> {
+    if let Some(ref local) = ai.local {
+        if let Some(ref chat_model) = local.chat_model {
+            validate_catalog_membership_hook(chat_model)?;
+        }
+        if let Some(ref embed_model) = local.embed_model {
+            validate_catalog_membership_hook(embed_model)?;
+        }
+
+        if local.context_size == 0
+            || local.context_size > wavical_ipc::MAX_LOCAL_CONTEXT_SIZE_CEILING
+        {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.local.contextSize': value {} exceeds hard ceiling of {} (or is 0); set contextSize to at most {}",
+                local.context_size,
+                wavical_ipc::MAX_LOCAL_CONTEXT_SIZE_CEILING,
+                wavical_ipc::MAX_LOCAL_CONTEXT_SIZE_CEILING
+            )));
+        }
+
+        if local.max_tokens == 0 || local.max_tokens > wavical_ipc::MAX_CHAT_MAX_TOKENS_CEILING {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.local.maxTokens': value {} exceeds hard ceiling of {} (or is 0); set maxTokens to at most {}",
+                local.max_tokens,
+                wavical_ipc::MAX_CHAT_MAX_TOKENS_CEILING,
+                wavical_ipc::MAX_CHAT_MAX_TOKENS_CEILING
+            )));
+        }
+
+        if local.idle_minutes == 0 {
+            return Err(ValidationError::InvalidAiConfig(
+                "in 'ai.local.idleMinutes': idleMinutes must be greater than 0; set idleMinutes to at least 1".to_string(),
+            ));
+        }
+
+        match local.threads {
+            AiThreads::Auto(ref s) => {
+                if s != "auto" {
+                    return Err(ValidationError::InvalidAiConfig(format!(
+                        "in 'ai.local.threads': invalid thread specification '{s}'; must be 'auto' or an integer between 1 and 128"
+                    )));
+                }
+            }
+            AiThreads::Count(c) => {
+                if c == 0 || c > 128 {
+                    return Err(ValidationError::InvalidAiConfig(format!(
+                        "in 'ai.local.threads': invalid thread count {c}; must be between 1 and 128"
+                    )));
+                }
+            }
+        }
+    }
+
+    if let Some(ref cloud) = ai.cloud {
+        if cloud.protocol != "openai-compatible" {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.protocol': unsupported protocol '{}'; Phase 3 supports 'openai-compatible'. Set protocol to 'openai-compatible'.",
+                cloud.protocol
+            )));
+        }
+
+        if cloud.model.trim().is_empty() {
+            return Err(ValidationError::InvalidAiConfig(
+                "in 'ai.cloud.model': model name cannot be empty; specify a provider model name (e.g. 'gpt-4o-mini')".to_string(),
+            ));
+        }
+
+        // baseUrl validation: https-only, has host, no userinfo
+        if !cloud.base_url.starts_with("https://") {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.baseUrl': insecure or invalid scheme in '{}'; cloud endpoints strictly require https:// (e.g. 'https://api.openai.com/v1'). Update baseUrl to start with https://",
+                cloud.base_url
+            )));
+        }
+
+        let after_scheme = &cloud.base_url["https://".len()..];
+        let authority = after_scheme.split('/').next().unwrap_or("");
+        if authority.is_empty() {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.baseUrl': missing host in '{}'; specify a valid HTTPS host (e.g. 'https://api.openai.com/v1')",
+                cloud.base_url
+            )));
+        }
+        if authority.contains('@') {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.baseUrl': userinfo credentials are not permitted in '{}'; remove credentials from URL and supply API keys via apiKeyEnv instead",
+                cloud.base_url
+            )));
+        }
+
+        let host = authority.split(':').next().unwrap_or("");
+        if host.is_empty() || host.contains(' ') || host.starts_with('.') || host.ends_with('.') {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.baseUrl': invalid host in '{}'; specify a valid host without spaces (e.g. 'https://api.openai.com/v1')",
+                cloud.base_url
+            )));
+        }
+
+        // apiKeyEnv validation: variable name matching ^[A-Z][A-Z0-9_]*$, reject keys
+        if cloud.api_key_env.starts_with("sk-") {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.apiKeyEnv': value '{}' looks like an actual API key; apiKeyEnv must be an environment variable NAME (matching ^[A-Z][A-Z0-9_]*$), never the secret key itself. Store your secret key in an environment variable and specify its name here.",
+                cloud.api_key_env
+            )));
+        }
+
+        if !is_valid_env_var_name(&cloud.api_key_env) {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.apiKeyEnv': '{}' is not a valid environment variable name; must match pattern ^[A-Z][A-Z0-9_]*$ (e.g. 'OPENAI_API_KEY'). Update apiKeyEnv to a valid uppercase variable name.",
+                cloud.api_key_env
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /// Internal execution output capturing process status and buffered standard streams.
@@ -791,7 +1072,7 @@ mod tests {
                 assert_eq!(err.suggestion(), None);
                 let msg = err.to_string();
                 assert!(msg.contains("unknown capability 'nonexistent.capability.xyz'"));
-                assert!(msg.contains("known: badge.set, clipboard.read"));
+                assert!(msg.contains("known: ai.chat, ai.index"));
                 assert!(msg.contains("core.ping"));
                 assert!(msg.contains("tray.set"));
             }
@@ -1091,6 +1372,7 @@ mod tests {
                     tray: None,
                     shortcuts: None,
                     file_associations: None,
+                    ai: None,
                 },
             )
     }
@@ -1169,6 +1451,408 @@ mod tests {
             parse_config_json(dup_shortcut),
             Err(ValidationError::InvalidShortcut(_))
         ));
+    }
+
+    #[test]
+    fn test_ai_config_defaults() {
+        let json = r#"{
+            "appId": "test-ai",
+            "ai": {}
+        }"#;
+        let config = parse_config_json(json).expect("valid minimal AI config should parse");
+        let ai = config.ai.expect("ai section should be present");
+        assert!(!ai.enabled);
+        assert_eq!(ai.mode, AiMode::Local);
+        assert!(ai.local.is_none());
+        assert!(ai.cloud.is_none());
+    }
+
+    #[test]
+    fn test_ai_config_deny_unknown_fields() {
+        // 1. Unknown key in ai top-level
+        let bad_ai = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "unknownTopKey": 123
+            }
+        }"#;
+        let err = parse_config_json(bad_ai).unwrap_err();
+        assert!(err.to_string().contains("unknown field `unknownTopKey`"));
+
+        // 2. Unknown key in ai.local
+        let bad_local = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "unknownLocalKey": "value"
+                }
+            }
+        }"#;
+        let err = parse_config_json(bad_local).unwrap_err();
+        assert!(err.to_string().contains("unknown field `unknownLocalKey`"));
+
+        // 3. Unknown key in ai.cloud
+        let bad_cloud = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "OPENAI_API_KEY",
+                    "unknownCloudKey": true
+                }
+            }
+        }"#;
+        let err = parse_config_json(bad_cloud).unwrap_err();
+        assert!(err.to_string().contains("unknown field `unknownCloudKey`"));
+    }
+
+    #[test]
+    fn test_ai_mode_parsing() {
+        for (mode_str, expected_mode) in [
+            ("local", AiMode::Local),
+            ("cloud", AiMode::Cloud),
+            ("local-first", AiMode::LocalFirst),
+        ] {
+            let json = format!(r#"{{"appId": "test-ai", "ai": {{"mode": "{mode_str}"}}}}"#);
+            let config = parse_config_json(&json).expect("valid mode should parse");
+            assert_eq!(config.ai.unwrap().mode, expected_mode);
+        }
+
+        let bad_mode = r#"{"appId": "test-ai", "ai": {"mode": "unsupported-mode"}}"#;
+        assert!(parse_config_json(bad_mode).is_err());
+    }
+
+    #[test]
+    fn test_ai_base_url_rules() {
+        // Insecure http rejected
+        let http_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "http://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "OPENAI_API_KEY"
+                }
+            }
+        }"#;
+        let err = parse_config_json(http_json).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("in 'ai.cloud.baseUrl'"));
+        assert!(msg.contains("cloud endpoints strictly require https://"));
+
+        // Missing host rejected
+        let no_host_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "OPENAI_API_KEY"
+                }
+            }
+        }"#;
+        let err = parse_config_json(no_host_json).unwrap_err();
+        assert!(err.to_string().contains("missing host in 'https://'"));
+
+        // Userinfo rejected
+        let userinfo_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://user:pass@api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "OPENAI_API_KEY"
+                }
+            }
+        }"#;
+        let err = parse_config_json(userinfo_json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("userinfo credentials are not permitted")
+        );
+
+        // Valid baseUrl accepted
+        let valid_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "OPENAI_API_KEY"
+                }
+            }
+        }"#;
+        assert!(parse_config_json(valid_json).is_ok());
+    }
+
+    #[test]
+    fn test_ai_api_key_env_rules() {
+        // Value starting with sk- rejected as an actual key
+        let sk_key_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "sk-proj-1234567890abcdef"
+                }
+            }
+        }"#;
+        let err = parse_config_json(sk_key_json).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("in 'ai.cloud.apiKeyEnv'"));
+        assert!(msg.contains("looks like an actual API key"));
+
+        // Lowercase variable name rejected
+        let lower_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "openai_api_key"
+                }
+            }
+        }"#;
+        let err = parse_config_json(lower_json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must match pattern ^[A-Z][A-Z0-9_]*$")
+        );
+
+        // Punctuation dash rejected
+        let dash_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "OPENAI-API-KEY"
+                }
+            }
+        }"#;
+        let err = parse_config_json(dash_json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must match pattern ^[A-Z][A-Z0-9_]*$")
+        );
+
+        // Leading digit rejected
+        let digit_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "1OPENAI_KEY"
+                }
+            }
+        }"#;
+        let err = parse_config_json(digit_json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must match pattern ^[A-Z][A-Z0-9_]*$")
+        );
+
+        // Valid uppercase variable name accepted
+        let valid_json = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "cloud": {
+                    "protocol": "openai-compatible",
+                    "baseUrl": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "apiKeyEnv": "MY_PROVIDER_KEY_V2"
+                }
+            }
+        }"#;
+        assert!(parse_config_json(valid_json).is_ok());
+    }
+
+    #[test]
+    fn test_ai_local_bounds_and_catalog_hook() {
+        // contextSize ceiling 8192
+        let over_ctx = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "contextSize": 8193
+                }
+            }
+        }"#;
+        let err = parse_config_json(over_ctx).unwrap_err();
+        assert!(err.to_string().contains("exceeds hard ceiling of 8192"));
+
+        let zero_ctx = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "contextSize": 0
+                }
+            }
+        }"#;
+        assert!(parse_config_json(zero_ctx).is_err());
+
+        // maxTokens ceiling 4096
+        let over_tokens = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "maxTokens": 4097
+                }
+            }
+        }"#;
+        let err = parse_config_json(over_tokens).unwrap_err();
+        assert!(err.to_string().contains("exceeds hard ceiling of 4096"));
+
+        // idleMinutes 0 rejected
+        let zero_idle = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "idleMinutes": 0
+                }
+            }
+        }"#;
+        let err = parse_config_json(zero_idle).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("idleMinutes must be greater than 0")
+        );
+
+        // Catalog model id format hook
+        let bad_model_id = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "chatModel": "Qwen/2.5-1.5B"
+                }
+            }
+        }"#;
+        let err = parse_config_json(bad_model_id).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must match pattern [a-z0-9._-]{1,64}")
+        );
+
+        // Valid model id accepted
+        let valid_local = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "chatModel": "qwen2.5-1.5b-instruct",
+                    "embedModel": "bge-small-en-v1.5",
+                    "contextSize": 4096,
+                    "maxTokens": 1024,
+                    "idleMinutes": 10,
+                    "threads": "auto"
+                }
+            }
+        }"#;
+        assert!(parse_config_json(valid_local).is_ok());
+
+        // Numeric threads accepted
+        let threads_num = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "threads": 8
+                }
+            }
+        }"#;
+        assert!(parse_config_json(threads_num).is_ok());
+
+        // Thread count > 128 rejected
+        let threads_over = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true,
+                "local": {
+                    "threads": 129
+                }
+            }
+        }"#;
+        assert!(parse_config_json(threads_over).is_err());
+    }
+
+    #[test]
+    fn test_ai_capabilities_require_ai_enabled() {
+        for cap in ["ai.chat", "ai.index", "ai.search"] {
+            // 1. Without ai section
+            let json_no_ai =
+                format!(r#"{{"appId": "test-ai", "capabilities": {{"{cap}": true}}}}"#);
+            let err = parse_config_json(&json_no_ai).unwrap_err();
+            match err {
+                ValidationError::AiCapabilityRequiresAiEnabled(ref c) => {
+                    assert_eq!(c, cap);
+                    let msg = err.to_string();
+                    assert!(msg.contains(&format!("in 'capabilities.{cap}'")));
+                    assert!(
+                        msg.contains(&format!("capability '{cap}' requires 'ai.enabled: true'"))
+                    );
+                    assert!(msg.contains("set 'ai: { enabled: true }' in wavical.config.js"));
+                }
+                other => {
+                    panic!("Expected AiCapabilityRequiresAiEnabled for '{cap}', got: {other:?}")
+                }
+            }
+
+            // 2. With ai.enabled = false
+            let json_disabled_ai = format!(
+                r#"{{"appId": "test-ai", "ai": {{"enabled": false}}, "capabilities": {{"{cap}": true}}}}"#
+            );
+            let err = parse_config_json(&json_disabled_ai).unwrap_err();
+            assert!(matches!(
+                err,
+                ValidationError::AiCapabilityRequiresAiEnabled(_)
+            ));
+        }
+
+        // 3. With ai.enabled = true, all three AI capabilities are accepted
+        let json_enabled_ai = r#"{
+            "appId": "test-ai",
+            "ai": {
+                "enabled": true
+            },
+            "capabilities": {
+                "ai.chat": true,
+                "ai.index": true,
+                "ai.search": true
+            }
+        }"#;
+        let config =
+            parse_config_json(json_enabled_ai).expect("all AI capabilities valid when enabled");
+        assert!(config.is_capability_granted("ai.chat"));
+        assert!(config.is_capability_granted("ai.index"));
+        assert!(config.is_capability_granted("ai.search"));
     }
 
     #[test]

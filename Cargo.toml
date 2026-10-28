@@ -7,6 +7,7 @@ members = [
     "crates/wavical-config",
     "crates/wavical-cli",
     "crates/wavical-native",
+    "crates/wavical-ai",
     "tests/integration",
     "tests/audit",
 ]

@@ -43,6 +43,9 @@ fn test_part5_capability_and_method_registration() {
     let mut expected_all_caps = expected_native_caps.to_vec();
     expected_all_caps.push("core.echo");
     expected_all_caps.push("core.ping");
+    expected_all_caps.push("ai.chat");
+    expected_all_caps.push("ai.index");
+    expected_all_caps.push("ai.search");
     expected_all_caps.sort();
 
     // Check KNOWN_CAPABILITIES matches plan

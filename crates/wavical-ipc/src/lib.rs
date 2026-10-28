@@ -26,6 +26,9 @@ pub use shortcut::*;
 pub mod file_assoc;
 pub use file_assoc::*;
 
+pub mod ai;
+pub use ai::*;
+
 /// Maximum raw IPC message size in bytes before parsing (1 MB default).
 pub const MAX_MESSAGE_SIZE_BYTES: usize = 1024 * 1024;
 
@@ -374,8 +377,11 @@ pub const NATIVE_METHOD_NAMES: &[&str] = &[
     "tray.set",
 ];
 
-/// Standard known capabilities available in wavical-ipc (Phase 0 core + Phase 2 native tier 1, sorted).
+/// Standard known capabilities available in wavical-ipc (Phase 0 core, Phase 2 native tier 1, Phase 3 AI, sorted).
 pub const KNOWN_CAPABILITIES: &[&str] = &[
+    "ai.chat",
+    "ai.index",
+    "ai.search",
     "badge.set",
     "clipboard.read",
     "clipboard.write",
@@ -404,6 +410,21 @@ pub fn registered_native_methods() -> Vec<String> {
 /// Check if a method name corresponds to a registered native method.
 pub fn is_native_method(method: &str) -> bool {
     NATIVE_METHOD_NAMES.contains(&method)
+}
+
+/// Helper function returning the list of registered AI methods in sorted order.
+pub fn registered_ai_methods() -> Vec<String> {
+    AI_METHOD_NAMES.iter().map(|s| s.to_string()).collect()
+}
+
+/// Check if a method name corresponds to a registered AI method.
+pub fn is_ai_method(method: &str) -> bool {
+    AI_METHOD_NAMES.contains(&method)
+}
+
+/// Default placeholder handler for unimplemented AI methods.
+pub fn handle_ai_unimplemented(_params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    Err("AI feature not implemented yet".to_string())
 }
 
 /// Maximum clipboard text payload size in bytes (1 MB named constant).
@@ -570,11 +591,14 @@ impl HandlerRegistry {
         registry
     }
 
-    /// Create a registry pre-populated with all registered methods (core methods and native method stubs).
+    /// Create a registry pre-populated with all registered methods (core, native, and AI method stubs).
     pub fn with_all_registered_methods() -> Self {
         let mut registry = Self::with_core_handlers();
         for &method in NATIVE_METHOD_NAMES {
             registry.register(method, handle_native_unimplemented);
+        }
+        for &method in AI_METHOD_NAMES {
+            registry.register(method, handle_ai_unimplemented);
         }
         registry
     }
@@ -1083,8 +1107,11 @@ mod tests {
         let registry = HandlerRegistry::with_all_registered_methods();
         let methods = registry.registered_methods();
 
-        // Exact expected method list for Phase 2 (all registered methods: core + native)
+        // Exact expected method list for Phase 3 (all registered methods: core + native + AI)
         let expected = vec![
+            "ai.chat".to_string(),
+            "ai.index".to_string(),
+            "ai.search".to_string(),
             "badge.set".to_string(),
             "clipboard.read".to_string(),
             "clipboard.write".to_string(),
@@ -1104,6 +1131,17 @@ mod tests {
             methods, expected,
             "Exposed method list mismatch! Adding or removing an IPC method must be a deliberate, audited change."
         );
+    }
+
+    #[test]
+    fn test_registered_ai_methods_exact_allowlist() {
+        let methods = registered_ai_methods();
+        let expected = vec![
+            "ai.chat".to_string(),
+            "ai.index".to_string(),
+            "ai.search".to_string(),
+        ];
+        assert_eq!(methods, expected);
     }
 
     #[test]

@@ -3577,6 +3577,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wavical-ai"
+version = "0.1.0"
+
+[[package]]
 name = "wavical-audit"
 version = "0.1.0"
 dependencies = [
