@@ -1024,6 +1024,58 @@ fn test_raw_unc_share_prefix_check_step3() {
     );
 }
 
+/// F-A1a-04: Secondary MIME Type Match Arms (gif, webp, ico, woff, ttf) must be tested in wavical-protocol.
+/// Verifies:
+/// 1. crates/wavical-protocol/src/lib.rs::test_mime_type_mappings contains explicit assertions for secondary extensions.
+/// 2. get_mime_type correctly maps all secondary MIME types.
+#[test]
+fn test_secondary_mime_type_match_arms_tested() {
+    let protocol_lib = include_str!("../../../crates/wavical-protocol/src/lib.rs");
+    let required_extensions = [
+        "gif", "webp", "ico", "woff", "ttf", "otf", "htm", "mjs", "jpeg", "txt", "pdf",
+    ];
+
+    // 1. Verify test_mime_type_mappings in crates/wavical-protocol/src/lib.rs covers all secondary extensions
+    let test_section = protocol_lib
+        .split("fn test_mime_type_mappings()")
+        .nth(1)
+        .expect("test_mime_type_mappings must exist");
+    let test_body = test_section
+        .split('}')
+        .next()
+        .expect("test body must end with }");
+
+    for ext in required_extensions {
+        assert!(
+            test_body.contains(ext),
+            "F-A1a-04: test_mime_type_mappings in crates/wavical-protocol/src/lib.rs must assert extension '{ext}'"
+        );
+    }
+
+    // 2. Functional verification of all secondary MIME types
+    let cases = [
+        ("image.gif", "image/gif"),
+        ("image.webp", "image/webp"),
+        ("favicon.ico", "image/x-icon"),
+        ("font.woff", "font/woff"),
+        ("font.ttf", "font/ttf"),
+        ("font.otf", "font/otf"),
+        ("index.htm", "text/html; charset=utf-8"),
+        ("module.mjs", "text/javascript; charset=utf-8"),
+        ("photo.jpeg", "image/jpeg"),
+        ("readme.txt", "text/plain; charset=utf-8"),
+        ("doc.pdf", "application/pdf"),
+    ];
+
+    for (file, expected_mime) in cases {
+        let detected = get_mime_type(Path::new(file));
+        assert_eq!(
+            detected, expected_mime,
+            "F-A1a-04: get_mime_type({file}) must return {expected_mime}"
+        );
+    }
+}
+
 // =========================================================================
 // Proptests: at least 10,000 cases per property
 // =========================================================================

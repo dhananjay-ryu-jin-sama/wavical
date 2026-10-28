@@ -98,20 +98,13 @@ The table below consolidates all findings identified across Audits A0 through A5
 | **FINDING-T1** | Phase 2 | **Low** | Unbounded Tray Icon Image Decoding | `crates/wavical-native/src/tray.rs:42-48` | A3b | Fixed (`test_tray_icon_unbounded_file_size_rejected`) | Check file size (max 1 MB) before passing asset path to image decoder. |
 | **F-A5-02** | Phase 0 | **Low** | Raw Unencoded Null Byte Pre-check Untested in Protocol | `crates/wavical-protocol/src/lib.rs:176` | A5 | Fixed (`test_resolve_asset_path_unencoded_null_byte_rejected`) | Add unit test passing `"index.html\0.png"` to `resolve_asset_path` asserting `NullByte`. |
 | **F-A5-03** | Phase 0 | **Low** | Raw UNC Share Prefix Check Untested in Protocol | `crates/wavical-protocol/src/lib.rs:181` | A5 | Fixed (`test_raw_unc_share_prefix_check_step3`) | Add unit test verifying that raw `//server/share` triggers early rejection at Step 3. |
-
-| **F-A5-04** | Phase 0 | **Low** | Raw Null Byte Pre-check Untested in IPC Validator | `crates/wavical-ipc/src/lib.rs:275` | A5 | Open | Add unit test asserting `validate_raw_message` specifically returns `IpcError::NullByteDetected`. |
-
-| **F-A5-05** | Phase 0 | **Low** | Empty Raw Message Guard Untested in IPC Validator | `crates/wavical-ipc/src/lib.rs:270` | A5 | Open | Add unit test asserting `validate_raw_message("")` specifically returns `IpcError::EmptyMessage`. |
-
-| **F-A5-06** | Phase 0 | **Low** | Userinfo `@` Credential Guard Untested in Origin Extractor | `crates/wavical-shell/src/lib.rs:293` | A5 | Open | Add unit test passing `"https://user:pass@host/path"` to `extract_origin` asserting `None`. |
-
-| **F-A5-07** | Phase 2 | **Low** | Boundary Lengths & Empty String Untested in `validate_assoc_app_id` | `crates/wavical-ipc/src/file_assoc.rs:69` | A5 | Open | Add boundary tests asserting empty string rejected, 64 chars accepted, 65 chars rejected. |
-
-| **F-A0-09** | Phase 2 | **Info** | `wavical-native` Uses `#![deny(unsafe_code)]` Not `forbid` | `crates/wavical-native/src/lib.rs:1` | A0 | Open | Keep as documented exception for Win32 popup menu hook. |
-
-| **F-A0-10** | Phase 2 | **Info** | Taskbar Overlay Badge Unsupported at OS Level | `crates/wavical-native/src/lib.rs:549` | A0 | Open | Keep documented as open exception until safe COM abstractions exist. |
-
-| **F-A1a-04** | Phase 0 | **Info** | Secondary MIME Type Match Arms Untested | `crates/wavical-protocol/src/lib.rs:72-77` | A1a | Open | Expand `test_mime_type_mappings` to assert `gif`, `webp`, `ico`, `woff`, and `ttf`. |
+| **F-A5-04** | Phase 0 | **Low** | Raw Null Byte Pre-check Untested in IPC Validator | `crates/wavical-ipc/src/lib.rs:275` | A5 | Fixed (`test_validate_raw_message_null_byte_rejected`) | Add unit test asserting `validate_raw_message` specifically returns `IpcError::NullByteDetected`. |
+| **F-A5-05** | Phase 0 | **Low** | Empty Raw Message Guard Untested in IPC Validator | `crates/wavical-ipc/src/lib.rs:270` | A5 | Fixed (`test_validate_raw_message_empty_rejected`) | Add unit test asserting `validate_raw_message("")` specifically returns `IpcError::EmptyMessage`. |
+| **F-A5-06** | Phase 0 | **Low** | Userinfo `@` Credential Guard Untested in Origin Extractor | `crates/wavical-shell/src/lib.rs:293` | A5 | Fixed (`test_extract_origin_userinfo_rejected`) | Add unit test passing `"https://user:pass@host/path"` to `extract_origin` asserting `None`. |
+| **F-A5-07** | Phase 2 | **Low** | Boundary Lengths & Empty String Untested in `validate_assoc_app_id` | `crates/wavical-ipc/src/file_assoc.rs:69` | A5 | Fixed (`test_validate_assoc_app_id_boundary_lengths_and_empty`) | Add boundary tests asserting empty string rejected, 64 chars accepted, 65 chars rejected. |
+| **F-A0-09** | Phase 2 | **Info** | `wavical-native` Uses `#![deny(unsafe_code)]` Not `forbid` | `crates/wavical-native/src/lib.rs:1` | A0 | Fixed (`test_native_crate_deny_unsafe_code_and_single_exception`) | Keep as documented exception for Win32 popup menu hook. |
+| **F-A0-10** | Phase 2 | **Info** | Taskbar Overlay Badge Unsupported at OS Level | `crates/wavical-native/src/lib.rs:549` | A0 | Fixed (`test_taskbar_badge_unsupported_open_exception_documented_and_stubbed`) | Keep documented as open exception until safe COM abstractions exist. |
+| **F-A1a-04** | Phase 0 | **Info** | Secondary MIME Type Match Arms Untested | `crates/wavical-protocol/src/lib.rs:72-77` | A1a | Fixed (`test_secondary_mime_type_match_arms_tested`) | Expand `test_mime_type_mappings` to assert `gif`, `webp`, `ico`, `woff`, and `ttf`. |
 
 ---
 

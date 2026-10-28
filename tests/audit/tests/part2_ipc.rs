@@ -11,7 +11,7 @@ use std::time::Instant;
 use wavical_ipc::{
     Capabilities, GENERIC_HANDLER_ERROR, GENERIC_METHOD_ERROR, HandlerRegistry, IpcError,
     MAX_JSON_DEPTH, MAX_MESSAGE_SIZE_BYTES, Request, dispatch, dispatch_raw, parse_request,
-    validate_method_name,
+    validate_method_name, validate_raw_message,
 };
 
 #[test]
@@ -361,6 +361,27 @@ fn test_part2_response_internal_leakage() {
     assert_eq!(
         err_msg, GENERIC_HANDLER_ERROR,
         "Internal handler error leaked details to webview: {err_msg}"
+    );
+}
+
+/// F-A5-04: Raw null byte pre-check in validate_raw_message must specifically return IpcError::NullByteDetected
+#[test]
+fn test_validate_raw_message_null_byte_rejected() {
+    let null_payload = "{\"id\":1,\0\"method\":\"core.ping\"}";
+    assert_eq!(
+        validate_raw_message(null_payload),
+        Err(IpcError::NullByteDetected),
+        "F-A5-04: validate_raw_message must specifically return IpcError::NullByteDetected"
+    );
+}
+
+/// F-A5-05: Empty raw message guard in validate_raw_message must specifically return IpcError::EmptyMessage
+#[test]
+fn test_validate_raw_message_empty_rejected() {
+    assert_eq!(
+        validate_raw_message(""),
+        Err(IpcError::EmptyMessage),
+        "F-A5-05: validate_raw_message(\"\") must specifically return IpcError::EmptyMessage"
     );
 }
 

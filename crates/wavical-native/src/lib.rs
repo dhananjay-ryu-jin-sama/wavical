@@ -1,3 +1,12 @@
+//! `wavical-native` uses `#![deny(unsafe_code)]` as an approved exception
+//! to the workspace-wide `#![forbid(unsafe_code)]` standard.
+//!
+//! Documented in Phase 2 decisions (Section 4): exactly one scoped `#[allow(unsafe_code)]`
+//! site is approved in `tray.rs` for the Win32 popup menu hook (`muda::ContextMenu::show_context_menu_for_hwnd`).
+//!
+//! Open Exception (F-A0-10): Taskbar overlay badges (`badge.set`) are unsupported at OS level
+//! and deferred to avoid unverified COM unsafe code. Full parameter validation is enforced,
+//! while the native handler returns `"Taskbar overlay badge is not supported on this platform"`.
 #![deny(unsafe_code)]
 
 use std::io::Read;

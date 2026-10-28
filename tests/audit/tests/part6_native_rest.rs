@@ -11,11 +11,12 @@ use tempfile::tempdir;
 use wavical_config::parse_config_json;
 use wavical_ipc::{
     BadgeDisplay, BadgeValidationError, CrashRecoveryDecision, DEFAULT_SAVED_HEIGHT,
-    DEFAULT_SAVED_WIDTH, MAX_MENU_ITEMS, MAX_MENU_LABEL_CHARS, MenuItem, MenuValidationError,
-    Modifier, ScreenBounds, ShortcutValidationError, WindowState, decide_crash_recovery,
-    parse_and_validate_badge_params, parse_and_validate_shortcut, parse_and_validate_tray_params,
-    parse_window_state, resolve_window_state, validate_badge_count, validate_file_extension,
-    validate_menu_items, validate_shortcut_list,
+    DEFAULT_SAVED_WIDTH, FileAssocValidationError, MAX_MENU_ITEMS, MAX_MENU_LABEL_CHARS, MenuItem,
+    MenuValidationError, Modifier, ScreenBounds, ShortcutValidationError, WindowState,
+    decide_crash_recovery, parse_and_validate_badge_params, parse_and_validate_shortcut,
+    parse_and_validate_tray_params, parse_window_state, resolve_window_state,
+    validate_assoc_app_id, validate_badge_count, validate_file_extension, validate_menu_items,
+    validate_shortcut_list,
 };
 use wavical_native::{
     NativeService, SingleInstance, check_single_instance, get_app_data_dir, load_tray_icon,
@@ -507,6 +508,37 @@ fn test_part6_file_association_validation_battery() {
     assert!(wavical_ipc::build_association_keys("app/slash", "wavdemo").is_err());
 }
 
+/// F-A5-07: Boundary lengths and empty string validation in validate_assoc_app_id
+#[test]
+fn test_validate_assoc_app_id_boundary_lengths_and_empty() {
+    // 1. Empty string rejected
+    assert!(
+        matches!(
+            validate_assoc_app_id(""),
+            Err(FileAssocValidationError::InvalidAppId(ref id)) if id.is_empty()
+        ),
+        "F-A5-07: validate_assoc_app_id(\"\") must return Err(FileAssocValidationError::InvalidAppId)"
+    );
+
+    // 2. Exactly 64 characters accepted (upper valid boundary)
+    let valid_64 = "a".repeat(64);
+    assert_eq!(
+        validate_assoc_app_id(&valid_64).unwrap(),
+        valid_64.as_str(),
+        "F-A5-07: validate_assoc_app_id with exactly 64 characters must succeed"
+    );
+
+    // 3. Exactly 65 characters rejected (first invalid boundary)
+    let invalid_65 = "a".repeat(65);
+    assert!(
+        matches!(
+            validate_assoc_app_id(&invalid_65),
+            Err(FileAssocValidationError::InvalidAppId(ref id)) if id.len() == 65
+        ),
+        "F-A5-07: validate_assoc_app_id with 65 characters must return Err(FileAssocValidationError::InvalidAppId)"
+    );
+}
+
 // ============================================================================
 // 9. Phase 2 Configuration Fields (WP9)
 // ============================================================================
@@ -787,5 +819,133 @@ fn test_tray_icon_unbounded_file_size_rejected() {
     assert!(
         err.contains("exceeds maximum allowed size of 1 MB"),
         "FINDING-T1: load_tray_icon must reject file exceeding 1 MB with size error, but got: {err}"
+    );
+}
+
+/// F-A0-09: wavical-native uses #![deny(unsafe_code)] with documented single exception for Win32 popup menu hook.
+/// Verifies:
+/// 1. crates/wavical-native/src/lib.rs declares #![deny(unsafe_code)] with the documented Phase 2 exception.
+/// 2. Exactly ONE scoped #[allow(unsafe_code)] exists in crates/wavical-native/src/ (in tray.rs for show_context_menu_for_hwnd).
+/// 3. All other workspace crates strictly enforce #![forbid(unsafe_code)].
+#[test]
+fn test_native_crate_deny_unsafe_code_and_single_exception() {
+    let native_lib = include_str!("../../../crates/wavical-native/src/lib.rs");
+    assert!(
+        native_lib.starts_with(
+            "//! `wavical-native` uses `#![deny(unsafe_code)]` as an approved exception\n"
+        ),
+        "crates/wavical-native/src/lib.rs must document the approved unsafe_code exception (F-A0-09)"
+    );
+    assert!(
+        native_lib.contains("#![deny(unsafe_code)]"),
+        "crates/wavical-native/src/lib.rs must declare #![deny(unsafe_code)]"
+    );
+
+    // Verify exactly ONE #[allow(unsafe_code)] exists across all source files in wavical-native/src
+    let native_src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("crates")
+        .join("wavical-native")
+        .join("src");
+
+    let mut allow_sites = Vec::new();
+    for entry in std::fs::read_dir(&native_src_dir).expect("read native src dir") {
+        let entry = entry.expect("valid entry");
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            let content = std::fs::read_to_string(&path).expect("read rs file");
+            for (line_idx, line) in content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("#[allow(unsafe_code)]")
+                    || trimmed.starts_with("#![allow(unsafe_code)]")
+                {
+                    allow_sites.push((
+                        path.file_name().unwrap().to_string_lossy().to_string(),
+                        line_idx + 1,
+                    ));
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        allow_sites.len(),
+        1,
+        "wavical-native must contain exactly ONE scoped allow(unsafe_code), found: {:?}",
+        allow_sites
+    );
+    assert_eq!(
+        allow_sites[0].0, "tray.rs",
+        "The single allow(unsafe_code) must be in tray.rs for show_context_menu_for_hwnd"
+    );
+
+    // Verify all other crates strictly enforce #![forbid(unsafe_code)]
+    let other_crates = [
+        "crates/wavical-ipc/src/lib.rs",
+        "crates/wavical-config/src/lib.rs",
+        "crates/wavical-protocol/src/lib.rs",
+        "crates/wavical-cli/src/lib.rs",
+        "crates/wavical-cli/src/bin/wavical.rs",
+        "crates/wavical-shell/src/lib.rs",
+    ];
+
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+
+    for rel_path in other_crates {
+        let full_path = workspace_root.join(rel_path);
+        let content = std::fs::read_to_string(&full_path).expect("read crate root");
+        assert!(
+            content.contains("#![forbid(unsafe_code)]"),
+            "{rel_path} must strictly enforce #![forbid(unsafe_code)]"
+        );
+    }
+}
+
+/// F-A0-10: Taskbar overlay badge is unsupported at OS level and kept as documented open exception.
+/// Verifies:
+/// 1. crates/wavical-native/src/lib.rs formally documents the open exception for taskbar overlay badge (F-A0-10).
+/// 2. NativeService::badge_set strictly validates parameters (rejecting negative, float, invalid types).
+/// 3. Valid badge counts (0, 1..=99, >99) always return generic error "Taskbar overlay badge is not supported on this platform" (never success).
+/// 4. Zero unsafe COM calls (e.g. ITaskbarList3, SetOverlayIcon) exist in crates/wavical-native/src/.
+#[test]
+fn test_taskbar_badge_unsupported_open_exception_documented_and_stubbed() {
+    let native_lib = include_str!("../../../crates/wavical-native/src/lib.rs");
+    assert!(
+        native_lib.contains("Open Exception (F-A0-10): Taskbar overlay badges (`badge.set`)"),
+        "crates/wavical-native/src/lib.rs must document the taskbar badge open exception (F-A0-10)"
+    );
+
+    // Verify parameter validation precedes stub rejection
+    let service = NativeService::new();
+    let invalid_res = service.badge_set(&serde_json::json!(-5), "win-1");
+    assert!(invalid_res.is_err());
+    assert!(
+        invalid_res
+            .unwrap_err()
+            .contains("Badge parameter validation failed"),
+        "Invalid badge parameters must fail parameter validation"
+    );
+
+    // Verify all valid counts return the explicit unsupported platform error
+    for valid_count in [0, 1, 50, 99, 100, 150] {
+        let res = service.badge_set(&serde_json::json!(valid_count), "win-1");
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err(),
+            "Taskbar overlay badge is not supported on this platform"
+        );
+    }
+
+    // Verify no unsafe COM calls exist for taskbar badges in wavical-native/src
+    assert!(
+        !native_lib.contains("ITaskbarList3") && !native_lib.contains("SetOverlayIcon"),
+        "wavical-native must not contain unsafe COM calls for taskbar badge"
     );
 }

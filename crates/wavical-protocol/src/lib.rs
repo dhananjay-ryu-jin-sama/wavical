@@ -623,7 +623,27 @@ mod tests {
         assert_eq!(get_mime_type(Path::new("image.png")), "image/png");
         assert_eq!(get_mime_type(Path::new("photo.jpg")), "image/jpeg");
         assert_eq!(get_mime_type(Path::new("vector.svg")), "image/svg+xml");
+        assert_eq!(get_mime_type(Path::new("anim.gif")), "image/gif");
+        assert_eq!(get_mime_type(Path::new("photo.webp")), "image/webp");
+        assert_eq!(get_mime_type(Path::new("favicon.ico")), "image/x-icon");
+        assert_eq!(get_mime_type(Path::new("font.woff")), "font/woff");
         assert_eq!(get_mime_type(Path::new("font.woff2")), "font/woff2");
+        assert_eq!(get_mime_type(Path::new("font.ttf")), "font/ttf");
+        assert_eq!(get_mime_type(Path::new("font.otf")), "font/otf");
+        assert_eq!(
+            get_mime_type(Path::new("page.htm")),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            get_mime_type(Path::new("script.mjs")),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(get_mime_type(Path::new("photo.jpeg")), "image/jpeg");
+        assert_eq!(
+            get_mime_type(Path::new("readme.txt")),
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(get_mime_type(Path::new("doc.pdf")), "application/pdf");
         assert_eq!(get_mime_type(Path::new("app.wasm")), "application/wasm");
         assert_eq!(
             get_mime_type(Path::new("binary.xyz")),

@@ -5,9 +5,10 @@ use tempfile::tempdir;
 use wavical_protocol::HEADER_NOSNIFF;
 use wavical_shell::{
     DEFAULT_CSP, HEADER_CSP, IpcOriginError, WAVICAL_INIT_SCRIPT, WindowConfig,
-    build_delivery_script, check_webview2_runtime_with_override, handle_navigation_request,
-    handle_new_window_request, handle_protocol_request, is_devtools_enabled, is_navigation_allowed,
-    is_origin_allowed, process_ipc_message, truncate_payload,
+    build_delivery_script, check_webview2_runtime_with_override, extract_origin,
+    handle_navigation_request, handle_new_window_request, handle_protocol_request,
+    is_devtools_enabled, is_navigation_allowed, is_origin_allowed, process_ipc_message,
+    truncate_payload,
 };
 use wry::NewWindowResponse;
 use wry::http::{Request, StatusCode, Uri};
@@ -211,6 +212,19 @@ fn test_shell_subframe_and_special_schemes() {
     if let Ok(about_uri) = "about:blank".parse::<Uri>() {
         assert!(!is_origin_allowed(&about_uri, allowed));
     }
+}
+
+/// F-A5-06: Userinfo '@' credential guard in extract_origin must return None
+#[test]
+fn test_extract_origin_userinfo_rejected() {
+    let uri = "https://user:pass@host/path"
+        .parse::<Uri>()
+        .expect("valid uri");
+    assert_eq!(
+        extract_origin(&uri),
+        None,
+        "F-A5-06: extract_origin must reject URIs with embedded userinfo credentials"
+    );
 }
 
 /// 5. Response delivery: double JSON serialization prevents script concatenation breakout
