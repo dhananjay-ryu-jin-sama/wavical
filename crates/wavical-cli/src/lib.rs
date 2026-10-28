@@ -52,6 +52,31 @@ pub enum Commands {
 
     /// Manage local AI inference models (Phase 3 WP3)
     Model(ModelArgs),
+
+    /// Manage AI subsystem and hardware diagnostics (Phase 3 WP4)
+    Ai(AiArgs),
+}
+
+/// Arguments for the `ai` subcommand.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct AiArgs {
+    #[command(subcommand)]
+    pub command: AiCommands,
+}
+
+/// AI management subcommands (`wavical ai <COMMAND>`).
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum AiCommands {
+    /// Inspect system hardware, CPU SIMD features, engine status, and model capabilities
+    Doctor(AiDoctorArgs),
+}
+
+/// Arguments for `wavical ai doctor`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct AiDoctorArgs {
+    /// Optional project directory to inspect configured models in wavical.config.js
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
 }
 
 /// Arguments for the `model` subcommand.
@@ -981,6 +1006,13 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::Ai(args) => match run_ai(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -1187,6 +1219,18 @@ pub fn run_model(args: &ModelArgs) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Execute AI subsystem commands (`wavical ai <COMMAND>`).
+pub fn run_ai(args: &AiArgs) -> Result<(), CliError> {
+    match args.command {
+        AiCommands::Doctor(ref _doc_args) => {
+            let report = wavical_ai::run_ai_doctor(None);
+            let output = wavical_ai::format_doctor_report(&report);
+            println!("{output}");
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1371,6 +1415,17 @@ mod tests {
             Cli::try_parse_from(["wavical", "model", "pull", "qwen2.5-1.5b-instruct", "-y"])
                 .is_err()
         );
+
+        // Test wavical ai doctor
+        let ai_doc_cli = Cli::try_parse_from(["wavical", "ai", "doctor"]).expect("parse ai doctor");
+        match ai_doc_cli.command {
+            Commands::Ai(args) => match args.command {
+                AiCommands::Doctor(doc_args) => {
+                    assert_eq!(doc_args.dir, PathBuf::from("."));
+                }
+            },
+            _ => panic!("expected ai command"),
+        }
     }
 
     #[test]
