@@ -115,6 +115,24 @@ fn handle_client(
         return;
     }
 
+    let content_length: usize = headers
+        .iter()
+        .find_map(|h| {
+            if h.to_ascii_lowercase().starts_with("content-length:") {
+                h.split(':').nth(1)?.trim().parse().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    let mut body_bytes = vec![0u8; content_length];
+    if content_length > 0 {
+        use std::io::Read;
+        let _ = reader.read_exact(&mut body_bytes);
+    }
+    let body_str = String::from_utf8_lossy(&body_bytes);
+
     let path = req_line.split_whitespace().nth(1).unwrap_or("/");
 
     if path == "/health" {
@@ -144,6 +162,105 @@ fn handle_client(
             body
         );
         let _ = stream.write_all(resp.as_bytes());
+    } else if path == "/v1/chat/completions" {
+        if body_str.contains("test:crash_mid_stream") {
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            let chunk = "data: {\"choices\":[{\"delta\":{\"content\":\"initial chunk before crash\"}}]}\n\n";
+            let _ = stream.write_all(chunk.as_bytes());
+            let _ = stream.flush();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            // Simulate sudden process crash mid-stream
+            std::process::exit(99);
+        } else if body_str.contains("test:abrupt_disconnect") {
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            let chunk =
+                "data: {\"choices\":[{\"delta\":{\"content\":\"first and only chunk\"}}]}\n\n";
+            let _ = stream.write_all(chunk.as_bytes());
+            let _ = stream.flush();
+            // Drop connection without sending [DONE]
+            return;
+        } else if body_str.contains("test:hang_timeout") {
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            let _ = stream.flush();
+            // Hang for 130 seconds to trigger the 120s wall-clock timeout
+            std::thread::sleep(std::time::Duration::from_secs(130));
+            return;
+        } else if body_str.contains("test:xss_markup") {
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            let chunks = [
+                "data: {\"choices\":[{\"delta\":{\"content\":\"</script><script>alert(1)</script>\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"<img src=x onerror=alert('xss')>\"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Line 1\u{2028}Line 2\u{2029}Line 3\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ];
+            for c in chunks {
+                let _ = stream.write_all(c.as_bytes());
+                let _ = stream.flush();
+            }
+        } else if body_str.contains("test:oversized_5mb") {
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            // Send 5 MB across 80 chunks of 64 KB
+            let block = "A".repeat(64 * 1024);
+            let chunk_json = serde_json::json!({
+                "choices": [{
+                    "delta": {
+                        "content": block
+                    }
+                }]
+            })
+            .to_string();
+            let chunk_sse = format!("data: {chunk_json}\n\n");
+            for _ in 0..80 {
+                let _ = stream.write_all(chunk_sse.as_bytes());
+                let _ = stream.flush();
+            }
+            let _ = stream.write_all(b"data: [DONE]\n\n");
+            let _ = stream.flush();
+        } else if body_str.contains("test:invalid_utf8") {
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            // Raw non-UTF-8 bytes inside SSE payload
+            let mut raw_chunk = Vec::new();
+            raw_chunk
+                .extend_from_slice(b"data: {\"choices\":[{\"delta\":{\"content\":\"valid prefix ");
+            raw_chunk.extend_from_slice(&[0xFF, 0xFE, 0xFD]); // Invalid UTF-8 sequence
+            raw_chunk.extend_from_slice(b" valid suffix\"}}]}\n\n");
+            let _ = stream.write_all(&raw_chunk);
+            let _ = stream.flush();
+            let _ = stream.write_all(b"data: [DONE]\n\n");
+            let _ = stream.flush();
+        } else if body_str.contains("test:slow_stream") {
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            for i in 1..=10 {
+                let chunk = format!(
+                    "data: {{\"choices\":[{{\"delta\":{{\"content\":\"token{i} \"}}}}]}}\n\n"
+                );
+                let _ = stream.write_all(chunk.as_bytes());
+                let _ = stream.flush();
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            let _ = stream.write_all(b"data: [DONE]\n\n");
+            let _ = stream.flush();
+        } else {
+            // Standard normal completion
+            let sse_header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(sse_header.as_bytes());
+            let chunks = [
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"from fake engine!\"}}]}\n\n",
+                "data: [DONE]\n\n",
+            ];
+            for c in chunks {
+                let _ = stream.write_all(c.as_bytes());
+                let _ = stream.flush();
+            }
+        }
     } else {
         let body = r#"{"status":"ok"}"#;
         let resp = format!(

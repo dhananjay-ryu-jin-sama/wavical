@@ -550,4 +550,72 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // ========================================================================
+    // WP5: Local AI Chat (Streaming + Cancel + textContent ONLY)
+    // ========================================================================
+    const btnChatSend = document.getElementById('btn-chat-send');
+    const btnChatCancel = document.getElementById('btn-chat-cancel');
+    const chatPromptInput = document.getElementById('chat-prompt-input');
+    const chatOutput = document.getElementById('chat-output');
+    const chatStatusBadge = document.getElementById('chat-status-badge');
+    const chatStatusText = document.getElementById('chat-status-text');
+
+    let currentChatRequestId = 1;
+
+    if (btnChatSend) {
+        btnChatSend.addEventListener('click', async () => {
+            const prompt = (chatPromptInput ? chatPromptInput.value : '').trim();
+            if (!prompt) return;
+
+            // Reset UI strictly with textContent (never innerHTML)
+            chatOutput.textContent = '';
+            chatStatusBadge.textContent = 'Generating';
+            chatStatusText.textContent = 'Streaming response...';
+            btnChatSend.disabled = true;
+            if (btnChatCancel) btnChatCancel.disabled = false;
+
+            const chatParams = {
+                messages: [
+                    { role: 'user', content: prompt }
+                ],
+                maxTokens: 512,
+                temperature: 0.7,
+                stream: true
+            };
+
+            try {
+                // Stream chunks directly into textContent
+                const result = await window.wavical.invoke('ai.chat', chatParams, (chunk) => {
+                    chatOutput.textContent += chunk;
+                });
+
+                const statusStr = (result && result.status) ? result.status : 'done';
+                chatStatusBadge.textContent = statusStr.toUpperCase();
+                chatStatusText.textContent = `Completed with status: ${statusStr}`;
+            } catch (err) {
+                chatStatusBadge.textContent = 'FAILED';
+                chatStatusText.textContent = err.message || 'AI chat request failed';
+            } finally {
+                btnChatSend.disabled = false;
+                if (btnChatCancel) btnChatCancel.disabled = true;
+            }
+        });
+    }
+
+    if (btnChatCancel) {
+        btnChatCancel.addEventListener('click', async () => {
+            chatStatusBadge.textContent = 'CANCELLING';
+            chatStatusText.textContent = 'Cancellation requested...';
+            try {
+                if (typeof window.wavical.cancel === 'function') {
+                    await window.wavical.cancel(currentChatRequestId);
+                } else {
+                    await window.wavical.invoke('ai.cancel', { id: currentChatRequestId });
+                }
+            } catch (err) {
+                chatStatusText.textContent = err.message || 'Cancel request failed';
+            }
+        });
+    }
 });

@@ -5,6 +5,15 @@ export default {
     width: 1200,
     height: 800
   },
+  ai: {
+    enabled: true,
+    mode: 'local',
+    local: {
+      chatModel: 'qwen2.5-1.5b-instruct',
+      maxTokens: 512,
+      idleMinutes: 10,
+    }
+  },
   capabilities: {
     'core.ping': true,
     'clipboard.read': true,
@@ -17,7 +26,8 @@ export default {
     'tray.set': true,
     'menu.showContextMenu': true,
     'shortcut.register': true,
-    'badge.set': true
+    'badge.set': true,
+    'ai.chat': true
   },
   shortcuts: [
     'Ctrl+Shift+K'

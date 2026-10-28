@@ -331,7 +331,13 @@ impl Capabilities {
 
     /// Check if permission is granted for a specific method name.
     pub fn is_allowed(&self, method: &str) -> bool {
-        self.methods.contains(method)
+        if self.methods.contains(method) {
+            return true;
+        }
+        if method == "ai.cancel" && self.methods.contains("ai.chat") {
+            return true;
+        }
+        false
     }
 
     /// Return the count of currently granted methods.

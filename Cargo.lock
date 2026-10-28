@@ -4312,6 +4312,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tracing",
+ "tracing-subscriber",
  "wavical-ipc",
  "win32job",
 ]
@@ -4439,6 +4440,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon",
+ "wavical-ai",
  "wavical-ipc",
  "wavical-native",
  "wavical-protocol",

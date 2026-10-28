@@ -21,3 +21,4 @@ win32job = "2.0.3"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tracing-subscriber = "0.3.23"

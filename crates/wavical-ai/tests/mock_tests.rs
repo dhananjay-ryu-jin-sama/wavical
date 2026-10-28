@@ -27,10 +27,10 @@ enum MockResponse {
     Truncated(Vec<u8>, usize),
 }
 
+type MockHandler = Arc<dyn Fn(&str, Option<&str>) -> MockResponse + Send + Sync + 'static>;
+
 impl MockHttpServer {
-    fn start(
-        response_fn: Arc<dyn Fn(&str, Option<&str>) -> MockResponse + Send + Sync + 'static>,
-    ) -> Self {
+    fn start(response_fn: MockHandler) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind local mock server");
         let port = listener.local_addr().unwrap().port();
         let running = Arc::new(AtomicBool::new(true));
@@ -72,26 +72,25 @@ impl MockHttpServer {
                         MockResponse::Fixed(bytes) => {
                             if let Some(ref range) = range_header {
                                 // Range: bytes=X-
-                                if let Some(idx) = range.find('=') {
-                                    let val = range[idx + 1..].trim();
-                                    if let Some(start_str) = val.split('-').next() {
-                                        if let Ok(start) = start_str.parse::<usize>() {
-                                            if start < bytes.len() {
-                                                let slice = &bytes[start..];
-                                                let resp = format!(
-                                                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
-                                                    slice.len(),
-                                                    start,
-                                                    bytes.len() - 1,
-                                                    bytes.len()
-                                                );
-                                                let _ = stream.write_all(resp.as_bytes());
-                                                let _ = stream.write_all(slice);
-                                                let _ = stream.flush();
-                                                continue;
-                                            }
-                                        }
-                                    }
+                                let start_opt = range
+                                    .find('=')
+                                    .and_then(|idx| range[idx + 1..].trim().split('-').next())
+                                    .and_then(|s| s.parse::<usize>().ok())
+                                    .filter(|&start| start < bytes.len());
+
+                                if let Some(start) = start_opt {
+                                    let slice = &bytes[start..];
+                                    let resp = format!(
+                                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                                        slice.len(),
+                                        start,
+                                        bytes.len() - 1,
+                                        bytes.len()
+                                    );
+                                    let _ = stream.write_all(resp.as_bytes());
+                                    let _ = stream.write_all(slice);
+                                    let _ = stream.flush();
+                                    continue;
                                 }
                             }
 

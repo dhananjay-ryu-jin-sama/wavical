@@ -38,12 +38,26 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         if (!response || typeof response.id !== 'number') return;
         const entry = pending.get(response.id);
         if (!entry) return;
+
+        // Check for incremental stream chunk
+        if (response.chunk !== undefined) {
+            if (typeof entry.onChunk === 'function') {
+                try {
+                    entry.onChunk(response.chunk);
+                } catch (_) {}
+            }
+            window.dispatchEvent(new CustomEvent('wavical:ai_chunk', { detail: response }));
+            return;
+        }
+
+        // Final completion message
         pending.delete(response.id);
         if (response.ok) {
-            entry.resolve(response.result);
+            entry.resolve(response.result !== undefined ? response.result : response);
         } else {
             entry.reject(new Error(response.error || "IPC request failed"));
         }
+        window.dispatchEvent(new CustomEvent('wavical:ai_stream_end', { detail: response }));
     }
 
     Object.defineProperty(window, '__wavical_receive__', {
@@ -53,7 +67,7 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         enumerable: false,
     });
 
-    function invoke(method, params = null) {
+    function invoke(method, params = null, onChunk = null) {
         if (typeof method !== 'string') {
             return Promise.reject(new TypeError("Method must be a string"));
         }
@@ -65,7 +79,7 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
             nextId = 1;
         }
         return new Promise((resolve, reject) => {
-            pending.set(id, { resolve, reject });
+            pending.set(id, { resolve, reject, onChunk });
             try {
                 window.ipc.postMessage(JSON.stringify({ id, method, params }));
             } catch (err) {
@@ -75,8 +89,16 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
         });
     }
 
+    function cancel(requestId) {
+        if (typeof requestId !== 'number') {
+            return Promise.reject(new TypeError("Request ID must be a number"));
+        }
+        return invoke('ai.cancel', { id: requestId });
+    }
+
     const wavicalApi = Object.freeze({
         invoke: Object.freeze(invoke),
+        cancel: Object.freeze(cancel),
     });
 
     Object.defineProperty(window, 'wavical', {
@@ -375,6 +397,59 @@ pub fn process_ipc_message(
             request.id,
             wavical_ipc::GENERIC_METHOD_ERROR,
         )));
+    }
+
+    if request.method == "ai.cancel" {
+        let target_id = request.params.get("id").and_then(|v| v.as_u64());
+        match target_id {
+            Some(tid) => {
+                if wavical_ai::chat::global_chat_sessions()
+                    .cancel_session(&config.window_id, tid)
+                    .is_err()
+                {
+                    return Ok(Some(wavical_ipc::Response::error(
+                        request.id,
+                        wavical_ipc::GENERIC_METHOD_ERROR,
+                    )));
+                }
+                return Ok(Some(wavical_ipc::Response::success(
+                    request.id,
+                    serde_json::json!({"status": "ok"}),
+                )));
+            }
+            None => {
+                return Ok(Some(wavical_ipc::Response::error(
+                    request.id,
+                    wavical_ipc::GENERIC_METHOD_ERROR,
+                )));
+            }
+        }
+    }
+
+    if request.method == "ai.chat" {
+        let chat_req: wavical_ipc::ChatRequest =
+            match serde_json::from_value(request.params.clone()) {
+                Ok(r) => r,
+                Err(_) => {
+                    return Ok(Some(wavical_ipc::Response::error(
+                        request.id,
+                        wavical_ipc::GENERIC_METHOD_ERROR,
+                    )));
+                }
+            };
+        if wavical_ipc::ai::validate_chat_request(&chat_req).is_err() {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+
+        if wavical_ai::chat::global_chat_sessions().has_active_session(&config.window_id) {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
     }
 
     let response = if registry.has_handler(&request.method) {

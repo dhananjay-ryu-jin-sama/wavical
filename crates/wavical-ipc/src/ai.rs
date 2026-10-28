@@ -802,9 +802,7 @@ mod tests {
 
         // 6. Multibyte UTF-8 boundary (32,000 multibyte characters)
         // '🦀' is 4 bytes, 32,000 chars = 128,000 bytes. Char count should be 32,000.
-        let multibyte_32k: String = std::iter::repeat('🦀')
-            .take(MAX_CHAT_MESSAGE_CHARS)
-            .collect();
+        let multibyte_32k: String = "🦀".repeat(MAX_CHAT_MESSAGE_CHARS);
         assert_eq!(multibyte_32k.chars().count(), MAX_CHAT_MESSAGE_CHARS);
         assert_eq!(multibyte_32k.len(), MAX_CHAT_MESSAGE_CHARS * 4);
         let req_multibyte_32k = ChatRequest {
@@ -819,9 +817,7 @@ mod tests {
         assert!(validate_chat_request(&req_multibyte_32k).is_ok());
 
         // 7. Multibyte UTF-8 boundary + 1 char (32,001 chars) rejected
-        let multibyte_32k_plus_1: String = std::iter::repeat('🦀')
-            .take(MAX_CHAT_MESSAGE_CHARS + 1)
-            .collect();
+        let multibyte_32k_plus_1: String = "🦀".repeat(MAX_CHAT_MESSAGE_CHARS + 1);
         let req_multibyte_plus_1 = ChatRequest {
             messages: vec![ChatMessage {
                 role: ChatRole::User,
@@ -1227,7 +1223,7 @@ mod tests {
         );
 
         // Multibyte 100,000 chars ('日')
-        let mb_100k: String = std::iter::repeat('日').take(MAX_DOCUMENT_CHARS).collect();
+        let mb_100k: String = "日".repeat(MAX_DOCUMENT_CHARS);
         assert_eq!(mb_100k.chars().count(), MAX_DOCUMENT_CHARS);
         assert_eq!(mb_100k.len(), MAX_DOCUMENT_CHARS * 3);
         let doc_mb_100k = IndexRequest {
@@ -1355,9 +1351,7 @@ mod tests {
         );
 
         // Multibyte 4,000 chars ('🔍')
-        let mb_4k: String = std::iter::repeat('🔍')
-            .take(MAX_SEARCH_QUERY_CHARS)
-            .collect();
+        let mb_4k: String = "🔍".repeat(MAX_SEARCH_QUERY_CHARS);
         assert_eq!(mb_4k.chars().count(), MAX_SEARCH_QUERY_CHARS);
         let req_mb_4k = SearchRequest {
             collection: "docs".to_string(),

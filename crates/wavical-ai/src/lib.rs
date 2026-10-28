@@ -7,6 +7,7 @@
 
 pub mod catalog;
 pub mod channel;
+pub mod chat;
 pub mod client;
 pub mod commands;
 pub mod doctor;
@@ -22,6 +23,7 @@ pub mod storage;
 
 pub use catalog::*;
 pub use channel::*;
+pub use chat::*;
 pub use client::*;
 pub use commands::*;
 pub use doctor::*;

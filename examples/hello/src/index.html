@@ -124,6 +124,28 @@
                 </button>
             </div>
 
+            <div class="section-label">AI Chat Assistant (WP5) &bull; <code>capabilities['ai.chat']</code></div>
+            <div class="input-row">
+                <input id="chat-prompt-input" class="text-input" type="text" placeholder="Type a message for local AI..." value="Why is Rust memory-safe?">
+            </div>
+            <div class="button-row">
+                <button id="btn-chat-send" class="btn btn-primary" type="button">
+                    <span class="btn-icon">💬</span>
+                    Send Chat <small>[ai.chat stream]</small>
+                </button>
+                <button id="btn-chat-cancel" class="btn btn-secondary" type="button">
+                    <span class="btn-icon">🛑</span>
+                    Cancel Stream <small>[ai.cancel]</small>
+                </button>
+            </div>
+            <div class="chat-response-container">
+                <div class="chat-status-bar">
+                    <span id="chat-status-badge" class="badge">Idle</span>
+                    <span id="chat-status-text">Ready for prompt</span>
+                </div>
+                <div id="chat-output" class="chat-output-text"></div>
+            </div>
+
             <div id="ipc-output" class="output-box idle">
                 <span class="placeholder">Click any button above to verify IPC capabilities and security guards.</span>
             </div>

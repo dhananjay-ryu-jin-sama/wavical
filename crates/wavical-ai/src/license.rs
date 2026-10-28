@@ -158,7 +158,7 @@ mod tests {
         let mut output = Vec::new();
 
         let res = check_and_prompt_license(&entry, temp.path(), 1, None, &mut input, &mut output);
-        assert_eq!(res.unwrap(), false);
+        assert!(!res.unwrap());
         assert!(is_license_accepted(
             temp.path(),
             &entry.id,
@@ -218,7 +218,7 @@ mod tests {
             &mut dummy_in,
             &mut dummy_out,
         );
-        assert_eq!(res.unwrap(), false);
+        assert!(!res.unwrap());
         assert!(is_license_accepted(
             temp.path(),
             &entry.id,
@@ -228,7 +228,7 @@ mod tests {
         // Subsequent call reports already accepted
         let res_subsequent =
             check_and_prompt_license(&entry, temp.path(), 1, None, &mut dummy_in, &mut dummy_out);
-        assert_eq!(res_subsequent.unwrap(), true);
+        assert!(res_subsequent.unwrap());
 
         // Mismatched flag fails
         let temp2 = tempdir().unwrap();
