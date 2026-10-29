@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -31,6 +32,10 @@ use wavical_ipc::ai::{
 };
 
 use crate::channel::EngineChannel;
+use crate::cloud_client::validate_and_extract_cloud_host;
+use crate::cloud_protocol::execute_cloud_chat_stream;
+use crate::consent::{ConsentDialogProvider, check_cloud_consent, ensure_cloud_consent};
+use crate::credentials::resolve_api_key;
 
 /// Generic user-facing error message for all AI chat failures.
 pub const GENERIC_AI_CHAT_ERROR: &str = "AI chat operation failed";
@@ -228,6 +233,7 @@ pub fn build_chat_final_script(
     id: u64,
     status: ChatStreamStatus,
     generic_error: Option<&str>,
+    backend: &str,
 ) -> Result<String, serde_json::Error> {
     let is_ok = status == ChatStreamStatus::Done || status == ChatStreamStatus::Truncated;
     let status_str = status.as_str();
@@ -235,8 +241,10 @@ pub fn build_chat_final_script(
         "id": id,
         "ok": is_ok,
         "status": status_str,
+        "backend": backend,
         "result": {
             "status": status_str,
+            "backend": backend,
         },
         "error": generic_error,
     });
@@ -595,6 +603,305 @@ pub fn execute_chat_stream<F, G>(
     on_final(ChatStreamStatus::Done, None);
 }
 
+/// Execution mode for chat completions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatExecutionMode {
+    Local,
+    Cloud,
+    LocalFirst,
+}
+
+impl ChatExecutionMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "local" => Some(Self::Local),
+            "cloud" => Some(Self::Cloud),
+            "local-first" | "local_first" => Some(Self::LocalFirst),
+            _ => None,
+        }
+    }
+}
+
+/// Cloud configuration parameters for chat execution.
+#[derive(Debug, Clone)]
+pub struct CloudChatConfig {
+    pub base_url: String,
+    pub model: String,
+    pub api_key_env: String,
+    pub require_consent: bool,
+}
+
+/// Dispatch and execute a chat completion according to the configured mode (`local`, `cloud`, or `local-first`).
+///
+/// Invariants:
+/// - `local`: never makes a network call to cloud. If local engine is unavailable, fails immediately.
+/// - `cloud`: always uses cloud. Local engine is not used. Requires consent and credentials.
+/// - `local-first`: attempts local first; falls back to cloud ONLY when local is unavailable
+///   (engine unavailable, model missing, or failed startup), cloud is configured, AND consent exists.
+///   Content refusals and slowness are NOT triggers.
+///   `local-first` does not fall back when consent is missing.
+/// - Every response carries `backend: "local" | "cloud"`.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_chat_with_mode<F, G>(
+    mode: ChatExecutionMode,
+    app_data_path: &Path,
+    app_id: &str,
+    window_id: &str,
+    request_id: u64,
+    request: &ChatRequest,
+    stream_config: &StreamChatConfig,
+    cancel_flag: &Arc<AtomicBool>,
+    local_client: &Client,
+    local_channel: Option<&EngineChannel>,
+    local_model_id: Option<&str>,
+    cloud_client: &Client,
+    cloud_config: Option<&CloudChatConfig>,
+    consent_provider: &dyn ConsentDialogProvider,
+    on_chunk: F,
+    on_final: G,
+) where
+    F: FnMut(&str),
+    G: FnOnce(ChatStreamStatus, Option<String>, &'static str),
+{
+    match mode {
+        ChatExecutionMode::Local => {
+            // Local mode: strictly NEVER touches the network or cloud
+            let channel = match local_channel {
+                Some(ch) => ch,
+                None => {
+                    tracing::warn!(
+                        event = EVENT_AI_CALL_FAILED,
+                        window_id = %window_id,
+                        method = METHOD_AI_CHAT,
+                        backend = "local",
+                        error_code = "local_engine_unavailable",
+                        "Local AI engine is unavailable and mode is 'local'"
+                    );
+                    on_final(
+                        ChatStreamStatus::Failed,
+                        Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                        "local",
+                    );
+                    return;
+                }
+            };
+            let model_id = local_model_id.unwrap_or("unknown-local-model");
+            execute_chat_stream(
+                local_client,
+                channel,
+                window_id,
+                request_id,
+                model_id,
+                request,
+                stream_config,
+                cancel_flag,
+                on_chunk,
+                |status, err| on_final(status, err, "local"),
+            );
+        }
+        ChatExecutionMode::Cloud => {
+            // Cloud mode: always uses cloud; local engine never called
+            let cloud = match cloud_config {
+                Some(c) => c,
+                None => {
+                    tracing::warn!(
+                        event = EVENT_AI_CALL_FAILED,
+                        window_id = %window_id,
+                        method = METHOD_AI_CHAT,
+                        backend = "cloud",
+                        error_code = "cloud_unconfigured",
+                        "Cloud configuration missing in mode 'cloud'"
+                    );
+                    on_final(
+                        ChatStreamStatus::Failed,
+                        Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                        "cloud",
+                    );
+                    return;
+                }
+            };
+
+            let host = match validate_and_extract_cloud_host(&cloud.base_url) {
+                Ok(h) => h,
+                Err(_) => {
+                    on_final(
+                        ChatStreamStatus::Failed,
+                        Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                        "cloud",
+                    );
+                    return;
+                }
+            };
+
+            // Check / prompt consent
+            if ensure_cloud_consent(
+                app_data_path,
+                app_id,
+                &host,
+                cloud.require_consent,
+                consent_provider,
+            )
+            .is_err()
+            {
+                tracing::warn!(
+                    event = EVENT_AI_CALL_DENIED,
+                    window_id = %window_id,
+                    method = METHOD_AI_CHAT,
+                    backend = "cloud",
+                    host = %host,
+                    reason = "user declined cloud consent",
+                    "Cloud AI request denied due to lack of consent"
+                );
+                on_final(
+                    ChatStreamStatus::Failed,
+                    Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                    "cloud",
+                );
+                return;
+            }
+
+            // Resolve API key
+            let api_key = match resolve_api_key(&cloud.api_key_env, &host) {
+                Ok(k) => k,
+                Err(_) => {
+                    tracing::warn!(
+                        event = EVENT_AI_CALL_FAILED,
+                        window_id = %window_id,
+                        method = METHOD_AI_CHAT,
+                        backend = "cloud",
+                        host = %host,
+                        error_code = "api_key_not_found",
+                        "Cloud API key could not be resolved from env or credential store"
+                    );
+                    on_final(
+                        ChatStreamStatus::Failed,
+                        Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                        "cloud",
+                    );
+                    return;
+                }
+            };
+
+            execute_cloud_chat_stream(
+                cloud_client,
+                &cloud.base_url,
+                &cloud.model,
+                &api_key,
+                window_id,
+                request_id,
+                request,
+                stream_config,
+                cancel_flag,
+                on_chunk,
+                |status, err| on_final(status, err, "cloud"),
+            );
+        }
+        ChatExecutionMode::LocalFirst => {
+            // Local-first: tries local first; falls back to cloud ONLY when local is unavailable,
+            // cloud is configured, AND consent already exists.
+            let local_available = local_channel.is_some() && local_model_id.is_some();
+
+            if local_available {
+                let channel = local_channel.unwrap();
+                let model_id = local_model_id.unwrap();
+                execute_chat_stream(
+                    local_client,
+                    channel,
+                    window_id,
+                    request_id,
+                    model_id,
+                    request,
+                    stream_config,
+                    cancel_flag,
+                    on_chunk,
+                    |status, err| on_final(status, err, "local"),
+                );
+            } else {
+                // Local is unavailable. Check fallback conditions:
+                // 1. Cloud is configured
+                let cloud = match cloud_config {
+                    Some(c) => c,
+                    None => {
+                        on_final(
+                            ChatStreamStatus::Failed,
+                            Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                            "local",
+                        );
+                        return;
+                    }
+                };
+
+                let host = match validate_and_extract_cloud_host(&cloud.base_url) {
+                    Ok(h) => h,
+                    Err(_) => {
+                        on_final(
+                            ChatStreamStatus::Failed,
+                            Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                            "local",
+                        );
+                        return;
+                    }
+                };
+
+                // 2. Consent already exists (CRITICAL: local-first does not fall back when consent is missing!)
+                if check_cloud_consent(app_data_path, app_id, &host) != Some(true) {
+                    tracing::warn!(
+                        event = EVENT_AI_CALL_FAILED,
+                        window_id = %window_id,
+                        method = METHOD_AI_CHAT,
+                        backend = "local",
+                        host = %host,
+                        reason = "cloud consent missing, cannot fall back in local-first mode",
+                        "Local AI unavailable and cloud consent missing; fallback refused"
+                    );
+                    on_final(
+                        ChatStreamStatus::Failed,
+                        Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                        "local",
+                    );
+                    return;
+                }
+
+                // 3. API key exists
+                let api_key = match resolve_api_key(&cloud.api_key_env, &host) {
+                    Ok(k) => k,
+                    Err(_) => {
+                        on_final(
+                            ChatStreamStatus::Failed,
+                            Some(GENERIC_AI_CHAT_ERROR.to_string()),
+                            "cloud",
+                        );
+                        return;
+                    }
+                };
+
+                tracing::info!(
+                    event = "ai.call.fallback",
+                    window_id = %window_id,
+                    method = METHOD_AI_CHAT,
+                    fallback_to = "cloud",
+                    host = %host,
+                    "Local AI unavailable; falling back to cloud in local-first mode"
+                );
+
+                execute_cloud_chat_stream(
+                    cloud_client,
+                    &cloud.base_url,
+                    &cloud.model,
+                    &api_key,
+                    window_id,
+                    request_id,
+                    request,
+                    stream_config,
+                    cancel_flag,
+                    on_chunk,
+                    |status, err| on_final(status, err, "cloud"),
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -697,9 +1004,10 @@ mod tests {
                 "script must never contain raw unescaped </script>"
             );
 
-            let final_script =
-                build_chat_final_script(42, ChatStreamStatus::Done, None).expect("must serialize");
+            let final_script = build_chat_final_script(42, ChatStreamStatus::Done, None, "local")
+                .expect("must serialize");
             assert!(final_script.contains("done"));
+            assert!(final_script.contains("local"));
 
             // Verify that stripping the JS wrapper and parsing JSON recovers the exact original payload
             let prefix = "window.__wavical_receive__(JSON.parse(";

@@ -8,7 +8,9 @@ publish.workspace = true
 [dependencies]
 fs4 = "1.1.0"
 getrandom = "0.3"
+keyring = "4.2.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "blocking", "stream", "system-proxy", "json"] }
+rfd = "0.17.2"
 rusqlite = { version = "0.41.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -22,5 +24,8 @@ win32job = "2.0.3"
 
 [dev-dependencies]
 proptest = "1.12.0"
+rcgen = "0.14.10"
 tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-rustls = "0.26.6"
 tracing-subscriber = "0.3.23"

@@ -55,6 +55,9 @@ pub enum Commands {
 
     /// Manage AI subsystem and hardware diagnostics (Phase 3 WP4)
     Ai(AiArgs),
+
+    /// Manage stored credentials for cloud AI providers (Phase 3 WP7)
+    Secret(SecretArgs),
 }
 
 /// Arguments for the `ai` subcommand.
@@ -77,6 +80,30 @@ pub struct AiDoctorArgs {
     /// Optional project directory to inspect configured models in wavical.config.js
     #[arg(default_value = ".")]
     pub dir: PathBuf,
+}
+
+/// Arguments for the `secret` subcommand.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct SecretArgs {
+    #[command(subcommand)]
+    pub command: SecretCommands,
+}
+
+/// Secret management subcommands (`wavical secret <COMMAND>`).
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum SecretCommands {
+    /// Store an API key in the Windows Credential Store for a provider host
+    Set(SecretHostArgs),
+
+    /// Clear a stored API key from the Windows Credential Store for a provider host
+    Clear(SecretHostArgs),
+}
+
+/// Arguments containing the provider host for secret commands.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct SecretHostArgs {
+    /// Provider hostname (e.g. 'api.openai.com')
+    pub host: String,
 }
 
 /// Arguments for the `model` subcommand.
@@ -219,6 +246,9 @@ pub enum CliError {
 
     #[error("model error: {0}")]
     ModelError(#[from] wavical_ai::CommandError),
+
+    #[error("secret error: {0}")]
+    SecretError(String),
 }
 
 /// Summary returned after successful initialization of a new project.
@@ -1013,6 +1043,13 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::Secret(args) => match run_secret(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -1231,6 +1268,37 @@ pub fn run_ai(args: &AiArgs) -> Result<(), CliError> {
     }
 }
 
+/// Execute credential storage commands (`wavical secret <COMMAND>`).
+pub fn run_secret(args: &SecretArgs) -> Result<(), CliError> {
+    match &args.command {
+        SecretCommands::Set(host_args) => {
+            let host = wavical_ai::credentials::validate_provider_host(&host_args.host)
+                .map_err(|e| CliError::SecretError(e.to_string()))?;
+
+            let secret = rpassword::prompt_password(format!("Enter API key for '{host}': "))
+                .map_err(|e| {
+                    CliError::SecretError(format!("failed to read hidden password prompt: {e}"))
+                })?;
+
+            wavical_ai::credentials::store_secret_in_keyring(host, &secret)
+                .map_err(|e| CliError::SecretError(e.to_string()))?;
+
+            println!("✓ Successfully stored API key for '{host}' in Windows Credential Store.");
+            Ok(())
+        }
+        SecretCommands::Clear(host_args) => {
+            let host = wavical_ai::credentials::validate_provider_host(&host_args.host)
+                .map_err(|e| CliError::SecretError(e.to_string()))?;
+
+            wavical_ai::credentials::clear_secret_from_keyring(host)
+                .map_err(|e| CliError::SecretError(e.to_string()))?;
+
+            println!("✓ Cleared API key for '{host}' from Windows Credential Store.");
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1426,6 +1494,49 @@ mod tests {
             },
             _ => panic!("expected ai command"),
         }
+
+        // Test wavical secret set & clear
+        let secret_set_cli = Cli::try_parse_from(["wavical", "secret", "set", "api.openai.com"])
+            .expect("parse secret set");
+        match secret_set_cli.command {
+            Commands::Secret(args) => match args.command {
+                SecretCommands::Set(host_args) => {
+                    assert_eq!(host_args.host, "api.openai.com");
+                }
+                _ => panic!("expected secret set"),
+            },
+            _ => panic!("expected secret command"),
+        }
+
+        let secret_clear_cli =
+            Cli::try_parse_from(["wavical", "secret", "clear", "api.openai.com"])
+                .expect("parse secret clear");
+        match secret_clear_cli.command {
+            Commands::Secret(args) => match args.command {
+                SecretCommands::Clear(host_args) => {
+                    assert_eq!(host_args.host, "api.openai.com");
+                }
+                _ => panic!("expected secret clear"),
+            },
+            _ => panic!("expected secret command"),
+        }
+
+        // Passing key via command-line argument MUST fail to parse (secrets never in arguments)
+        assert!(
+            Cli::try_parse_from([
+                "wavical",
+                "secret",
+                "set",
+                "api.openai.com",
+                "--key",
+                "secret123"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["wavical", "secret", "set", "api.openai.com", "secret123"])
+                .is_err()
+        );
     }
 
     #[test]
