@@ -32,29 +32,29 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 
 ## Phase 2 — Native Tier 1 APIs (pure Rust, zero Node required)
 
-- [ ] File dialogs (`rfd`)
-- [ ] Clipboard (`arboard`)
-- [ ] Notifications (`notify-rust`)
-- [ ] System tray — confirm whether `tao` still ships this or whether `tray-icon`/`muda` are needed; add explicitly if so
-- [ ] Global shortcuts (`global-hotkey` if split out of `tao`)
-- [ ] Native context menu builder (`wavical.menu.showContextMenu`)
-- [ ] Window state persistence (position/size/maximized, opt-out-able)
-- [ ] Single-instance lock (second launch focuses existing window)
-- [ ] File association registration (declare `.foo` file handling in config)
-- [ ] Taskbar overlay badges (Windows)
-- [ ] Webview crash recovery (auto-reload if WebView2 renderer process dies)
-- [ ] WebView2 detection + fallback UX (not installed / blocked by IT policy)
+- [x] File dialogs (`rfd`) — `dialog.openFile` and `dialog.saveFile` returning 128-bit opaque `GrantTable` tokens (`ReadOnly` / `WriteOnly` scoped) with use-time path re-validation (`fs.readGranted`, `fs.writeGranted`)
+- [x] Clipboard (`arboard`) — `clipboard.read` and `clipboard.write` with 1 MB payload validation
+- [x] Notifications (`notify-rust`) — `notify.send` with title/body length bounds and per-window sliding-window rate limiting (max 5 per 10s)
+- [x] System tray — confirmed `tao` requires external crates; implemented via `tray-icon` and `muda` (`tray.set` with icon size cap, tooltip, and menu items)
+- [x] Global shortcuts (`global-hotkey` if split out of `tao`) — implemented via `global-hotkey` (`shortcut.register`, max 32 shortcuts, OS-reserved key combination blocklist)
+- [x] Native context menu builder (`wavical.menu.showContextMenu`) — implemented via `muda` (`menu.showContextMenu`, max 200 items, single audited Win32 popup hook)
+- [x] Window state persistence (position/size/maximized, opt-out-able) — debounced JSON persistence with off-screen monitor fallback, 64 KB ingestion cap, and `window.persistState` config toggle
+- [x] Single-instance lock (second launch focuses existing window) — implemented via `interprocess` Windows Named Pipes (`singleInstance` config toggle, forwards args without auto-granting file access)
+- [x] File association registration (declare `.foo` file handling in config) — `wavical register-filetypes` and `wavical unregister-filetypes` under `HKCU\Software\Classes\.{ext}\OpenWithProgids`
+- [ ] Taskbar overlay badges (Windows) — pure parameter validation (`badge.set`, `0..=99` and `99+`) implemented in `wavical-ipc`; OS-level Win32 `ITaskbarList3` COM rendering deferred as a documented open exception (`F-A0-10`) to avoid unapproved `unsafe` COM code
+- [x] Webview crash recovery (auto-reload if WebView2 renderer process dies) — single-reload within 30s rate limit before surfacing native recovery dialog
+- [x] WebView2 detection + fallback UX (not installed / blocked by IT policy) — runtime version probe at startup with actionable native error dialog and `winget` installation instructions
 
 ## Phase 3 — AI-Native Infrastructure (core differentiator)
 
-- [ ] Local AI model runtime (llama.cpp / GGUF), opt-in via config
-- [ ] Cloud AI fallback (API key config switch)
-- [ ] Local RAG / semantic search (`ai.index(...)`, `ai.search(...)`)
-- [ ] Model manager CLI (`wavical model list`, `wavical model pull <name>`)
-- [ ] License acknowledgment prompt before any model download (name + link, explicit confirm)
-- [ ] Models fetched directly from upstream source (Hugging Face / official source) — never bundled/mirrored by Wavical itself
-- [ ] AI-assisted scaffolding (`wavical init --ai`) — growth/adoption tool, not a runtime feature
-- [ ] Hardware benchmark on low-end (8GB RAM, no GPU) machine completed and documented before calling this phase done
+- [x] Local AI model runtime (llama.cpp / GGUF), opt-in via config — `crates/wavical-ai` (`ai.enabled: true` gate, SHA-256 engine binary check before every launch, anonymous stdio pipe IPC with zero TCP ports, Windows Job Object lifecycle, idle auto-shutdown, streaming `ai.chat` & `ai.cancel`)
+- [x] Cloud AI fallback (API key config switch) — `local`, `cloud`, and `local-first` modes, HTTPS-only host pinning, zero-redirect policy, interactive native user consent dialog (`rfd`), `apiKeyEnv` + Windows Credential Store (`wavical secret set/clear`), and full secret redaction
+- [x] Local RAG / semantic search (`ai.index(...)`, `ai.search(...)`) — deterministic text chunker, local embedding pipeline (`bge-small-en-v1.5`), per-app tenant-isolated SQLite vector store, cosine similarity search, and collection/document/metadata boundary guards
+- [x] Model manager CLI (`wavical model list`, `wavical model pull <name>`, `wavical model remove <name>`, `wavical model verify <name>`, plus `wavical ai doctor` and `wavical ai bench`)
+- [x] License acknowledgment prompt before any model download (name + link, explicit confirm) — displays model name, license ID, and URL; requires typing `AGREE` interactively or `--accept-license <ID>` before any download traffic
+- [x] Models fetched directly from upstream source (Hugging Face / official source) — never bundled/mirrored by Wavical itself (pinned catalog URLs in `models.json`, domain allowlist, `.part` atomic download, GGUF magic header check, and SHA-256 verification)
+- [x] AI-assisted scaffolding (`wavical init --ai`) — growth/adoption tool, not a runtime feature (validates generated paths/extensions/sizes, scans for `wavical.invoke` calls, defaults to zero granted capabilities, and synthesizes `wavical.config.js` in Rust)
+- [ ] Hardware benchmark on low-end (8GB RAM, no GPU) machine completed and documented before calling this phase done — `wavical ai bench` harness and `docs/AI_BENCHMARK.md` specification completed; awaiting physical 8 GB RAM target hardware run to populate final measured tables (`F-A7-05`)
 
 ## Phase 4 — Backend Runtime (optional) & Updates
 
@@ -67,7 +67,7 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 - [ ] Canary/staged rollout pipeline for Wavical's own framework releases
 - [ ] Reduced-privilege execution for the backend process where possible
 - [ ] Remote debugging port disabled by default in production builds
-- [ ] Devtools toggle enforced off in production (verified, not just configured)
+- [x] Devtools toggle enforced off in production (verified, not just configured — `is_devtools_enabled()` gated on `cfg!(debug_assertions)` and verified in release audit tests)
 - [ ] Security test bench expanded: update-tampering tests + runtime-download-tampering tests
 
 ## Phase 5 — Packaging & Distribution
@@ -84,7 +84,7 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 - [ ] WebDriver/e2e testing story
 - [ ] Structured opt-in crash/telemetry reporting (for you, the maintainer — roadmap prioritization)
 - [ ] Accessibility baseline (screen reader support via WebView2's UIA bridge, focus order for frameless windows)
-- [ ] Public roadmap maintained in the git repo
+- [x] Public roadmap maintained in the git repo (`ROADMAP.md`)
 - [ ] Linux support (webkit2gtk via `wry`, testable in VM) — target soon after Windows v1 stabilizes
 - [ ] macOS support — explicitly deferred until real Apple hardware or a contributor is available; GitHub Actions hosted macOS runners used for compile-only CI in the meantime
 
@@ -94,10 +94,10 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 
 - [ ] Open-core model: free core framework (MIT/Apache) maximizes adoption; enterprise features (Phase 6) are the paid tier
 - [ ] Consider splitting enterprise-tier code into a separate source-available repo (e.g. BSL) before building it, to keep it defensible against forking
-- [ ] AI model licensing: Wavical is a platform, not an enforcer — developers/companies using a given model bear responsibility for that model's license, stated plainly in Wavical's ToS/docs
+- [x] AI model licensing: Wavical is a platform, not an enforcer — developers/companies using a given model bear responsibility for that model's license, stated plainly in Wavical's ToS/docs (`README.md`, `docs/AI_PRIVACY.md`, and `wavical model pull` prompt)
 - [ ] Security-critical modules (IPC bridge, capability enforcement, protocol handler, update verification) get expert Rust review before launch, given AI-assisted development is the primary build method
 - [ ] Test-bench-before-release + staged rollout are both required, layered together — not a substitute for each other
-- [ ] Every real-world issue found post-release becomes a permanent regression test in the bench
+- [x] Every real-world issue found post-release becomes a permanent regression test in the bench (`tests/audit` regression battery covering A0–A7 findings)
 
 ---
 
@@ -107,6 +107,5 @@ Every feature discussed, categorized by build phase. Use this as the master chec
 - [x] Rejected: bundling Node into every installer (too heavy, breaks the lightweight pitch) — replaced with shared, auto-downloaded, version-pinned runtime cache
 - [x] Softened: "no Rust required" as the headline differentiator (Tauri 2's official plugins already cover this for most apps) — repositioned AI-native infrastructure as the primary pitch instead
 - [x] Clarified: the original guide's closure-style event loop is fine with `tao` (wry's recommended crate); only winit moved to `ApplicationHandler`. Pick one windowing crate and don't mix their APIs
-- [ ] Flagged for verification: assumption that `tao` ships built-in system tray support — may need separate `tray-icon`/`muda`/`global-hotkey` crates
+- [x] Flagged for verification: assumption that `tao` ships built-in system tray support — confirmed separate `tray-icon`/`muda`/`global-hotkey` crates are required and integrated in `wavical-native`
 - [x] Moved up: security/capability model, originally filed as a "Phase 6 extra," now required in Phase 0
-
