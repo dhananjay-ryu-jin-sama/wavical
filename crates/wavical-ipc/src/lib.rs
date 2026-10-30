@@ -1151,6 +1151,18 @@ mod tests {
     }
 
     #[test]
+    fn test_ai_chat_capability_gate() {
+        let empty_caps = Capabilities::new();
+        assert!(!empty_caps.is_allowed("ai.chat"));
+        assert!(!empty_caps.is_allowed("ai.cancel"));
+
+        let mut chat_caps = Capabilities::new();
+        chat_caps.grant("ai.chat");
+        assert!(chat_caps.is_allowed("ai.chat"));
+        assert!(chat_caps.is_allowed("ai.cancel"));
+    }
+
+    #[test]
     fn test_registered_native_methods_exact_allowlist() {
         let methods = registered_native_methods();
 

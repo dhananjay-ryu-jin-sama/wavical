@@ -34,7 +34,7 @@ fuzz_target!(|data: &[u8]| {
                             known_grants_win_b.push(grant_id);
                         }
                     }
-                    Err(wavical_ipc::GrantError::WindowGrantLimitExceeded) => {
+                    Err(wavical_ipc::GrantError::LimitReached) => {
                         // Enforce capacity invariant
                         assert_eq!(table.count_for_window(target_win), MAX_GRANTS_PER_WINDOW);
                     }

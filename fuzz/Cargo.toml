@@ -9,8 +9,10 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+serde_json = "1.0"
 wavical-ipc = { path = "../crates/wavical-ipc" }
 wavical-protocol = { path = "../crates/wavical-protocol" }
+wavical-ai = { path = "../crates/wavical-ai" }
 
 [[bin]]
 name = "parse_message"
@@ -39,5 +41,23 @@ doc = false
 [[bin]]
 name = "grant_table"
 path = "fuzz_targets/grant_table.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "ai_request_parser"
+path = "fuzz_targets/ai_request_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "catalog_parser"
+path = "fuzz_targets/catalog_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "chunker"
+path = "fuzz_targets/chunker.rs"
 test = false
 doc = false

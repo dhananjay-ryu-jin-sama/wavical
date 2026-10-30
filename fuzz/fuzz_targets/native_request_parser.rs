@@ -17,7 +17,6 @@ fuzz_target!(|data: &[u8]| {
         }
 
         // 2. Fuzz shortcut parser
-        let _ = wavical_ipc::validate_shortcut(utf8_str);
         let shortcuts: Vec<String> = utf8_str.split(',').map(|s| s.to_string()).collect();
         let _ = wavical_ipc::validate_shortcut_list(&shortcuts);
 
@@ -25,7 +24,7 @@ fuzz_target!(|data: &[u8]| {
         let _ = wavical_ipc::validate_file_extension(utf8_str);
 
         // 4. Fuzz window state parser
-        let _ = wavical_ipc::parse_saved_window_state(utf8_str, 800, 600);
+        let _ = wavical_ipc::parse_window_state(utf8_str);
 
         // 5. Fuzz badge count parser
         if let Ok(num) = utf8_str.parse::<i64>() {

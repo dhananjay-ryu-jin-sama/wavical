@@ -39,14 +39,17 @@ jobs:
       - name: Run unit & property tests
         run: cargo test --workspace
 
+      - name: Run wavical-ai tests (fake engine and mock servers)
+        run: cargo test -p wavical-ai
+
       - name: Run attack page integration test harness
         run: cargo run -p wavical-integration-tests
 
-      - name: Build workspace (including wavical-native)
+      - name: Build workspace (including wavical-native and wavical-ai)
         run: cargo build --workspace
 
   linux:
-    name: "Linux (Pure Crates & Grant Table Tests)"
+    name: "Linux (Pure Crates, Catalog & Chunker Tests)"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -70,6 +73,12 @@ jobs:
 
       - name: Run pure-crate tests (including grant table isolation and limits)
         run: cargo test -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli
+
+      - name: Run catalog parser and chunker tests (no real model or engine binary)
+        run: |
+          cargo test -p wavical-ai catalog --lib
+          cargo test -p wavical-ai chunker --lib
+          cargo test -p wavical-ai --test rag_tests
 
       - name: Build pure binaries and crates
         run: cargo build -p wavical-ipc -p wavical-protocol -p wavical-config -p wavical-cli

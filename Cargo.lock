@@ -4866,9 +4866,13 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "proptest",
+ "rcgen",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "wavical-ai",
  "wavical-cli",
  "wavical-config",
  "wavical-ipc",

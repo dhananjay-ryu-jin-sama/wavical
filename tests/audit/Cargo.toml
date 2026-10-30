@@ -11,9 +11,13 @@ wavical-shell = { path = "../../crates/wavical-shell" }
 wavical-config = { path = "../../crates/wavical-config" }
 wavical-cli = { path = "../../crates/wavical-cli" }
 wavical-native = { path = "../../crates/wavical-native" }
+wavical-ai = { path = "../../crates/wavical-ai" }
 arboard = "3.7.0"
 wry = "0.57.0"
 serde_json = "1.0.151"
 serde = { version = "1.0.229", features = ["derive"] }
 tempfile = "3.27.0"
 proptest = "1.11.0"
+tokio = { version = "1.54.1", features = ["full"] }
+rcgen = "0.14.10"
+tokio-rustls = "0.26.6"

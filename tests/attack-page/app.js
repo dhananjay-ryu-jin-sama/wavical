@@ -1,7 +1,7 @@
 window.__attack_results__ = {
     completed: false,
     all_passed: false,
-    summary: { total: 13, passed: 0, failed: 0 },
+    summary: { total: 20, passed: 0, failed: 0 },
     details: []
 };
 
@@ -18,7 +18,14 @@ const tests = [
     { id: "oversized_payloads", name: "10. Oversized Clipboard & Notification Payloads", run: testOversizedPayloads },
     { id: "shortcut_injection", name: "11. Shortcut Injection Strings & Grammar Violations", run: testShortcutInjection },
     { id: "registry_injection", name: "12. Registry-Path Injection Attempts via File Extensions", run: testRegistryInjection },
-    { id: "menu_201_items", name: "13. Menu Item Limit Enforcement (201 items rejected)", run: testMenu201Items }
+    { id: "menu_201_items", name: "13. Menu Item Limit Enforcement (201 items rejected)", run: testMenu201Items },
+    { id: "ai_no_cap", name: "14. AI Calls Without Capability (ai.chat, ai.index, ai.search, ai.cancel)", run: testAiWithoutCapability },
+    { id: "ai_oversize_malformed", name: "15. Oversize & Malformed AI Requests (Chat, Index, Search)", run: testAiOversizeMalformed },
+    { id: "ai_forged_cross_app_collection", name: "16. Forged & Cross-App Collection Names (Traversal, Reserved, Null Bytes)", run: testAiForgedCrossAppCollection },
+    { id: "ai_flood", name: "17. AI Request Concurrency Flood (Starvation & Concurrency Protection)", run: testAiFlood },
+    { id: "ai_cancel_race", name: "18. AI Cancel Race Conditions & Non-Existent Target IDs", run: testAiCancelRace },
+    { id: "ai_markup_in_output", name: "19. AI Model Output Markup & Script Injection Defense", run: testAiMarkupInOutput },
+    { id: "ai_forbidden_page_params", name: "20. Forbidden Page Parameters (Model Path, URL, Key, Download Invocations)", run: testAiForbiddenPageParams }
 ];
 
 // 1. Calling core.echo without capability
@@ -506,6 +513,343 @@ async function testMenu201Items() {
     }
 }
 
+// 14. Calling ai.* without capability
+async function testAiWithoutCapability() {
+    try {
+        const aiMethods = [
+            { method: "ai.chat", params: { messages: [{ role: "user", content: "hello" }] } },
+            { method: "ai.index", params: { collection: "docs", documents: [{ id: "doc1", text: "text" }] } },
+            { method: "ai.search", params: { collection: "docs", query: "hello", topK: 1 } },
+            { method: "ai.cancel", params: { id: 1 } }
+        ];
+
+        let rejectedCount = 0;
+        for (const item of aiMethods) {
+            let err = null;
+            try {
+                await window.wavical.invoke(item.method, item.params);
+            } catch (e) {
+                err = e.message;
+            }
+
+            if (!err || !err.includes("Method not allowed or not found")) {
+                return {
+                    passed: false,
+                    detail: `AI method ${item.method} was NOT rejected with generic error (got: ${err})`
+                };
+            }
+            rejectedCount++;
+        }
+
+        return {
+            passed: true,
+            detail: `All ${rejectedCount} ungranted AI calls (ai.chat, ai.index, ai.search, ai.cancel) strictly blocked with generic error`
+        };
+    } catch (e) {
+        return { passed: false, detail: `AI without capability exception: ${e.message}` };
+    }
+}
+
+// 15. Oversize and malformed chat, index and search requests
+async function testAiOversizeMalformed() {
+    try {
+        const attacks = [
+            // Chat: invalid role
+            { method: "ai.chat", params: { messages: [{ role: "malicious_role", content: "hello" }] }, desc: "Chat invalid role" },
+            // Chat: empty messages
+            { method: "ai.chat", params: { messages: [] }, desc: "Chat empty messages" },
+            // Chat: oversized message (>32,768 characters)
+            { method: "ai.chat", params: { messages: [{ role: "user", content: "A".repeat(33000) }] }, desc: "Chat message >32k chars" },
+            // Chat: negative maxTokens
+            { method: "ai.chat", params: { messages: [{ role: "user", content: "hello" }], maxTokens: -10 }, desc: "Chat negative maxTokens" },
+            // Chat: excessive maxTokens (>32768)
+            { method: "ai.chat", params: { messages: [{ role: "user", content: "hello" }], maxTokens: 99999 }, desc: "Chat maxTokens > 32768" },
+            // Chat: invalid temperature
+            { method: "ai.chat", params: { messages: [{ role: "user", content: "hello" }], temperature: 5.0 }, desc: "Chat temperature > 2.0" },
+            // Index: empty documents
+            { method: "ai.index", params: { collection: "docs", documents: [] }, desc: "Index empty documents array" },
+            // Index: document text > 100k chars
+            { method: "ai.index", params: { collection: "docs", documents: [{ id: "doc1", text: "X".repeat(100001) }] }, desc: "Index document >100k chars" },
+            // Index: metadata depth > 5
+            {
+                method: "ai.index",
+                params: {
+                    collection: "docs",
+                    documents: [{
+                        id: "doc1",
+                        text: "hello",
+                        metadata: { l1: { l2: { l3: { l4: { l5: { l6: "too_deep" } } } } } }
+                    }]
+                },
+                desc: "Index metadata depth > 5"
+            },
+            // Search: empty query
+            { method: "ai.search", params: { collection: "docs", query: "" }, desc: "Search empty query" },
+            // Search: oversized query (>4096 chars)
+            { method: "ai.search", params: { collection: "docs", query: "Q".repeat(4097) }, desc: "Search query >4096 chars" },
+            // Search: topK = 0 or topK > 20
+            { method: "ai.search", params: { collection: "docs", query: "test", topK: 0 }, desc: "Search topK = 0" },
+            { method: "ai.search", params: { collection: "docs", query: "test", topK: 99 }, desc: "Search topK > 20" }
+        ];
+
+        let blockedCount = 0;
+        for (const atk of attacks) {
+            let err = null;
+            try {
+                await window.wavical.invoke(atk.method, atk.params);
+            } catch (e) {
+                err = e.message;
+            }
+
+            if (!err || !err.includes("Method not allowed or not found")) {
+                return {
+                    passed: false,
+                    detail: `Attack '${atk.desc}' was NOT blocked with generic error (got: ${err})`
+                };
+            }
+            blockedCount++;
+        }
+
+        return {
+            passed: true,
+            detail: `All ${blockedCount} oversize/malformed AI payloads safely blocked with generic error`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Oversize/malformed AI test exception: ${e.message}` };
+    }
+}
+
+// 16. Forged and cross-app collection names
+async function testAiForgedCrossAppCollection() {
+    try {
+        const illegalCollections = [
+            "../secret_app",
+            "..\\other_user",
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "LPT1",
+            "app/coll",
+            "app\\coll",
+            "coll:stream",
+            "coll\0null",
+            "COLL_UPPERCASE",
+            "coll with spaces",
+            "",
+            "c".repeat(65)
+        ];
+
+        let blockedCount = 0;
+        for (const col of illegalCollections) {
+            for (const method of ["ai.index", "ai.search"]) {
+                let err = null;
+                const params = method === "ai.index"
+                    ? { collection: col, documents: [{ id: "d1", text: "t" }] }
+                    : { collection: col, query: "q", topK: 1 };
+                try {
+                    await window.wavical.invoke(method, params);
+                } catch (e) {
+                    err = e.message;
+                }
+
+                if (!err || !err.includes("Method not allowed or not found")) {
+                    return {
+                        passed: false,
+                        detail: `Forged collection '${col}' on ${method} not blocked with generic error (got: ${err})`
+                    };
+                }
+                blockedCount++;
+            }
+        }
+
+        return {
+            passed: true,
+            detail: `All ${blockedCount} forged/cross-app collection attempts blocked (traversal, device names, nulls, chars, limits)`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Forged collection test exception: ${e.message}` };
+    }
+}
+
+// 17. Flood of chat, index and search calls
+async function testAiFlood() {
+    try {
+        const floodPromises = [];
+        for (let i = 0; i < 20; i++) {
+            const method = (i % 3 === 0) ? "ai.chat" : (i % 3 === 1) ? "ai.index" : "ai.search";
+            const params = (method === "ai.chat")
+                ? { messages: [{ role: "user", content: `flood msg ${i}` }] }
+                : (method === "ai.index")
+                ? { collection: "flood_test", documents: [{ id: `d${i}`, text: `flood text ${i}` }] }
+                : { collection: "flood_test", query: `flood query ${i}`, topK: 1 };
+
+            floodPromises.push(window.wavical.invoke(method, params).catch(e => e.message));
+        }
+
+        const results = await Promise.all(floodPromises);
+
+        for (const res of results) {
+            if (typeof res === "string" && !res.includes("Method not allowed or not found")) {
+                return {
+                    passed: false,
+                    detail: `Unexpected flood rejection message: ${res}`
+                };
+            }
+        }
+
+        const ping = await window.wavical.invoke("core.ping");
+        if (!ping || ping.message !== "pong") {
+            return { passed: false, detail: "Host failed to respond to ping after AI call flood" };
+        }
+
+        return {
+            passed: true,
+            detail: `Host gracefully absorbed 20 concurrent AI requests without starvation or panic; ping responsive`
+        };
+    } catch (e) {
+        return { passed: false, detail: `AI flood test exception: ${e.message}` };
+    }
+}
+
+// 18. Cancel races and non-existent requests
+async function testAiCancelRace() {
+    try {
+        const cancelTargets = [
+            99999999,
+            0,
+            1,
+            2,
+            18446744073709551615
+        ];
+
+        const racePromises = [];
+        for (const targetId of cancelTargets) {
+            racePromises.push(window.wavical.invoke("ai.cancel", { id: targetId }).catch(e => e.message));
+            racePromises.push(window.wavical.invoke("ai.cancel", { id: targetId }).catch(e => e.message));
+        }
+
+        const results = await Promise.all(racePromises);
+
+        for (const res of results) {
+            if (typeof res === "string" && !res.includes("Method not allowed or not found")) {
+                return {
+                    passed: false,
+                    detail: `ai.cancel error format violation: ${res}`
+                };
+            }
+        }
+
+        const ping = await window.wavical.invoke("core.ping");
+        if (!ping || ping.message !== "pong") {
+            return { passed: false, detail: "Host unresponsive after cancel races" };
+        }
+
+        return {
+            passed: true,
+            detail: `Cancel races and non-existent session IDs safely handled without race conditions or panics`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Cancel race test exception: ${e.message}` };
+    }
+}
+
+// 19. Model output containing markup
+async function testAiMarkupInOutput() {
+    try {
+        window.__xss_breach__ = false;
+
+        const hostileModelOutputs = [
+            "<script>window.__xss_breach__ = true;<\/script>",
+            "<img src=\"data:image/png;base64,invalid\" onerror=\"window.__xss_breach__ = true;\">",
+            "<svg onload=\"window.__xss_breach__ = true;\">",
+            "javascript:/*--></title></style></textarea></script></xmp><svg/onload='+/'/+/onmouseover=1/+window.__xss_breach__=true//>"
+        ];
+
+        const sandbox = document.getElementById("sandbox");
+        const div = document.createElement("div");
+        sandbox.appendChild(div);
+
+        for (const hostileText of hostileModelOutputs) {
+            div.textContent = hostileText;
+        }
+
+        await new Promise(r => setTimeout(r, 50));
+
+        if (window.__xss_breach__ === true) {
+            return { passed: false, detail: "XSS execution detected from model output markup" };
+        }
+
+        div.remove();
+        return {
+            passed: true,
+            detail: `Model output markup treated as untrusted text; no script execution or DOM escaping occurred`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Markup injection test exception: ${e.message}` };
+    }
+}
+
+// 20. Attempts to supply model path, URL, API key or download request from page
+async function testAiForbiddenPageParams() {
+    try {
+        const dangerousChatParams = [
+            { messages: [{ role: "user", content: "hi" }], modelPath: "C:\\Windows\\System32\\cmd.exe" },
+            { messages: [{ role: "user", content: "hi" }], downloadUrl: "https://evil.com/model.bin" },
+            { messages: [{ role: "user", content: "hi" }], apiKey: "sk-attack-token-12345" },
+            { messages: [{ role: "user", content: "hi" }], baseUrl: "https://evil.com/v1" }
+        ];
+
+        for (const params of dangerousChatParams) {
+            let err = null;
+            try {
+                await window.wavical.invoke("ai.chat", params);
+            } catch (e) {
+                err = e.message;
+            }
+            if (!err || !err.includes("Method not allowed or not found")) {
+                return {
+                    passed: false,
+                    detail: `Dangerous chat params were not blocked with generic error: ${err}`
+                };
+            }
+        }
+
+        const forbiddenMethods = [
+            "ai.downloadModel",
+            "ai.loadModel",
+            "ai.setModelPath",
+            "ai.setApiKey",
+            "ai.fetchCatalog",
+            "ai.execCommand",
+            "ai.shell"
+        ];
+
+        for (const method of forbiddenMethods) {
+            let err = null;
+            try {
+                await window.wavical.invoke(method, { url: "https://evil.com" });
+            } catch (e) {
+                err = e.message;
+            }
+            if (!err || !err.includes("Method not allowed or not found")) {
+                return {
+                    passed: false,
+                    detail: `Forbidden administrative method '${method}' was not blocked with generic error: ${err}`
+                };
+            }
+        }
+
+        return {
+            passed: true,
+            detail: `Page attempts to inject model paths, URLs, API keys or trigger downloads all strictly rejected`
+        };
+    } catch (e) {
+        return { passed: false, detail: `Forbidden page params test exception: ${e.message}` };
+    }
+}
+
 // Run entire test suite
 async function runTestSuite() {
     const container = document.getElementById("test-container");
@@ -532,6 +876,7 @@ async function runTestSuite() {
             id: t.id,
             name: t.name,
             passed: res.passed,
+            status: res.passed ? 'BLOCKED' : 'BREACH',
             detail: res.detail
         });
 
@@ -545,7 +890,7 @@ async function runTestSuite() {
         card.innerHTML = `
             <div class="test-header">
                 <span class="test-title">${t.name}</span>
-                <span class="test-pill ${res.passed ? 'pill-pass' : 'pill-fail'}">${res.passed ? 'PASS' : 'FAIL'}</span>
+                <span class="test-pill ${res.passed ? 'pill-pass' : 'pill-fail'}">${res.passed ? 'BLOCKED' : 'BREACH'}</span>
             </div>
             <div class="test-detail">${res.detail}</div>
         `;

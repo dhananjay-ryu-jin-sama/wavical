@@ -266,9 +266,75 @@ Future phases will add capabilities to this schema:
 - `menu.showContextMenu` — context menus
 - `window.getState`, `window.setState` — window position/size persistence
 
-**Phase 3 (AI):**
-- `ai.search` — semantic search / RAG
-- `ai.chat` — local/cloud chat model
+**Phase 3 (AI Infrastructure - Active in Phase 3):**
+- `ai.chat` — chat completion inference (streaming, cancel, local or cloud)
+- `ai.index` — collection document indexing for RAG vector search
+- `ai.search` — semantic similarity vector search across collections
+
+### Phase 3 `ai` Configuration Schema (`ai`)
+
+When `ai.enabled` is `true`, the `ai` configuration block configures inference routing, local models, and cloud providers:
+
+```javascript
+export default {
+  appId: 'my-ai-app',
+  capabilities: {
+    'ai.chat': true,
+    'ai.index': true,
+    'ai.search': true,
+  },
+  ai: {
+    // Enable AI features. Defaults to false. If false, all ai.* calls are rejected.
+    enabled: true,
+
+    // Execution routing mode: 'local' (default), 'cloud', or 'local-first'
+    mode: 'local',
+
+    // Local inference configuration
+    local: {
+      // Model IDs from catalog (e.g. 'qwen2.5-1.5b-instruct', 'bge-small-en-v1.5')
+      chatModel: 'qwen2.5-1.5b-instruct',
+      embedModel: 'bge-small-en-v1.5',
+
+      // Context size in tokens (ceiling: 8192, default: 4096)
+      contextSize: 4096,
+
+      // Maximum tokens generated per response (ceiling: 4096, default: 1024)
+      maxTokens: 1024,
+
+      // Inactivity timeout in minutes before engine process shutdown (default: 10)
+      idleMinutes: 10,
+
+      // Thread count ('auto' or integer 1–128, default: 'auto')
+      threads: 'auto'
+    },
+
+    // Cloud provider configuration (required if mode is 'cloud' or 'local-first')
+    cloud: {
+      // API protocol format: 'openai-compatible'
+      protocol: 'openai-compatible',
+
+      // Endpoint URL (strictly HTTPS)
+      baseUrl: 'https://api.openai.com/v1',
+
+      // Model identifier at provider (e.g. 'gpt-4o-mini')
+      model: 'gpt-4o-mini',
+
+      // Environment variable containing the API key (e.g. 'OPENAI_API_KEY')
+      apiKeyEnv: 'OPENAI_API_KEY',
+
+      // Native OS consent prompt on first cloud call (default: true)
+      requireConsent: true
+    }
+  }
+};
+```
+
+**Security Rules for `ai` Configuration:**
+1. If `ai.enabled` is `false` or omitted, all `ai.*` IPC requests are rejected immediately.
+2. In `local` mode, no external network requests are made under any circumstance.
+3. In `cloud` mode, `baseUrl` must use HTTPS; certificate validation is strictly enforced; redirects across different hosts are disallowed; request body capped at 1 MB; non-streamed response capped at 4 MB.
+4. API keys are never placed directly in `wavical.config.js`. They are referenced via `apiKeyEnv` or stored securely in Windows Credential Manager via `wavical secret set <host>`.
 
 **Phase 4 (Backend Runtime):**
 - `backend.invoke` — call a Node/Bun backend function (if opted into)
