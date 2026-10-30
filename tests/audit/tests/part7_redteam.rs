@@ -430,7 +430,13 @@ fn test_g4_attempt1_timing_side_channel_analysis() {
     let req_unknown =
         parse_request(r#"{"id":3,"method":"core.nonexistent","params":null}"#).unwrap();
 
-    let iterations = 10_000;
+    // Warm up instruction cache and branch predictor
+    for _ in 0..2_000 {
+        let _ = dispatch(&req_ungranted, &caps, &reg);
+        let _ = dispatch(&req_unknown, &caps, &reg);
+    }
+
+    let iterations = 20_000;
 
     // Measure ungranted (rejected by capability check)
     let start_ungranted = Instant::now();

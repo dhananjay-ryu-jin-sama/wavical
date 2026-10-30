@@ -8,7 +8,7 @@ pub use windows_registry;
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::sync::Arc;
@@ -72,6 +72,9 @@ pub struct AiArgs {
 pub enum AiCommands {
     /// Inspect system hardware, CPU SIMD features, engine status, and model capabilities
     Doctor(AiDoctorArgs),
+
+    /// Execute low-end hardware performance benchmarks (Phase 3 WP9)
+    Bench(AiBenchArgs),
 }
 
 /// Arguments for `wavical ai doctor`.
@@ -80,6 +83,42 @@ pub struct AiDoctorArgs {
     /// Optional project directory to inspect configured models in wavical.config.js
     #[arg(default_value = ".")]
     pub dir: PathBuf,
+}
+
+/// Arguments for `wavical ai bench`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct AiBenchArgs {
+    /// Project root directory containing wavical.config.js (defaults to current directory)
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
+
+    /// Number of measured runs per benchmark metric (default: 5)
+    #[arg(long, default_value_t = 5)]
+    pub runs: usize,
+
+    /// Number of warmup runs prior to measurement (default: 1)
+    #[arg(long, default_value_t = 1)]
+    pub warmup: usize,
+
+    /// Optional path to save machine-readable JSON results file
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
+
+    /// Run only RAG vector store benchmarks (1k, 10k, 50k chunks)
+    #[arg(long)]
+    pub rag_only: bool,
+
+    /// Benchmark cloud path if configured
+    #[arg(long)]
+    pub cloud: bool,
+
+    /// Fixed prompt text for chat benchmarks
+    #[arg(long)]
+    pub prompt: Option<String>,
+
+    /// Seed for reproducible generation
+    #[arg(long, default_value_t = 42)]
+    pub seed: u64,
 }
 
 /// Arguments for the `secret` subcommand.
@@ -164,6 +203,18 @@ pub struct InitArgs {
     /// Overwrite existing files if target directory is not empty
     #[arg(long, short)]
     pub force: bool,
+
+    /// AI-assisted prompt to generate application files
+    #[arg(long)]
+    pub ai: Option<String>,
+
+    /// AI execution routing mode ('local', 'cloud', 'local-first')
+    #[arg(long = "ai-mode")]
+    pub ai_mode: Option<String>,
+
+    /// Comma-separated list of capabilities to grant (default: none / unselected)
+    #[arg(long = "accept-capabilities")]
+    pub accept_capabilities: Option<String>,
 }
 
 /// Arguments for the `dev` subcommand.
@@ -246,6 +297,12 @@ pub enum CliError {
 
     #[error("model error: {0}")]
     ModelError(#[from] wavical_ai::CommandError),
+
+    #[error("AI scaffolding error: {0}")]
+    ScaffoldError(String),
+
+    #[error("AI benchmark error: {0}")]
+    BenchmarkError(String),
 
     #[error("secret error: {0}")]
     SecretError(String),
@@ -402,6 +459,150 @@ pub fn run_init(dir: &Path, force: bool) -> Result<InitSummary, CliError> {
         target_dir: dir.to_path_buf(),
         display_path,
     })
+}
+
+/// Process AI-generated output, validate paths and sizes, scan code for `wavical.invoke(` calls,
+/// resolve capability selections (default: none), and safely write the project and `wavical.config.js`.
+pub fn process_scaffold_and_write(
+    dir: &Path,
+    app_id: &str,
+    title: &str,
+    raw_output: &str,
+    accept_capabilities: Option<&str>,
+) -> Result<InitSummary, CliError> {
+    // 1. Untrusted model output validation: parse JSON / markdown blocks, enforce extensions and size caps
+    let files = wavical_ai::parse_scaffold_response(raw_output)
+        .map_err(|e| CliError::ScaffoldError(e.to_string()))?;
+
+    // 2. Scan code for used capabilities
+    let detected_caps = wavical_ai::scan_used_capabilities(&files);
+
+    // 3. Resolve capability grants (model never decides capabilities, default is none)
+    let selected_caps = if let Some(caps_arg) = accept_capabilities {
+        let trimmed = caps_arg.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+            Vec::new()
+        } else {
+            trimmed
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && wavical_ipc::KNOWN_CAPABILITIES.contains(&s.as_str()))
+                .collect()
+        }
+    } else if std::io::stdin().is_terminal() && !detected_caps.is_empty() {
+        println!("\nDetected capability calls in generated code:");
+        for cap in &detected_caps {
+            println!("  - {cap}");
+        }
+        print!(
+            "Enter capabilities to grant separated by commas (default: none, press Enter to skip): "
+        );
+        let _ = std::io::stdout().flush();
+
+        let mut input = String::new();
+        let _ = std::io::stdin().read_line(&mut input);
+        let trimmed = input.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+            Vec::new()
+        } else {
+            trimmed
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && wavical_ipc::KNOWN_CAPABILITIES.contains(&s.as_str()))
+                .collect()
+        }
+    } else {
+        if !detected_caps.is_empty() {
+            println!(
+                "Detected capability calls in generated code: {:?}",
+                detected_caps
+            );
+            println!(
+                "Defaulting to no capabilities granted (run interactively or use --accept-capabilities to grant)."
+            );
+        }
+        Vec::new()
+    };
+
+    // 4. Safely write files to <project_dir>/src/ and synthesize wavical.config.js from Rust
+    wavical_ai::write_scaffolded_project(dir, app_id, title, &files, &selected_caps)
+        .map_err(|e| CliError::ScaffoldError(e.to_string()))?;
+
+    let display_path = if dir.is_relative() && !dir.starts_with(".") {
+        format!("./{}", dir.display())
+    } else {
+        dir.display().to_string()
+    };
+
+    Ok(InitSummary {
+        app_id: app_id.to_string(),
+        title: title.to_string(),
+        target_dir: dir.to_path_buf(),
+        display_path,
+    })
+}
+
+/// Scaffold a new Wavical project using AI generation (`wavical init <dir> --ai "<description>"`).
+pub fn run_init_ai(
+    dir: &Path,
+    force: bool,
+    description: &str,
+    ai_mode_override: Option<&str>,
+    accept_capabilities: Option<&str>,
+) -> Result<InitSummary, CliError> {
+    let is_empty = if dir.exists() {
+        let mut entries = std::fs::read_dir(dir).map_err(|e| CliError::CreateDirFailed {
+            path: dir.to_path_buf(),
+            source: e,
+        })?;
+        entries.next().is_none()
+    } else {
+        true
+    };
+
+    if !is_empty && !force {
+        return Err(CliError::DirectoryNotEmpty(dir.to_path_buf()));
+    }
+
+    let raw_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("my-app");
+    let app_id = sanitize_app_id(raw_name);
+    let title = derive_title(&app_id);
+
+    let mode_str = ai_mode_override
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("WAVICAL_AI_MODE").ok())
+        .unwrap_or_else(|| "local".to_string());
+
+    let mode = wavical_ai::ChatExecutionMode::parse(&mode_str)
+        .unwrap_or(wavical_ai::ChatExecutionMode::Local);
+
+    let app_data_path = wavical_ai::wavical_data_dir();
+    let cloud_base_url = std::env::var("WAVICAL_CLOUD_BASE_URL")
+        .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+    let cloud_model =
+        std::env::var("WAVICAL_CLOUD_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let cloud_api_key_env =
+        std::env::var("WAVICAL_CLOUD_API_KEY_ENV").unwrap_or_else(|_| "OPENAI_API_KEY".to_string());
+
+    let cloud_config = wavical_ai::CloudChatConfig {
+        base_url: cloud_base_url,
+        model: cloud_model,
+        api_key_env: cloud_api_key_env,
+        require_consent: true,
+    };
+
+    println!("Generating application files with AI for '{app_id}'...");
+    let raw_output = wavical_ai::generate_scaffold_code(
+        mode,
+        &app_data_path,
+        &app_id,
+        description,
+        Some(&cloud_config),
+        None,
+    )
+    .map_err(|e| CliError::ScaffoldError(e.to_string()))?;
+
+    process_scaffold_and_write(dir, &app_id, &title, &raw_output, accept_capabilities)
 }
 
 /// Format the success message printed to the console upon successful `init`.
@@ -991,16 +1192,30 @@ pub fn main_entry() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init(args) => match run_init(&args.dir, args.force) {
-            Ok(summary) => {
-                println!("{}", format_init_success(&summary));
-                ExitCode::SUCCESS
+        Commands::Init(args) => {
+            let res = if let Some(ref desc) = args.ai {
+                run_init_ai(
+                    &args.dir,
+                    args.force,
+                    desc,
+                    args.ai_mode.as_deref(),
+                    args.accept_capabilities.as_deref(),
+                )
+            } else {
+                run_init(&args.dir, args.force)
+            };
+
+            match res {
+                Ok(summary) => {
+                    println!("{}", format_init_success(&summary));
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
             }
-            Err(err) => {
-                eprintln!("error: {err}");
-                ExitCode::FAILURE
-            }
-        },
+        }
         Commands::Dev(args) => match run_dev(&args.dir) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
@@ -1265,7 +1480,68 @@ pub fn run_ai(args: &AiArgs) -> Result<(), CliError> {
             println!("{output}");
             Ok(())
         }
+        AiCommands::Bench(ref bench_args) => {
+            run_ai_bench(bench_args)?;
+            Ok(())
+        }
     }
+}
+
+/// Execute low-end hardware performance benchmarks (`wavical ai bench`).
+pub fn run_ai_bench(args: &AiBenchArgs) -> Result<(), CliError> {
+    let cloud_base_url = std::env::var("WAVICAL_CLOUD_BASE_URL")
+        .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+    let cloud_model =
+        std::env::var("WAVICAL_CLOUD_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let cloud_api_key_env =
+        std::env::var("WAVICAL_CLOUD_API_KEY_ENV").unwrap_or_else(|_| "OPENAI_API_KEY".to_string());
+
+    let cloud_config = wavical_ai::CloudChatConfig {
+        base_url: cloud_base_url,
+        model: cloud_model,
+        api_key_env: cloud_api_key_env,
+        require_consent: false,
+    };
+
+    let config = wavical_ai::BenchmarkConfig {
+        runs: args.runs,
+        warmup_runs: args.warmup,
+        prompt: args
+            .prompt
+            .clone()
+            .unwrap_or_else(|| wavical_ai::DEFAULT_BENCHMARK_PROMPT.to_string()),
+        seed: args.seed,
+    };
+
+    println!(
+        "Starting Wavical AI Benchmark (runs: {}, warmup: {}, seed: {})...",
+        config.runs, config.warmup_runs, config.seed
+    );
+    let results =
+        wavical_ai::run_ai_benchmarks(&config, args.rag_only, args.cloud, Some(&cloud_config))
+            .map_err(CliError::BenchmarkError)?;
+
+    let summary = wavical_ai::format_benchmark_summary(&results);
+    println!("{summary}");
+
+    let json_bytes =
+        serde_json::to_string_pretty(&results).map_err(|e| CliError::WriteFileFailed {
+            path: PathBuf::from("results.json"),
+            source: std::io::Error::other(e),
+        })?;
+
+    if let Some(ref out_path) = args.output {
+        std::fs::write(out_path, &json_bytes).map_err(|e| CliError::WriteFileFailed {
+            path: out_path.clone(),
+            source: e,
+        })?;
+        println!(
+            "✓ Machine-readable benchmark results saved to {}",
+            out_path.display()
+        );
+    }
+
+    Ok(())
 }
 
 /// Execute credential storage commands (`wavical secret <COMMAND>`).
@@ -1491,6 +1767,34 @@ mod tests {
                 AiCommands::Doctor(doc_args) => {
                     assert_eq!(doc_args.dir, PathBuf::from("."));
                 }
+                _ => panic!("expected doctor command"),
+            },
+            _ => panic!("expected ai command"),
+        }
+
+        // Test wavical ai bench
+        let ai_bench_cli = Cli::try_parse_from([
+            "wavical",
+            "ai",
+            "bench",
+            "--rag-only",
+            "--runs",
+            "7",
+            "--warmup",
+            "2",
+            "--output",
+            "bench.json",
+        ])
+        .expect("parse ai bench");
+        match ai_bench_cli.command {
+            Commands::Ai(args) => match args.command {
+                AiCommands::Bench(bench_args) => {
+                    assert!(bench_args.rag_only);
+                    assert_eq!(bench_args.runs, 7);
+                    assert_eq!(bench_args.warmup, 2);
+                    assert_eq!(bench_args.output, Some(PathBuf::from("bench.json")));
+                }
+                _ => panic!("expected bench command"),
             },
             _ => panic!("expected ai command"),
         }

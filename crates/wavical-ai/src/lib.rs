@@ -5,6 +5,7 @@
 //! Provides model catalog management, safe verified downloads,
 //! license confirmation flows, and model cache storage.
 
+pub mod bench;
 pub mod catalog;
 pub mod channel;
 pub mod chat;
@@ -25,10 +26,12 @@ pub mod lifecycle_policy;
 pub mod manager;
 pub mod process;
 pub mod rag;
+pub mod scaffold;
 pub mod sha256;
 pub mod storage;
 pub mod store;
 
+pub use bench::*;
 pub use catalog::*;
 pub use channel::*;
 pub use chat::*;
@@ -49,6 +52,7 @@ pub use lifecycle_policy::*;
 pub use manager::*;
 pub use process::*;
 pub use rag::*;
+pub use scaffold::*;
 pub use sha256::*;
 pub use storage::*;
 pub use store::*;

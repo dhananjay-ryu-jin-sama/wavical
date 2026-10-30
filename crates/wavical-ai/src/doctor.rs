@@ -250,3 +250,26 @@ pub fn format_doctor_report(report: &DoctorReport) -> String {
     let _ = writeln!(out, "\n{}", "=".repeat(64));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_doctor_report() {
+        let report = run_ai_doctor(None);
+        let formatted = format_doctor_report(&report);
+        assert!(formatted.contains("[System Memory]"));
+        assert!(formatted.contains("[Engine Runtime]"));
+    }
+
+    #[test]
+    fn test_sysinfo_process_query() {
+        let mut sys = System::new();
+        let pid = sysinfo::Pid::from_u32(std::process::id());
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+        if let Some(p) = sys.process(pid) {
+            assert!(p.memory() > 0);
+        }
+    }
+}
