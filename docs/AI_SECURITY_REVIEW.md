@@ -150,7 +150,7 @@ This document presents a structured hostile self-review of the Phase 3 AI-native
 ### Scope & Invariants
 - Parameterized SQL statements only (zero string concatenation or format strings)
 - App ID and collection name strictly validated (`^[a-z0-9_.-]{1,64}$`, no reserved names)
-- Maximum 50 collections per app, maximum 50,000 chunks per collection
+- Maximum 16 collections per app, maximum 50,000 chunks per collection
 - Maximum 500 MB total index size across all collections for an app
 - Integrity check on open (`PRAGMA quick_check;`)
 

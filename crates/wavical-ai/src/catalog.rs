@@ -335,10 +335,13 @@ pub const EMBEDDED_CATALOG_JSON: &str = include_str!("../../../models.json");
 static GLOBAL_DEFAULT_CATALOG: OnceLock<ModelCatalog> = OnceLock::new();
 
 /// Return a reference to the validated default model catalog embedded in Wavical.
+///
+/// # Panics
+/// Only panics if the embedded catalog JSON fails to parse, which indicates a build-time error.
 pub fn default_catalog() -> &'static ModelCatalog {
     GLOBAL_DEFAULT_CATALOG.get_or_init(|| {
         parse_catalog_json(EMBEDDED_CATALOG_JSON)
-            .expect("embedded models.json must be a valid, verified catalog")
+            .unwrap_or_else(|e| panic!("embedded models.json is corrupted: {}", e))
     })
 }
 

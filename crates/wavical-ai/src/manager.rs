@@ -148,7 +148,10 @@ impl LocalEngineManager {
             self.active_process = Some(proc);
         }
 
-        Ok(self.active_process.as_ref().unwrap().channel().clone())
+        self.active_process
+            .as_ref()
+            .map(|p| p.channel().clone())
+            .ok_or(ManagerError::Client(ClientError::EngineUnavailable))
     }
 
     /// Check if the engine should be shut down due to inactivity.

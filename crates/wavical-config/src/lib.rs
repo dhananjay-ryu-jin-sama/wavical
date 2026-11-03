@@ -801,6 +801,35 @@ pub fn validate_ai_config(ai: &AiConfig) -> Result<(), ValidationError> {
             )));
         }
 
+        // REQ-02.5: reject IP literals other than IPv4 loopback (SSRF / metadata service),
+        // uppercase or non-ASCII hosts, and explicit ports on non-loopback hosts.
+        let is_loopback_host = host == "localhost" || host == "127.0.0.1";
+        let looks_ipv6 = authority.starts_with('[');
+        // A host whose last label starts with a digit is parsed as an IPv4 address by URL
+        // parsers (decimal, octal and hex forms), and no real TLD starts with a digit.
+        let looks_ipv4_like = host
+            .rsplit('.')
+            .next()
+            .is_some_and(|label| label.starts_with(|c: char| c.is_ascii_digit()));
+        if looks_ipv6 || (looks_ipv4_like && !is_loopback_host) {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.baseUrl': IP address hosts are not permitted in '{}'; use the provider's DNS name (e.g. 'https://api.openai.com/v1')",
+                cloud.base_url
+            )));
+        }
+        if !host.is_ascii() || host.chars().any(|c| c.is_ascii_uppercase()) {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.baseUrl': host in '{}' must be lowercase ASCII",
+                cloud.base_url
+            )));
+        }
+        if authority.contains(':') && !is_loopback_host {
+            return Err(ValidationError::InvalidAiConfig(format!(
+                "in 'ai.cloud.baseUrl': explicit ports are not permitted in '{}' except on localhost",
+                cloud.base_url
+            )));
+        }
+
         // apiKeyEnv validation: variable name matching ^[A-Z][A-Z0-9_]*$, reject keys
         if cloud.api_key_env.starts_with("sk-") {
             return Err(ValidationError::InvalidAiConfig(format!(
@@ -1533,6 +1562,23 @@ mod tests {
 
         let bad_mode = r#"{"appId": "test-ai", "ai": {"mode": "unsupported-mode"}}"#;
         assert!(parse_config_json(bad_mode).is_err());
+    }
+
+    #[test]
+    fn test_ai_base_url_rejects_ip_literals_req_02_5() {
+        for bad in [
+            "https://169.254.169.254/v1",
+            "https://192.168.1.1/v1",
+            "https://[::1]/v1",
+            "https://0x7f.1/v1",
+            "https://API.OPENAI.COM/v1",
+            "https://api.openai.com:8080/v1",
+        ] {
+            let json = format!(
+                r#"{{"appId":"test-ai","ai":{{"enabled":true,"cloud":{{"protocol":"openai-compatible","baseUrl":"{bad}","model":"m","apiKeyEnv":"OPENAI_API_KEY"}}}}}}"#
+            );
+            assert!(parse_config_json(&json).is_err(), "must reject {bad}");
+        }
     }
 
     #[test]

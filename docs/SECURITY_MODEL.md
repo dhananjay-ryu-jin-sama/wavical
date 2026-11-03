@@ -147,9 +147,9 @@ Phase 3 introduces local and cloud AI inference (`ai.chat`), semantic indexation
 2. **Privileged Native Host (`wavical-ipc`, `wavical-shell`, `wavical-ai`)**:
    - Enforces default-deny on `ai.*` methods; rejects unauthorized calls with `"Method not allowed or not found"`.
    - Validates all request payloads using pure validators:
-     - `ai.chat`: max 50 messages, max 32,768 characters per message, max 128k characters total, valid roles (`system`, `user`, `assistant`), maxTokens 1–32768, temperature 0.0–2.0.
+     - `ai.chat`: max 50 messages, max 32,000 characters per message, max 128k characters total, valid roles (`system`, `user`, `assistant`), maxTokens 1–4096, temperature 0.0–2.0.
      - `ai.index`: collection names 1–64 characters `[a-z0-9_.-]`, no traversal, no Windows reserved names; max 100 docs per request, max 100,000 characters per document, metadata depth <= 5, max 20 metadata keys.
-     - `ai.search`: query max 4,096 characters, topK between 1 and 20.
+     - `ai.search`: query max 4,000 characters, topK between 1 and 20.
    - Concurrency limiter: enforces at most one active generation per window; excess concurrent requests are rejected immediately without queueing or thread starvation.
    - Enforces the `local-mode no-network guarantee`: when `ai.mode = "local"`, no outgoing network socket is ever opened.
    - Protects credentials using `Zeroizing<String>` in-memory storage, Windows Credential Manager (`wavical secret set/clear`), and complete redaction from logs, errors, and JSON IPC output.

@@ -16,7 +16,7 @@ This checklist compiles all manual verification procedures from Work Packages WP
 
 ### WP3: Catalog, Doctor & Download Flow
 - [ ] **Check 1: System Doctor AI Diagnostics**
-  - **Command**: `.\target\debug\wavical doctor --ai`
+  - **Command**: `.\target\debug\wavical ai doctor`
   - **Expected Result**: Output displays:
     - CPU model and core count
     - Physical RAM size and free memory
@@ -26,7 +26,7 @@ This checklist compiles all manual verification procedures from Work Packages WP
     - Exit code 0.
 
 - [ ] **Check 2: Interactive License Prompt & Download**
-  - **Command**: `.\target\debug\wavical ai download bge-small-en-v1.5`
+  - **Command**: `.\target\debug\wavical model pull bge-small-en-v1.5`
   - **Expected Result**:
     - Terminal displays license terms, model size, and responsibility disclaimer.
     - Prompts to confirm by typing model ID `bge-small-en-v1.5`.
@@ -35,15 +35,15 @@ This checklist compiles all manual verification procedures from Work Packages WP
     - Reports: `Model 'bge-small-en-v1.5' downloaded and verified successfully.`
 
 - [ ] **Check 3: Non-Interactive License Flag Download**
-  - **Command**: `.\target\debug\wavical ai download qwen2.5-0.5b-instruct --accept-license "Apache-2.0"`
+  - **Command**: `.\target\debug\wavical model pull qwen2.5-0.5b-instruct --accept-license "Apache-2.0"`
   - **Expected Result**: Downloads without interactive prompt; SHA-256 integrity verified; placed in cache.
 
 ---
 
 ### WP4: Engine Lifecycle & Process Isolation
-- [ ] **Check 4: Engine Status Check**
-  - **Command**: `.\target\debug\wavical ai status`
-  - **Expected Result**: Reports engine state: `Engine: Stopped` (or `Idle`), active port, and memory metrics.
+- [ ] **Check 4: Engine Diagnostics & Status Check**
+  - **Command**: `.\target\debug\wavical ai doctor`
+  - **Expected Result**: Reports engine state, active binary integrity, and hardware metrics.
 
 - [ ] **Check 5: Windows Job Object Kill-on-Close Verification**
   - **Steps**:

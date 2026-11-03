@@ -13,7 +13,9 @@ use reqwest::blocking::Client;
 use wavical_ai::channel::EngineChannel;
 use wavical_ai::client::{check_engine_health, create_engine_http_client};
 use wavical_ai::engine::EngineError;
-use wavical_ai::lifecycle_policy::{CrashRecoveryPolicy, DEFAULT_MAX_CRASHES_IN_WINDOW};
+use wavical_ai::lifecycle_policy::{
+    CrashRecoveryPolicy, DEFAULT_CRASH_WINDOW, DEFAULT_MAX_CRASHES_IN_WINDOW,
+};
 use wavical_ai::manager::{LocalEngineManager, ManagerError};
 use wavical_ai::process::{EngineLaunchOptions, EngineProcess};
 use wavical_ai::sha256::sha256_file;
@@ -202,34 +204,29 @@ fn test_fake_engine_crash_retry_limiter() {
     let t0 = Instant::now();
     let mut policy = CrashRecoveryPolicy::with_thresholds(
         DEFAULT_MAX_CRASHES_IN_WINDOW,
-        Duration::from_secs(60),
+        DEFAULT_CRASH_WINDOW,
         Duration::from_millis(50),
     );
 
-    // 1st crash
+    // 1st crash allows reload
     assert!(
         policy
             .record_crash_and_check_restart(t0 + Duration::from_secs(5))
             .is_ok()
     );
-    // 2nd crash
+
+    // 2nd crash within 30s window (t0 + 15s): rejected (single reload rule)
     assert!(
         policy
             .record_crash_and_check_restart(t0 + Duration::from_secs(15))
-            .is_ok()
-    );
-    // 3rd crash
-    assert!(
-        policy
-            .record_crash_and_check_restart(t0 + Duration::from_secs(25))
-            .is_ok()
+            .is_err()
     );
 
-    // 4th crash within 60s window: rejected!
+    // 3rd crash after 30s window passes (t0 + 40s): allowed again
     assert!(
         policy
-            .record_crash_and_check_restart(t0 + Duration::from_secs(35))
-            .is_err()
+            .record_crash_and_check_restart(t0 + Duration::from_secs(40))
+            .is_ok()
     );
 }
 

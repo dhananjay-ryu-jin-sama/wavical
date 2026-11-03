@@ -205,7 +205,10 @@ pub fn sanitize_and_validate_scaffold_path(raw_path: &str) -> Result<String, Sca
     }
 
     // Validate file extension on the final component
-    let filename = segments.last().unwrap();
+    let filename = segments.last().ok_or_else(|| ScaffoldError::InvalidPath {
+        path: raw_path.to_string(),
+        reason: "no filename component found".to_string(),
+    })?;
     let ext = filename.split('.').next_back().unwrap_or("");
     if ext == *filename || ext.is_empty() {
         return Err(ScaffoldError::MissingExtension {

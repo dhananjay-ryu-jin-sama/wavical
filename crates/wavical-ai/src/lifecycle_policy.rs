@@ -11,8 +11,8 @@ use thiserror::Error;
 /// Hard ceiling and default limits for idle timeout and crash retry.
 pub const DEFAULT_IDLE_MINUTES: u32 = 10;
 pub const MAX_IDLE_MINUTES: u32 = 120;
-pub const DEFAULT_MAX_CRASHES_IN_WINDOW: usize = 3;
-pub const DEFAULT_CRASH_WINDOW: Duration = Duration::from_secs(60);
+pub const DEFAULT_MAX_CRASHES_IN_WINDOW: usize = 1;
+pub const DEFAULT_CRASH_WINDOW: Duration = Duration::from_secs(30);
 pub const DEFAULT_CRASH_COOLDOWN: Duration = Duration::from_millis(500);
 
 /// Error returned when the engine crashes repeatedly and exceeds the retry limit.
@@ -82,7 +82,7 @@ pub struct CrashRecoveryPolicy {
 }
 
 impl CrashRecoveryPolicy {
-    /// Create a new crash recovery policy with default thresholds (3 crashes in 60s).
+    /// Create a new crash recovery policy with default thresholds (1 crash in 30s single-reload rule).
     pub fn new() -> Self {
         Self {
             max_crashes: DEFAULT_MAX_CRASHES_IN_WINDOW,

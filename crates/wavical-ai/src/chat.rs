@@ -799,11 +799,7 @@ pub fn execute_chat_with_mode<F, G>(
         ChatExecutionMode::LocalFirst => {
             // Local-first: tries local first; falls back to cloud ONLY when local is unavailable,
             // cloud is configured, AND consent already exists.
-            let local_available = local_channel.is_some() && local_model_id.is_some();
-
-            if local_available {
-                let channel = local_channel.unwrap();
-                let model_id = local_model_id.unwrap();
+            if let (Some(channel), Some(model_id)) = (local_channel, local_model_id) {
                 execute_chat_stream(
                     local_client,
                     channel,

@@ -636,6 +636,14 @@ at your option.
 
 Unless you explicitly state otherwise, any contribution you intentionally submit for inclusion in this work, as defined in the Apache-2.0 license, is dual-licensed as above, without any additional terms or conditions.
 
+### AI Model Licensing & Upstream Responsibility
+
+AI models downloaded, configured, or executed via Wavical (`wavical model pull`, `ai.chat`, `ai.index`) are third-party open-weights artifacts subject to their respective upstream licenses (e.g. Apache-2.0, MIT, Llama Community License, Qwen License, DeepSeek License).
+
+Wavical is a runtime and developer tooling platform, **not** a model distributor or license enforcer. Developers and organizations deploying or shipping applications with AI models bear sole responsibility for reviewing and complying with each model's upstream licensing terms, acceptable use policies, and attribution requirements.
+
+For full data governance and licensing details, see [`docs/AI_PRIVACY.md`](docs/AI_PRIVACY.md).
+
 ---
 
 <div align="center">

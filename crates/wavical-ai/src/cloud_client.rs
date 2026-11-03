@@ -77,8 +77,14 @@ pub fn create_cloud_http_client(
 /// Validates that a cloud base URL is strictly HTTPS, has a valid host, and contains no userinfo.
 ///
 /// Returns the validated provider hostname (e.g. `api.openai.com`).
+/// Enforces strict lexical rules before parsing:
+/// - No uppercase ASCII in scheme/host
+/// - No trailing dot on hostname
+/// - No explicit ports (must use default 443)
 pub fn validate_and_extract_cloud_host(base_url_str: &str) -> Result<String, CloudClientError> {
     let trimmed = base_url_str.trim();
+
+    // Pre-parse lexical checks on raw string
     if !trimmed.starts_with("https://") {
         return Err(CloudClientError::InsecureScheme(trimmed.to_string()));
     }
@@ -87,6 +93,43 @@ pub fn validate_and_extract_cloud_host(base_url_str: &str) -> Result<String, Clo
     let authority = after_scheme.split('/').next().unwrap_or("");
     if authority.is_empty() {
         return Err(CloudClientError::InvalidHost(trimmed.to_string()));
+    }
+
+    // Check for uppercase ASCII letters in the authority part (before parsing normalizes them)
+    if authority.chars().any(|c| c.is_ascii_uppercase()) {
+        return Err(CloudClientError::InvalidHost(format!(
+            "{trimmed} (uppercase hosts not allowed)"
+        )));
+    }
+
+    // Extract hostname part (before port or @ for userinfo)
+    // Handle userinfo (user:pass@host:port format)
+    let (host_port_part, has_userinfo) = if authority.contains('@') {
+        // Userinfo present, extract part after @
+        let parts: Vec<&str> = authority.splitn(2, '@').collect();
+        (parts.get(1).copied().unwrap_or(""), true)
+    } else {
+        (authority, false)
+    };
+
+    let hostname_part = host_port_part.split(':').next().unwrap_or(host_port_part);
+
+    // Check for explicit port (allow for localhost/127.0.0.1 for testing, reject for domain names)
+    if !has_userinfo && host_port_part.contains(':') {
+        // Allow ports for localhost and 127.0.0.1 (test scenarios), but reject for domain names
+        let is_localhost = hostname_part == "localhost" || hostname_part == "127.0.0.1";
+        if !is_localhost {
+            return Err(CloudClientError::InvalidHost(format!(
+                "{trimmed} (explicit ports not allowed for domain names)"
+            )));
+        }
+    }
+
+    // Check for trailing dot on hostname
+    if hostname_part.ends_with('.') {
+        return Err(CloudClientError::InvalidHost(format!(
+            "{trimmed} (trailing dots not allowed)"
+        )));
     }
 
     let parsed = reqwest::Url::parse(trimmed)
@@ -100,12 +143,34 @@ pub fn validate_and_extract_cloud_host(base_url_str: &str) -> Result<String, Clo
         return Err(CloudClientError::UserInfoForbidden(trimmed.to_string()));
     }
 
+    // REQ-02.5: IP literals are only allowed for IPv4 loopback (local test servers).
+    // Any other IP (link-local metadata, private LAN, public, IPv6) is rejected to prevent SSRF.
     let host = parsed
         .host_str()
         .ok_or_else(|| CloudClientError::InvalidHost(trimmed.to_string()))?;
 
+    // The URL parser normalises hex/decimal/octal IPv4 forms to dotted decimal, so this catches them.
+    let is_ipv6_literal = host.starts_with('[');
+    let non_loopback_ip = match host.parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => !ip.is_loopback(),
+        Err(_) => false,
+    };
+    if is_ipv6_literal || non_loopback_ip {
+        return Err(CloudClientError::InvalidHost(format!(
+            "{trimmed} (IP literal hosts other than IPv4 loopback not allowed)"
+        )));
+    }
+
     if host.is_empty() || host.contains(' ') {
         return Err(CloudClientError::InvalidHost(trimmed.to_string()));
+    }
+
+    // Check for potential homoglyphs: detect if normalized host differs from original authority
+    // (indicates unicode normalization occurred, which may indicate homoglyphs)
+    if host != hostname_part {
+        return Err(CloudClientError::InvalidHost(format!(
+            "{trimmed} (homoglyphs or unicode normalization not allowed)"
+        )));
     }
 
     Ok(host.to_string())

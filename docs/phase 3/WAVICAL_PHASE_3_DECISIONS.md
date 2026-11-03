@@ -174,3 +174,16 @@ Please confirm your choices for the following four decision-gate items:
 ## 13. Items Marked NOT VERIFIED
 
 **None.** All URLs, SHA-256 digests, asset byte sizes, and HTTP 302 redirect targets were directly queried and verified using the official GitHub Releases API, Hugging Face Hub tree API, and live `curl.exe -I` header inspections against `github.com` and `huggingface.co`.
+
+---
+
+## 14. Additional Dependencies Added During Implementation (F-A7-07)
+
+These crates were added after WP1 and were not in the original research. Versions are the locked versions from `Cargo.lock`. None requires `unsafe` in Wavical code; all wrapping is internal to the crates. This section records them retroactively. The choices were made by the implementing agent, not approved at the WP1 decision gate, and need your confirmation.
+
+| Crate | Locked version | Declared in | Used for (code) | Needs our `unsafe`? |
+| :--- | :--- | :--- | :--- | :--- |
+| `fs4` | `1.1.0` | `crates/wavical-ai` | Free-disk-space check before a model download (`downloader.rs:155`, `fs4::available_space`) | No |
+| `sysinfo` | `0.39.6` | `crates/wavical-ai` (`default-features = false`, feature `system`) | RAM/CPU and process working-set queries for `wavical ai doctor` and `wavical ai bench` (`doctor.rs`, `bench.rs`) | No |
+| `rfd` | `0.17.2` | `crates/wavical-ai`, `crates/wavical-native` | Native Yes/No cloud-consent dialog (`consent.rs:63`). Already approved for Phase 2 file dialogs; Phase 3 reuses it | No |
+| `rpassword` | `7.5.4` | `crates/wavical-cli` | Hidden terminal prompt for `wavical secret set` so the API key is not echoed or placed in arguments (`wavical-cli/src/lib.rs:1554`) | No |
