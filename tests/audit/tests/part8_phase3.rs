@@ -10,28 +10,18 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
-use wavical_ai::catalog::{
-    ModelCatalog, ModelCatalogEntry, ModelKind, default_catalog, validate_catalog,
-    validate_safe_filename, validate_safe_id,
-};
+use wavical_ai::catalog::{default_catalog, validate_safe_filename, validate_safe_id};
 use wavical_ai::channel::EngineChannel;
-use wavical_ai::chat::{
-    ChatError, ChatExecutionMode, ChatSessionManager, ChatStreamStatus, StreamChatConfig,
-    build_chat_chunk_script, build_chat_final_script, clamp_max_tokens, execute_chat_stream,
-    execute_chat_with_mode,
-};
+use wavical_ai::chat::{ChatSessionManager, StreamChatConfig, build_chat_chunk_script};
 use wavical_ai::chunker::TextChunk;
-use wavical_ai::cloud_client::{
-    CloudClientError, build_target_cloud_url, create_cloud_http_client,
-    validate_and_extract_cloud_host,
-};
+use wavical_ai::cloud_client::validate_and_extract_cloud_host;
 use wavical_ai::cloud_protocol::execute_cloud_chat_non_streamed;
 use wavical_ai::consent::{check_cloud_consent, record_cloud_consent};
 use wavical_ai::credentials::CloudApiKey;
@@ -42,10 +32,7 @@ use wavical_ai::scaffold::{
     GeneratedFile, sanitize_and_validate_scaffold_path, validate_scaffold_files,
 };
 use wavical_ai::sha256::sha256_file;
-use wavical_ai::store::{
-    DocumentToIndex, IndexResultStats, StoreError, delete_collection, index_collection_documents,
-    search_collection,
-};
+use wavical_ai::store::{DocumentToIndex, index_collection_documents, search_collection};
 
 use wavical_config::{AiCloudConfig, AiConfig, AiMode};
 use wavical_ipc::ai::{
@@ -60,7 +47,7 @@ use wavical_ipc::ai::{
     MAX_DOCUMENT_METADATA_BYTES, MAX_DOCUMENTS_PER_INDEX_CALL, MAX_INDEX_FILE_SIZE_BYTES,
     MAX_LOCAL_CONTEXT_SIZE_CEILING, MAX_SEARCH_QUERY_CHARS, MAX_SEARCH_TOP_K,
     MIN_COLLECTION_NAME_CHARS, MIN_DOCUMENT_ID_CHARS, MIN_DOCUMENTS_PER_INDEX_CALL,
-    MIN_SEARCH_TOP_K, SearchHit, SearchRequest, validate_chat_request, validate_collection_name,
+    MIN_SEARCH_TOP_K, SearchRequest, validate_chat_request, validate_collection_name,
     validate_document_id, validate_index_request, validate_search_request,
 };
 use wavical_ipc::{Capabilities, ChatMessage, ChatRequest, ChatRole};
@@ -71,6 +58,7 @@ const MARKER_API_KEY: &str = "sk-test-LEAK-MARKER-123";
 // Mock HTTP Server Helper
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 struct MockHttpServer {
     port: u16,
     running: Arc<AtomicBool>,

@@ -1,5 +1,14 @@
 #![forbid(unsafe_code)]
 
+pub mod archive;
+pub mod runtime_manifest;
+
+pub use archive::{ArchiveEntryError, validate_archive_entry_path};
+pub use runtime_manifest::{
+    APPROVED_RUNTIMES, RuntimeArch, RuntimeManifestEntry, RuntimeManifestError,
+    find_approved_runtime, list_approved_runtimes,
+};
+
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 

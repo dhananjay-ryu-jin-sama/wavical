@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod extractor;
+pub mod runtime;
 mod sha256;
 
 #[cfg(windows)]
@@ -58,6 +60,76 @@ pub enum Commands {
 
     /// Manage stored credentials for cloud AI providers (Phase 3 WP7)
     Secret(SecretArgs),
+
+    /// Manage backend runtimes (Phase 4 WP2)
+    Runtime(RuntimeArgs),
+}
+
+/// Arguments for the `runtime` subcommand.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeArgs {
+    #[command(subcommand)]
+    pub command: RuntimeCommands,
+}
+
+/// Runtime management subcommands (`wavical runtime <COMMAND>`).
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeCommands {
+    /// List all approved runtime versions and local cache status
+    List,
+
+    /// Download, verify, and install a pinned runtime into cache
+    Install(RuntimeInstallArgs),
+
+    /// Remove an installed runtime version from cache
+    Remove(RuntimeRemoveArgs),
+
+    /// Verify cryptographic integrity of an installed runtime
+    Verify(RuntimeVerifyArgs),
+
+    /// Show runtime status and project backend configuration
+    Status(RuntimeStatusArgs),
+}
+
+/// Arguments for `wavical runtime install <VERSION>`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeInstallArgs {
+    /// Exact version to install (e.g. 22.11.0)
+    pub version: String,
+
+    /// Runtime name (default: node)
+    #[arg(long, default_value = "node")]
+    pub runtime: String,
+}
+
+/// Arguments for `wavical runtime remove <VERSION>`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeRemoveArgs {
+    /// Exact version to remove (e.g. 22.11.0)
+    pub version: String,
+
+    /// Runtime name (default: node)
+    #[arg(long, default_value = "node")]
+    pub runtime: String,
+}
+
+/// Arguments for `wavical runtime verify <VERSION>`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeVerifyArgs {
+    /// Exact version to verify (e.g. 22.11.0)
+    pub version: String,
+
+    /// Runtime name (default: node)
+    #[arg(long, default_value = "node")]
+    pub runtime: String,
+}
+
+/// Arguments for `wavical runtime status`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeStatusArgs {
+    /// Optional project directory to inspect wavical.config.js
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
 }
 
 /// Arguments for the `ai` subcommand.
@@ -306,6 +378,9 @@ pub enum CliError {
 
     #[error("secret error: {0}")]
     SecretError(String),
+
+    #[error("runtime error: {0}")]
+    RuntimeError(String),
 }
 
 /// Summary returned after successful initialization of a new project.
@@ -1265,6 +1340,44 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::Runtime(args) => match run_runtime(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
+    }
+}
+
+/// Execute the `wavical runtime` CLI subcommands (Phase 4 WP2).
+pub fn run_runtime(args: &RuntimeArgs) -> Result<(), CliError> {
+    let arch = wavical_protocol::RuntimeArch::current();
+    match &args.command {
+        RuntimeCommands::List => {
+            runtime::list_runtimes(arch);
+            Ok(())
+        }
+        RuntimeCommands::Install(install_args) => {
+            let options = wavical_ai::downloader::DownloadOptions::default();
+            runtime::install_runtime(&install_args.runtime, &install_args.version, arch, &options)
+                .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+            Ok(())
+        }
+        RuntimeCommands::Remove(remove_args) => {
+            runtime::remove_runtime(&remove_args.runtime, &remove_args.version, arch)
+                .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+            Ok(())
+        }
+        RuntimeCommands::Verify(verify_args) => {
+            runtime::verify_runtime(&verify_args.runtime, &verify_args.version, arch)
+                .map_err(|e| CliError::RuntimeError(e.to_string()))?;
+            Ok(())
+        }
+        RuntimeCommands::Status(status_args) => {
+            runtime::runtime_status(Some(&status_args.dir), arch);
+            Ok(())
+        }
     }
 }
 
