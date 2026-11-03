@@ -383,11 +383,18 @@ pub const NATIVE_METHOD_NAMES: &[&str] = &[
     "tray.set",
 ];
 
-/// Standard known capabilities available in wavical-ipc (Phase 0 core, Phase 2 native tier 1, Phase 3 AI, sorted).
+/// Standard known backend method names exposed by wavical (Phase 4, sorted alphabetically).
+pub const BACKEND_METHOD_NAMES: &[&str] = &["backend.invoke"];
+
+/// Standard known updater method names exposed by wavical (Phase 4, sorted alphabetically).
+pub const UPDATER_METHOD_NAMES: &[&str] = &["updater.apply", "updater.check"];
+
+/// Standard known capabilities available in wavical-ipc (Phase 0 core, Phase 2 native tier 1, Phase 3 AI, Phase 4 backend & updater, sorted).
 pub const KNOWN_CAPABILITIES: &[&str] = &[
     "ai.chat",
     "ai.index",
     "ai.search",
+    "backend.invoke",
     "badge.set",
     "clipboard.read",
     "clipboard.write",
@@ -401,6 +408,8 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "notify.send",
     "shortcut.register",
     "tray.set",
+    "updater.apply",
+    "updater.check",
 ];
 
 /// Helper function returning the list of valid/known capabilities.
@@ -432,6 +441,69 @@ pub fn is_ai_method(method: &str) -> bool {
 pub fn handle_ai_unimplemented(_params: &serde_json::Value) -> Result<serde_json::Value, String> {
     Err("AI feature not implemented yet".to_string())
 }
+
+/// Default placeholder handler for unimplemented backend methods.
+pub fn handle_backend_unimplemented(
+    _params: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    Err("Backend feature not implemented yet".to_string())
+}
+
+/// Default placeholder handler for unimplemented updater methods.
+pub fn handle_updater_unimplemented(
+    _params: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    Err("Updater feature not implemented yet".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 Named Limits (Plan Section 1.10)
+// ---------------------------------------------------------------------------
+
+/// Maximum size of backend request params in bytes (1 MB).
+pub const MAX_BACKEND_REQUEST_PARAMS_BYTES: usize = 1024 * 1024;
+
+/// Maximum size of backend response or frame in bytes (4 MB).
+pub const MAX_BACKEND_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Default backend execution timeout in seconds (30 s).
+pub const DEFAULT_BACKEND_TIMEOUT_SECS: u64 = 30;
+
+/// Maximum backend execution timeout ceiling in seconds (300 s).
+pub const MAX_BACKEND_TIMEOUT_SECS: u64 = 300;
+
+/// Maximum concurrent backend requests per window (16).
+pub const MAX_BACKEND_CONCURRENT_REQUESTS_PER_WINDOW: usize = 16;
+
+/// Maximum declared backend methods in config (256).
+pub const MAX_BACKEND_DECLARED_METHODS: usize = 256;
+
+/// Maximum size of a backend log line in bytes (4 KB).
+pub const MAX_BACKEND_LOG_LINE_BYTES: usize = 4096;
+
+/// Maximum backend log rate in lines per second (200).
+pub const MAX_BACKEND_LOG_RATE_PER_SEC: usize = 200;
+
+/// Maximum restart retry attempts within retry window (3).
+pub const MAX_BACKEND_RESTART_RETRIES: usize = 3;
+
+/// Backend restart retry monitoring window in seconds (60 s).
+pub const BACKEND_RESTART_WINDOW_SECS: u64 = 60;
+
+/// Maximum updater manifest file size in bytes (64 KB).
+pub const MAX_UPDATER_MANIFEST_BYTES: usize = 64 * 1024;
+
+/// Maximum updater release notes length in bytes (8 KB plain text).
+pub const MAX_UPDATER_RELEASE_NOTES_BYTES: usize = 8192;
+
+/// Maximum updater payload size in bytes (1 GB).
+pub const MAX_UPDATER_PAYLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Maximum updater manifest validity period in days (30 days).
+pub const MAX_UPDATER_MANIFEST_VALIDITY_DAYS: u64 = 30;
+
+/// Maximum failed health checks before automatic rollback (2).
+pub const MAX_UPDATER_FAILED_HEALTH_CHECKS: usize = 2;
 
 /// Maximum clipboard text payload size in bytes (1 MB named constant).
 pub const MAX_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
@@ -597,7 +669,7 @@ impl HandlerRegistry {
         registry
     }
 
-    /// Create a registry pre-populated with all registered methods (core, native, and AI method stubs).
+    /// Create a registry pre-populated with all registered methods (core, native, AI, backend, and updater stubs).
     pub fn with_all_registered_methods() -> Self {
         let mut registry = Self::with_core_handlers();
         for &method in NATIVE_METHOD_NAMES {
@@ -605,6 +677,12 @@ impl HandlerRegistry {
         }
         for &method in AI_METHOD_NAMES {
             registry.register(method, handle_ai_unimplemented);
+        }
+        for &method in BACKEND_METHOD_NAMES {
+            registry.register(method, handle_backend_unimplemented);
+        }
+        for &method in UPDATER_METHOD_NAMES {
+            registry.register(method, handle_updater_unimplemented);
         }
         registry
     }
@@ -1113,11 +1191,12 @@ mod tests {
         let registry = HandlerRegistry::with_all_registered_methods();
         let methods = registry.registered_methods();
 
-        // Exact expected method list for Phase 3 (all registered methods: core + native + AI)
+        // Exact expected method list for Phase 4 (all registered methods: core + native + AI + backend + updater)
         let expected = vec![
             "ai.chat".to_string(),
             "ai.index".to_string(),
             "ai.search".to_string(),
+            "backend.invoke".to_string(),
             "badge.set".to_string(),
             "clipboard.read".to_string(),
             "clipboard.write".to_string(),
@@ -1131,6 +1210,8 @@ mod tests {
             "notify.send".to_string(),
             "shortcut.register".to_string(),
             "tray.set".to_string(),
+            "updater.apply".to_string(),
+            "updater.check".to_string(),
         ];
 
         assert_eq!(

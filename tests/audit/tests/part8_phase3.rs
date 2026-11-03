@@ -19,9 +19,11 @@ use tempfile::tempdir;
 
 use wavical_ai::catalog::{default_catalog, validate_safe_filename, validate_safe_id};
 use wavical_ai::channel::EngineChannel;
-use wavical_ai::chat::{ChatSessionManager, StreamChatConfig, build_chat_chunk_script};
+use wavical_ai::chat::{ChatSessionManager, build_chat_chunk_script};
 use wavical_ai::chunker::TextChunk;
-use wavical_ai::cloud_client::validate_and_extract_cloud_host;
+use wavical_ai::cloud_client::{
+    build_target_cloud_url, create_cloud_http_client, validate_and_extract_cloud_host,
+};
 use wavical_ai::cloud_protocol::execute_cloud_chat_non_streamed;
 use wavical_ai::consent::{check_cloud_consent, record_cloud_consent};
 use wavical_ai::credentials::CloudApiKey;

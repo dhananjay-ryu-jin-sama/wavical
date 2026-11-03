@@ -46,6 +46,9 @@ fn test_part5_capability_and_method_registration() {
     expected_all_caps.push("ai.chat");
     expected_all_caps.push("ai.index");
     expected_all_caps.push("ai.search");
+    expected_all_caps.push("backend.invoke");
+    expected_all_caps.push("updater.apply");
+    expected_all_caps.push("updater.check");
     expected_all_caps.sort();
 
     // Check KNOWN_CAPABILITIES matches plan

@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "wavical-config"
 version.workspace = true
 edition.workspace = true
@@ -11,6 +11,7 @@ serde_json = "1.0.151"
 thiserror = "2.0.21"
 tracing = "0.1.44"
 wavical-ipc = { path = "../wavical-ipc" }
+wavical-protocol = { path = "../wavical-protocol" }
 
 [dev-dependencies]
 proptest = "1.11.0"

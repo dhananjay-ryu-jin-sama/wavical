@@ -2,11 +2,16 @@
 
 pub mod archive;
 pub mod runtime_manifest;
+pub mod version_resolver;
 
 pub use archive::{ArchiveEntryError, validate_archive_entry_path};
 pub use runtime_manifest::{
     APPROVED_RUNTIMES, RuntimeArch, RuntimeManifestEntry, RuntimeManifestError,
     find_approved_runtime, list_approved_runtimes,
+};
+pub use version_resolver::{
+    SemverVersion, VersionPolicy, VersionResolverError, resolve_runtime_version,
+    resolve_runtime_version_with_policy,
 };
 
 use std::path::{Component, Path, PathBuf};

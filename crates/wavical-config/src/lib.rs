@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -154,6 +154,159 @@ pub struct AppConfig {
     /// Optional AI subsystem configuration (Phase 3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai: Option<AiConfig>,
+
+    /// Optional backend runtime configuration (Phase 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<BackendConfig>,
+
+    /// Optional application update configuration (Phase 4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updater: Option<UpdaterConfig>,
+}
+
+/// Configuration options for the backend runtime (`backend` section).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackendConfig {
+    /// Enable backend runtime process (default: false).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Runtime identifier ('node'; Bun support is deferred). Default: 'node'.
+    #[serde(default = "default_backend_runtime")]
+    pub runtime: String,
+
+    /// Exact pinned semantic version string (e.g. '22.11.0').
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+
+    /// Allow patch updates within the same major LTS line (default: false).
+    #[serde(default)]
+    pub allow_patch_updates: bool,
+
+    /// Relative entry script path inside project root (e.g. 'backend/main.js').
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+
+    /// Declared IPC method names (max 256, no duplicates).
+    #[serde(default)]
+    pub methods: Vec<String>,
+
+    /// Execution timeout in seconds (default: 30, ceiling: 300).
+    #[serde(default = "default_backend_timeout")]
+    pub timeout_seconds: u64,
+
+    /// Granular permissions for the backend runtime.
+    #[serde(default)]
+    pub permissions: BackendPermissionsConfig,
+
+    /// Extra environment variable names to pass through.
+    #[serde(default)]
+    pub env: Vec<String>,
+
+    /// Disable the permission model (unrestricted execution with loud warning).
+    #[serde(default)]
+    pub unrestricted: bool,
+}
+
+impl Default for BackendConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            runtime: default_backend_runtime(),
+            version: None,
+            allow_patch_updates: false,
+            entry: None,
+            methods: Vec::new(),
+            timeout_seconds: default_backend_timeout(),
+            permissions: BackendPermissionsConfig::default(),
+            env: Vec::new(),
+            unrestricted: false,
+        }
+    }
+}
+
+fn default_backend_runtime() -> String {
+    "node".to_string()
+}
+
+fn default_backend_timeout() -> u64 {
+    wavical_ipc::DEFAULT_BACKEND_TIMEOUT_SECS
+}
+
+/// Granular permissions configuration for the backend runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackendPermissionsConfig {
+    /// Allowed filesystem read paths.
+    #[serde(default)]
+    pub fs_read: Vec<String>,
+
+    /// Allowed filesystem write paths.
+    #[serde(default)]
+    pub fs_write: Vec<String>,
+
+    /// Allow spawning child processes (default: false).
+    #[serde(default)]
+    pub child_process: bool,
+
+    /// Allow worker threads (default: false).
+    #[serde(default)]
+    pub workers: bool,
+}
+
+/// Configuration options for application updates (`updater` section).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdaterConfig {
+    /// Enable updater subsystem (default: false).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// HTTPS URL to manifest.json (HTTPS only, non-empty host, no userinfo).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_url: Option<String>,
+
+    /// Well-formed public keys (current and optional next key for rotation; max 2).
+    #[serde(default)]
+    pub public_keys: Vec<String>,
+
+    /// Release channel ('stable', 'beta', or 'canary'). Default: 'stable'.
+    #[serde(default = "default_updater_channel")]
+    pub channel: String,
+
+    /// Update check interval in hours (1..=720, default: 24).
+    #[serde(default = "default_updater_check_interval")]
+    pub check_interval_hours: u64,
+
+    /// Automatically download updates in the background (default: true).
+    #[serde(default = "default_updater_auto_download")]
+    pub auto_download: bool,
+}
+
+impl Default for UpdaterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            manifest_url: None,
+            public_keys: Vec::new(),
+            channel: default_updater_channel(),
+            check_interval_hours: default_updater_check_interval(),
+            auto_download: default_updater_auto_download(),
+        }
+    }
+}
+
+fn default_updater_channel() -> String {
+    "stable".to_string()
+}
+
+fn default_updater_check_interval() -> u64 {
+    24
+}
+
+fn default_updater_auto_download() -> bool {
+    true
 }
 
 /// Configuration options for the AI subsystem (`ai` section).
@@ -310,7 +463,19 @@ impl AppConfig {
             shortcuts: None,
             file_associations: None,
             ai: None,
+            backend: None,
+            updater: None,
         }
+    }
+
+    /// Return whether the backend subsystem is enabled.
+    pub fn backend_enabled(&self) -> bool {
+        self.backend.as_ref().map(|b| b.enabled).unwrap_or(false)
+    }
+
+    /// Return whether the updater subsystem is enabled.
+    pub fn updater_enabled(&self) -> bool {
+        self.updater.as_ref().map(|u| u.enabled).unwrap_or(false)
     }
 
     /// Return the configured tray icon path relative to src/, if specified.
@@ -534,6 +699,22 @@ pub enum ValidationError {
         "in 'capabilities.{0}': capability '{0}' requires 'ai.enabled: true'; set 'ai: {{ enabled: true }}' in wavical.config.js to enable AI capabilities"
     )]
     AiCapabilityRequiresAiEnabled(String),
+
+    #[error("Backend configuration error: {0}")]
+    InvalidBackendConfig(String),
+
+    #[error(
+        "in 'capabilities.backend.invoke': capability 'backend.invoke' requires 'backend.enabled: true'; set 'backend: {{ enabled: true }}' in wavical.config.js to enable backend invocation"
+    )]
+    BackendCapabilityRequiresBackendEnabled,
+
+    #[error("Updater configuration error: {0}")]
+    InvalidUpdaterConfig(String),
+
+    #[error(
+        "in 'capabilities.{0}': capability '{0}' requires 'updater.enabled: true'; set 'updater: {{ enabled: true }}' in wavical.config.js to enable updater capabilities"
+    )]
+    UpdaterCapabilityRequiresUpdaterEnabled(String),
 }
 
 impl ValidationError {
@@ -657,15 +838,36 @@ pub fn parse_config_json(json_str: &str) -> Result<AppConfig, ValidationError> {
         validate_ai_config(ai)?;
     }
 
+    if let Some(ref backend) = config.backend {
+        validate_backend_config(backend)?;
+    }
+
+    if let Some(ref updater) = config.updater {
+        validate_updater_config(updater)?;
+    }
+
     // Phase 3 rule: any ai.* capability requires ai.enabled: true
     let ai_enabled = config.ai.as_ref().map(|a| a.enabled).unwrap_or(false);
+    let backend_enabled = config.backend.as_ref().map(|b| b.enabled).unwrap_or(false);
+    let updater_enabled = config.updater.as_ref().map(|u| u.enabled).unwrap_or(false);
+
     if let Some(ref caps) = config.capabilities {
         let mut sorted_caps: Vec<&String> = caps.keys().collect();
         sorted_caps.sort();
         for cap in sorted_caps {
             let is_granted = *caps.get(cap).unwrap_or(&false);
-            if is_granted && cap.starts_with("ai.") && !ai_enabled {
-                return Err(ValidationError::AiCapabilityRequiresAiEnabled(cap.clone()));
+            if is_granted {
+                if cap.starts_with("ai.") && !ai_enabled {
+                    return Err(ValidationError::AiCapabilityRequiresAiEnabled(cap.clone()));
+                }
+                if cap == "backend.invoke" && !backend_enabled {
+                    return Err(ValidationError::BackendCapabilityRequiresBackendEnabled);
+                }
+                if (cap == "updater.check" || cap == "updater.apply") && !updater_enabled {
+                    return Err(ValidationError::UpdaterCapabilityRequiresUpdaterEnabled(
+                        cap.clone(),
+                    ));
+                }
             }
         }
     }
@@ -849,6 +1051,459 @@ pub fn validate_ai_config(ai: &AiConfig) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Check if a name is a Windows reserved device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9).
+pub fn is_windows_reserved_device_name(s: &str) -> bool {
+    let upper = s.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+            | "CONIN$"
+            | "CONOUT$"
+    )
+}
+
+/// Check if an environment variable is prohibited for security (Node debugging/preloading).
+pub fn is_forbidden_node_env_var(name: &str) -> bool {
+    name == "NODE_OPTIONS"
+        || name == "NODE_PATH"
+        || name.starts_with("NODE_DEBUG")
+        || name.starts_with("NODE_INSPECT")
+        || name == "NODE_DEV"
+}
+
+/// Validate backend entry script path (relative, inside project, JS extension, no traversal, ADS, UNC, or reserved names).
+pub fn validate_backend_entry_path(entry: &str) -> Result<(), ValidationError> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return Err(ValidationError::InvalidBackendConfig(
+            "in 'backend.entry': entry path cannot be empty".to_string(),
+        ));
+    }
+
+    if trimmed.starts_with("//") || trimmed.starts_with(r"\\") {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.entry': UNC network paths are not permitted: '{entry}'"
+        )));
+    }
+
+    if trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.entry': entry path '{entry}' must be a relative path inside the project root; absolute paths are not permitted"
+        )));
+    }
+
+    if trimmed.len() >= 2
+        && trimmed.chars().next().unwrap().is_ascii_alphabetic()
+        && trimmed.chars().nth(1).unwrap() == ':'
+    {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.entry': Windows drive letters are not permitted: '{entry}'"
+        )));
+    }
+
+    let segments: Vec<&str> = trimmed.split(['/', '\\']).collect();
+    for seg in &segments {
+        if *seg == ".." {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.entry': directory traversal ('..') is not permitted: '{entry}'"
+            )));
+        }
+        if seg.contains(':') {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.entry': alternate data streams (':') are not permitted: '{entry}'"
+            )));
+        }
+        if seg.ends_with('.') || seg.ends_with(' ') {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.entry': trailing dot or space in segment '{seg}' is not permitted"
+            )));
+        }
+        let base_name = seg.split('.').next().unwrap_or("");
+        if is_windows_reserved_device_name(base_name) {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.entry': reserved Windows device name '{seg}' is not permitted"
+            )));
+        }
+    }
+
+    if !(trimmed.ends_with(".js") || trimmed.ends_with(".mjs") || trimmed.ends_with(".cjs")) {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.entry': entry file '{entry}' must have a JavaScript extension (.js, .mjs, or .cjs)"
+        )));
+    }
+
+    Ok(())
+}
+
+/// Validate backend permission path (no traversal, UNC, ADS, or reserved names).
+pub fn validate_backend_permission_path(path: &str, field_name: &str) -> Result<(), ValidationError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.permissions.{field_name}': path cannot be empty"
+        )));
+    }
+
+    if trimmed.starts_with("//") || trimmed.starts_with(r"\\") {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.permissions.{field_name}': UNC network paths are not permitted: '{path}'"
+        )));
+    }
+
+    let has_drive_letter = trimmed.len() >= 2
+        && trimmed.chars().next().unwrap().is_ascii_alphabetic()
+        && trimmed.chars().nth(1).unwrap() == ':';
+
+    let segments: Vec<&str> = trimmed.split(['/', '\\']).collect();
+    for (i, seg) in segments.iter().enumerate() {
+        if *seg == ".." {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.permissions.{field_name}': directory traversal ('..') is not permitted: '{path}'"
+            )));
+        }
+        if seg.contains(':') && !(i == 0 && has_drive_letter && *seg == &trimmed[..2]) {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.permissions.{field_name}': alternate data streams (':') are not permitted: '{path}'"
+            )));
+        }
+        if seg.ends_with('.') || seg.ends_with(' ') {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.permissions.{field_name}': trailing dot or space in segment '{seg}' is not permitted"
+            )));
+        }
+        let base_name = seg.split('.').next().unwrap_or("");
+        if is_windows_reserved_device_name(base_name) {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.permissions.{field_name}': reserved Windows device name '{seg}' is not permitted"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate the `backend` section of `wavical.config.js`.
+pub fn validate_backend_config(backend: &BackendConfig) -> Result<(), ValidationError> {
+    if !backend.enabled {
+        if let Some(ref ver) = backend.version {
+            wavical_protocol::SemverVersion::parse(ver).map_err(|_| {
+                ValidationError::InvalidBackendConfig(format!(
+                    "in 'backend.version': invalid version format '{ver}'; must be exact semver 'major.minor.patch' (e.g. '22.11.0')"
+                ))
+            })?;
+        }
+        if let Some(ref entry) = backend.entry {
+            validate_backend_entry_path(entry)?;
+        }
+        return Ok(());
+    }
+
+    if backend.runtime != "node" {
+        if backend.runtime == "bun" {
+            return Err(ValidationError::InvalidBackendConfig(
+                "unsupported backend runtime 'bun'; only 'node' is currently supported (Bun support is deferred)".to_string(),
+            ));
+        } else {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "unsupported backend runtime '{}'; only 'node' is currently supported",
+                backend.runtime
+            )));
+        }
+    }
+
+    let version = backend.version.as_ref().ok_or_else(|| {
+        ValidationError::InvalidBackendConfig(
+            "in 'backend.version': version is required when backend is enabled (e.g. '22.11.0')".to_string(),
+        )
+    })?;
+
+    wavical_protocol::SemverVersion::parse(version).map_err(|_| {
+        ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.version': invalid version format '{version}'; must be exact semver 'major.minor.patch' (e.g. '22.11.0')"
+        ))
+    })?;
+
+    let in_manifest = wavical_protocol::APPROVED_RUNTIMES
+        .iter()
+        .any(|entry| entry.runtime == "node" && entry.version == version);
+
+    if !in_manifest {
+        let approved: std::collections::BTreeSet<&str> = wavical_protocol::APPROVED_RUNTIMES
+            .iter()
+            .filter(|e| e.runtime == "node")
+            .map(|e| e.version)
+            .collect();
+        let approved_list: Vec<&str> = approved.into_iter().collect();
+        let approved_str = approved_list.join(", ");
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.version': version '{version}' is not in Wavical's approved runtime manifest (approved versions: {approved_str})"
+        )));
+    }
+
+    let arch = wavical_protocol::RuntimeArch::current();
+    let available: Vec<&str> = wavical_protocol::APPROVED_RUNTIMES
+        .iter()
+        .filter(|e| e.arch == arch && e.runtime == "node")
+        .map(|e| e.version)
+        .collect();
+
+    if let Ok(resolved) =
+        wavical_protocol::resolve_runtime_version(version, backend.allow_patch_updates, &available)
+        && resolved != *version
+    {
+        eprintln!(
+            "info: backend runtime version '{version}' resolved to '{resolved}' via allowPatchUpdates"
+        );
+        tracing::info!(
+            pinned = %version,
+            resolved = %resolved,
+            "Backend runtime resolved to newer version via allowPatchUpdates"
+        );
+    }
+
+    let entry = backend.entry.as_ref().ok_or_else(|| {
+        ValidationError::InvalidBackendConfig(
+            "in 'backend.entry': entry script path is required when backend is enabled (e.g. 'backend/main.js')".to_string(),
+        )
+    })?;
+
+    validate_backend_entry_path(entry)?;
+
+    if backend.methods.len() > wavical_ipc::MAX_BACKEND_DECLARED_METHODS {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.methods': declared method count {} exceeds maximum ceiling of {}",
+            backend.methods.len(),
+            wavical_ipc::MAX_BACKEND_DECLARED_METHODS
+        )));
+    }
+
+    let mut seen_methods = std::collections::HashSet::new();
+    for method in &backend.methods {
+        wavical_ipc::validate_method_name(method).map_err(|e| {
+            ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.methods': invalid method name '{method}': {e}"
+            ))
+        })?;
+        if !seen_methods.insert(method.to_lowercase()) {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.methods': duplicate method '{method}' declared"
+            )));
+        }
+    }
+
+    if backend.timeout_seconds == 0
+        || backend.timeout_seconds > wavical_ipc::MAX_BACKEND_TIMEOUT_SECS
+    {
+        return Err(ValidationError::InvalidBackendConfig(format!(
+            "in 'backend.timeoutSeconds': value {} exceeds hard ceiling of {} seconds (or is 0)",
+            backend.timeout_seconds,
+            wavical_ipc::MAX_BACKEND_TIMEOUT_SECS
+        )));
+    }
+
+    for path in &backend.permissions.fs_read {
+        validate_backend_permission_path(path, "fsRead")?;
+    }
+    for path in &backend.permissions.fs_write {
+        validate_backend_permission_path(path, "fsWrite")?;
+    }
+
+    for var in &backend.env {
+        if !is_valid_env_var_name(var) {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.env': '{var}' is not a valid environment variable name; must match pattern ^[A-Z][A-Z0-9_]*$"
+            )));
+        }
+        if is_forbidden_node_env_var(var) {
+            return Err(ValidationError::InvalidBackendConfig(format!(
+                "in 'backend.env': variable '{var}' is prohibited for security (Node debugging and preloading variables cannot be passed through)"
+            )));
+        }
+    }
+
+    if backend.unrestricted {
+        tracing::warn!("SECURITY WARNING: backend.unrestricted is enabled; permission model is disabled!");
+    }
+
+    Ok(())
+}
+
+/// Helper to check base64 decoding of specific byte length.
+fn is_valid_base64_of_length(s: &str, expected_len: usize) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') {
+        return false;
+    }
+    let mut bytes = Vec::new();
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for b in trimmed.bytes() {
+        if b == b'=' {
+            break;
+        }
+        let val = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return false,
+        } as u32;
+        buf = (buf << 6) | val;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    bytes.len() == expected_len
+}
+
+/// Validate that a public key string is well-formed (Ed25519 32-byte or Minisign 42-byte public key).
+pub fn validate_public_key_format(key: &str) -> bool {
+    let clean = key
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty() && !l.starts_with("untrusted comment:"))
+        .unwrap_or_else(|| key.trim());
+
+    is_valid_base64_of_length(clean, 32) || is_valid_base64_of_length(clean, 42)
+}
+
+/// Validate the `updater` section of `wavical.config.js`.
+pub fn validate_updater_config(updater: &UpdaterConfig) -> Result<(), ValidationError> {
+    if !updater.enabled {
+        return Ok(());
+    }
+
+    let url_str = updater.manifest_url.as_ref().ok_or_else(|| {
+        ValidationError::InvalidUpdaterConfig(
+            "in 'updater.manifestUrl': manifestUrl is required when updater is enabled".to_string(),
+        )
+    })?;
+
+    let trimmed_url = url_str.trim();
+    if !trimmed_url.starts_with("https://") {
+        return Err(ValidationError::InvalidUpdaterConfig(format!(
+            "in 'updater.manifestUrl': URL '{url_str}' must use HTTPS scheme ('https://...')"
+        )));
+    }
+
+    let remainder = &trimmed_url["https://".len()..];
+    let host_part = remainder.split('/').next().unwrap_or("");
+    if host_part.contains('@') {
+        return Err(ValidationError::InvalidUpdaterConfig(format!(
+            "in 'updater.manifestUrl': URL '{url_str}' must not contain userinfo ('user:pass@')"
+        )));
+    }
+    if host_part.trim().is_empty() {
+        return Err(ValidationError::InvalidUpdaterConfig(format!(
+            "in 'updater.manifestUrl': URL '{url_str}' must contain a valid non-empty host"
+        )));
+    }
+
+    if updater.public_keys.is_empty() {
+        return Err(ValidationError::InvalidUpdaterConfig(
+            "in 'updater.publicKeys': at least one public key must be provided when updater is enabled".to_string(),
+        ));
+    }
+
+    if updater.public_keys.len() > 2 {
+        return Err(ValidationError::InvalidUpdaterConfig(format!(
+            "in 'updater.publicKeys': at most 2 public keys (current and next) may be specified, found {}",
+            updater.public_keys.len()
+        )));
+    }
+
+    for key in &updater.public_keys {
+        if !validate_public_key_format(key) {
+            return Err(ValidationError::InvalidUpdaterConfig(format!(
+                "in 'updater.publicKeys': public key '{key}' is malformed; must be a valid 32-byte Ed25519 or Minisign public key"
+            )));
+        }
+    }
+
+    if updater.channel != "stable" && updater.channel != "beta" && updater.channel != "canary" {
+        return Err(ValidationError::InvalidUpdaterConfig(format!(
+            "in 'updater.channel': invalid channel '{}'; must be one of 'stable', 'beta', or 'canary'",
+            updater.channel
+        )));
+    }
+
+    if updater.check_interval_hours == 0 || updater.check_interval_hours > 720 {
+        return Err(ValidationError::InvalidUpdaterConfig(format!(
+            "in 'updater.checkIntervalHours': value {} is out of bounds; must be between 1 and 720 hours (30 days)",
+            updater.check_interval_hours
+        )));
+    }
+
+    Ok(())
+}
+
+/// Resolve the path to the managed Node executable in the local cache, if installed.
+pub fn resolve_managed_node_binary() -> Result<PathBuf, String> {
+    if let Ok(p) = std::env::var("WAVICAL_MANAGED_NODE_PATH") {
+        let path = PathBuf::from(p);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .map(PathBuf::from);
+
+    if let Some(base) = local_app_data {
+        let runtimes_dir = base.join("Wavical").join("runtimes");
+        if runtimes_dir.is_dir() {
+            let arch = wavical_protocol::RuntimeArch::current();
+            let pinned = "22.11.0";
+            let available: Vec<&str> = wavical_protocol::APPROVED_RUNTIMES
+                .iter()
+                .filter(|e| e.arch == arch && e.runtime == "node")
+                .map(|e| e.version)
+                .collect();
+
+            if let Ok(resolved) =
+                wavical_protocol::resolve_runtime_version(pinned, true, &available)
+            {
+                let dirname = format!("node-{resolved}-{}", arch.as_str());
+                let exe_path = runtimes_dir.join(&dirname).join("node.exe");
+                if exe_path.is_file() {
+                    return Ok(exe_path);
+                }
+            }
+        }
+    }
+
+    Err("managed Node runtime not found in cache".to_string())
+}
+
 /// Internal execution output capturing process status and buffered standard streams.
 #[derive(Debug)]
 pub struct NodeExecutionOutput {
@@ -862,7 +1517,25 @@ pub fn execute_node_config_script(
     project_root: &Path,
     timeout: Duration,
 ) -> Result<NodeExecutionOutput, ValidationError> {
-    let mut cmd = Command::new("node");
+    let node_binary = match resolve_managed_node_binary() {
+        Ok(managed) => managed.to_string_lossy().to_string(),
+        Err(_) => {
+            let system_node = Command::new("node").arg("--version").output();
+            if system_node.is_ok() {
+                eprintln!(
+                    "notice: managed Node runtime not found in cache; using system Node.js fallback.\n\
+                     To use the managed runtime, run: wavical runtime install 22.11.0"
+                );
+                "node".to_string()
+            } else {
+                return Err(ValidationError::NodeError(
+                    "Node subprocess failed: managed Node runtime not found in cache. Run 'wavical runtime install 22.11.0' to install it, or install Node.js (>= 14.8.0).".to_string(),
+                ));
+            }
+        }
+    };
+
+    let mut cmd = Command::new(&node_binary);
     cmd.arg("-e")
         .arg(
             "console.log = (...args) => console.error(...args);\
@@ -1411,6 +2084,8 @@ mod tests {
                     shortcuts: None,
                     file_associations: None,
                     ai: None,
+                    backend: None,
+                    updater: None,
                 },
             )
     }
@@ -1908,6 +2583,641 @@ mod tests {
         assert!(config.is_capability_granted("ai.chat"));
         assert!(config.is_capability_granted("ai.index"));
         assert!(config.is_capability_granted("ai.search"));
+    }
+
+    #[test]
+    fn test_phase4_backend_config_valid() {
+        let json = r#"{
+            "appId": "backend-app",
+            "backend": {
+                "enabled": true,
+                "runtime": "node",
+                "version": "22.11.0",
+                "allowPatchUpdates": true,
+                "entry": "backend/main.js",
+                "methods": ["todos.list", "todos.add"],
+                "timeoutSeconds": 45,
+                "permissions": {
+                    "fsRead": ["data/"],
+                    "fsWrite": ["data/out.txt"],
+                    "childProcess": false,
+                    "workers": false
+                },
+                "env": ["API_KEY", "DB_PORT_5432"],
+                "unrestricted": false
+            }
+        }"#;
+        let config = parse_config_json(json).expect("valid backend config should parse");
+        assert!(config.backend_enabled());
+        let backend = config.backend.unwrap();
+        assert_eq!(backend.runtime, "node");
+        assert_eq!(backend.version.as_deref(), Some("22.11.0"));
+        assert!(backend.allow_patch_updates);
+        assert_eq!(backend.entry.as_deref(), Some("backend/main.js"));
+        assert_eq!(backend.methods, vec!["todos.list", "todos.add"]);
+        assert_eq!(backend.timeout_seconds, 45);
+        assert_eq!(backend.permissions.fs_read, vec!["data/"]);
+        assert_eq!(backend.permissions.fs_write, vec!["data/out.txt"]);
+        assert_eq!(backend.env, vec!["API_KEY", "DB_PORT_5432"]);
+        assert!(!backend.unrestricted);
+    }
+
+    #[test]
+    fn test_phase4_backend_runtime_validation() {
+        // Bun is deferred -> rejected
+        let json_bun = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "runtime": "bun",
+                "version": "22.11.0",
+                "entry": "backend/main.js"
+            }
+        }"#;
+        let err = parse_config_json(json_bun).unwrap_err();
+        assert!(err.to_string().contains("unsupported backend runtime 'bun'"));
+
+        // Deno or other runtime -> rejected
+        let json_other = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "runtime": "deno",
+                "version": "22.11.0",
+                "entry": "backend/main.js"
+            }
+        }"#;
+        let err2 = parse_config_json(json_other).unwrap_err();
+        assert!(err2.to_string().contains("unsupported backend runtime 'deno'"));
+    }
+
+    #[test]
+    fn test_phase4_backend_version_validation() {
+        // Missing version when enabled
+        let json_missing = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "entry": "backend/main.js"
+            }
+        }"#;
+        let err = parse_config_json(json_missing).unwrap_err();
+        assert!(err.to_string().contains("version is required when backend is enabled"));
+
+        // Invalid semver format
+        let json_bad_semver = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11",
+                "entry": "backend/main.js"
+            }
+        }"#;
+        let err2 = parse_config_json(json_bad_semver).unwrap_err();
+        assert!(err2.to_string().contains("invalid version format '22.11'"));
+
+        // Unapproved version not in manifest
+        let json_unapproved = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "20.10.0",
+                "entry": "backend/main.js"
+            }
+        }"#;
+        let err3 = parse_config_json(json_unapproved).unwrap_err();
+        assert!(err3.to_string().contains("not in Wavical's approved runtime manifest"));
+    }
+
+    #[test]
+    fn test_phase4_backend_entry_path_validation() {
+        // Missing entry when enabled
+        let json_missing = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0"
+            }
+        }"#;
+        let err = parse_config_json(json_missing).unwrap_err();
+        assert!(err.to_string().contains("entry script path is required when backend is enabled"));
+
+        // Absolute path rejected
+        let json_abs = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "/var/app/main.js"
+            }
+        }"#;
+        let err1 = parse_config_json(json_abs).unwrap_err();
+        assert!(err1.to_string().contains("absolute paths are not permitted"));
+
+        // Drive letter rejected
+        let json_drive = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "C:\\app\\main.js"
+            }
+        }"#;
+        let err2 = parse_config_json(json_drive).unwrap_err();
+        assert!(err2.to_string().contains("Windows drive letters are not permitted"));
+
+        // UNC rejected
+        let json_unc = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "\\\\server\\share\\main.js"
+            }
+        }"#;
+        let err3 = parse_config_json(json_unc).unwrap_err();
+        assert!(err3.to_string().contains("UNC network paths are not permitted"));
+
+        // Traversal rejected
+        let json_trav = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/../../evil.js"
+            }
+        }"#;
+        let err4 = parse_config_json(json_trav).unwrap_err();
+        assert!(err4.to_string().contains("directory traversal ('..') is not permitted"));
+
+        // Alternate Data Stream rejected
+        let json_ads = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js:stream"
+            }
+        }"#;
+        let err5 = parse_config_json(json_ads).unwrap_err();
+        assert!(err5.to_string().contains("alternate data streams (':') are not permitted"));
+
+        // Reserved Windows device name rejected
+        let json_res = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/CON.js"
+            }
+        }"#;
+        let err6 = parse_config_json(json_res).unwrap_err();
+        assert!(err6.to_string().contains("reserved Windows device name 'CON.js' is not permitted"));
+
+        // Non-JS extension rejected
+        let json_ext = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.py"
+            }
+        }"#;
+        let err7 = parse_config_json(json_ext).unwrap_err();
+        assert!(err7.to_string().contains("must have a JavaScript extension (.js, .mjs, or .cjs)"));
+    }
+
+    #[test]
+    fn test_phase4_backend_methods_validation() {
+        // Invalid method name grammar (contains invalid character '@')
+        let json_bad_method = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "methods": ["invalid@method"]
+            }
+        }"#;
+        let err = parse_config_json(json_bad_method).unwrap_err();
+        assert!(err.to_string().contains("invalid method name 'invalid@method'"));
+
+        // Duplicate methods rejected
+        let json_dup = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "methods": ["todos.list", "todos.list"]
+            }
+        }"#;
+        let err2 = parse_config_json(json_dup).unwrap_err();
+        assert!(err2.to_string().contains("duplicate method 'todos.list' declared"));
+
+        // Duplicate methods casing evasion rejected
+        let json_dup_case = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "methods": ["todos.list", "TODOS.list"]
+            }
+        }"#;
+        let err3 = parse_config_json(json_dup_case).unwrap_err();
+        assert!(err3.to_string().contains("duplicate method 'TODOS.list' declared"));
+
+        // Count ceiling 256 exceeded (257 methods)
+        let methods: Vec<String> = (0..257).map(|i| format!("m.m{i}")).collect();
+        let methods_json = serde_json::to_string(&methods).unwrap();
+        let json_overflow = format!(
+            r#"{{
+                "appId": "test-app",
+                "backend": {{
+                    "enabled": true,
+                    "version": "22.11.0",
+                    "entry": "backend/main.js",
+                    "methods": {methods_json}
+                }}
+            }}"#
+        );
+        let err4 = parse_config_json(&json_overflow).unwrap_err();
+        assert!(err4.to_string().contains("declared method count 257 exceeds maximum ceiling of 256"));
+    }
+
+    #[test]
+    fn test_phase4_backend_timeout_validation() {
+        // 0 rejected
+        let json_zero = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "timeoutSeconds": 0
+            }
+        }"#;
+        let err = parse_config_json(json_zero).unwrap_err();
+        assert!(err.to_string().contains("exceeds hard ceiling of 300 seconds (or is 0)"));
+
+        // 301 rejected
+        let json_301 = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "timeoutSeconds": 301
+            }
+        }"#;
+        let err2 = parse_config_json(json_301).unwrap_err();
+        assert!(err2.to_string().contains("value 301 exceeds hard ceiling of 300 seconds"));
+
+        // 300 boundary accepted
+        let json_300 = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "timeoutSeconds": 300
+            }
+        }"#;
+        let cfg = parse_config_json(json_300).expect("boundary 300 accepted");
+        assert_eq!(cfg.backend.unwrap().timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_phase4_backend_permissions_validation() {
+        // Traversal in fsRead
+        let json_read_trav = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "permissions": {
+                    "fsRead": ["data/../../secret"]
+                }
+            }
+        }"#;
+        let err = parse_config_json(json_read_trav).unwrap_err();
+        assert!(err.to_string().contains("directory traversal ('..') is not permitted"));
+
+        // Alternate data stream in fsWrite
+        let json_write_ads = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "permissions": {
+                    "fsWrite": ["data/out.txt:evil"]
+                }
+            }
+        }"#;
+        let err2 = parse_config_json(json_write_ads).unwrap_err();
+        assert!(err2.to_string().contains("alternate data streams (':') are not permitted"));
+    }
+
+    #[test]
+    fn test_phase4_backend_env_validation() {
+        // Invalid regex name
+        let json_bad_name = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "env": ["lowercase_var"]
+            }
+        }"#;
+        let err = parse_config_json(json_bad_name).unwrap_err();
+        assert!(err.to_string().contains("is not a valid environment variable name"));
+
+        // NODE_OPTIONS prohibited
+        let json_opts = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "env": ["NODE_OPTIONS"]
+            }
+        }"#;
+        let err2 = parse_config_json(json_opts).unwrap_err();
+        assert!(err2.to_string().contains("variable 'NODE_OPTIONS' is prohibited for security"));
+
+        // NODE_PATH prohibited
+        let json_path = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "env": ["NODE_PATH"]
+            }
+        }"#;
+        let err3 = parse_config_json(json_path).unwrap_err();
+        assert!(err3.to_string().contains("variable 'NODE_PATH' is prohibited for security"));
+
+        // NODE_DEBUG prohibited
+        let json_debug = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "env": ["NODE_DEBUG"]
+            }
+        }"#;
+        let err4 = parse_config_json(json_debug).unwrap_err();
+        assert!(err4.to_string().contains("variable 'NODE_DEBUG' is prohibited for security"));
+    }
+
+    #[test]
+    fn test_phase4_updater_config_valid() {
+        let json = r#"{
+            "appId": "updater-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://updates.example.com/myapp/manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"],
+                "channel": "stable",
+                "checkIntervalHours": 12,
+                "autoDownload": true
+            }
+        }"#;
+        let config = parse_config_json(json).expect("valid updater config should parse");
+        assert!(config.updater_enabled());
+        let updater = config.updater.unwrap();
+        assert_eq!(
+            updater.manifest_url.as_deref(),
+            Some("https://updates.example.com/myapp/manifest.json")
+        );
+        assert_eq!(updater.public_keys.len(), 1);
+        assert_eq!(updater.channel, "stable");
+        assert_eq!(updater.check_interval_hours, 12);
+        assert!(updater.auto_download);
+    }
+
+    #[test]
+    fn test_phase4_updater_url_validation() {
+        // HTTP rejected
+        let json_http = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "http://insecure.example.com/manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"]
+            }
+        }"#;
+        let err = parse_config_json(json_http).unwrap_err();
+        assert!(err.to_string().contains("must use HTTPS scheme ('https://...')"));
+
+        // Userinfo rejected
+        let json_userinfo = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://user:pass@example.com/manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"]
+            }
+        }"#;
+        let err2 = parse_config_json(json_userinfo).unwrap_err();
+        assert!(err2.to_string().contains("must not contain userinfo ('user:pass@')"));
+
+        // Empty host rejected
+        let json_nohost = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https:///manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"]
+            }
+        }"#;
+        let err3 = parse_config_json(json_nohost).unwrap_err();
+        assert!(err3.to_string().contains("must contain a valid non-empty host"));
+    }
+
+    #[test]
+    fn test_phase4_updater_public_keys_validation() {
+        // Missing keys when enabled
+        let json_empty = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://example.com/manifest.json",
+                "publicKeys": []
+            }
+        }"#;
+        let err = parse_config_json(json_empty).unwrap_err();
+        assert!(err.to_string().contains("at least one public key must be provided"));
+
+        // More than 2 keys rejected
+        let json_3keys = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://example.com/manifest.json",
+                "publicKeys": [
+                    "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7",
+                    "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7",
+                    "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"
+                ]
+            }
+        }"#;
+        let err2 = parse_config_json(json_3keys).unwrap_err();
+        assert!(err2.to_string().contains("at most 2 public keys (current and next) may be specified, found 3"));
+
+        // Malformed public key
+        let json_malformed = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://example.com/manifest.json",
+                "publicKeys": ["not-base64-key!!!"]
+            }
+        }"#;
+        let err3 = parse_config_json(json_malformed).unwrap_err();
+        assert!(err3.to_string().contains("is malformed; must be a valid 32-byte Ed25519 or Minisign public key"));
+    }
+
+    #[test]
+    fn test_phase4_updater_channel_validation() {
+        let json_bad_chan = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://example.com/manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"],
+                "channel": "nightly"
+            }
+        }"#;
+        let err = parse_config_json(json_bad_chan).unwrap_err();
+        assert!(err.to_string().contains("invalid channel 'nightly'; must be one of 'stable', 'beta', or 'canary'"));
+    }
+
+    #[test]
+    fn test_phase4_updater_interval_validation() {
+        let json_zero = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://example.com/manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"],
+                "checkIntervalHours": 0
+            }
+        }"#;
+        let err = parse_config_json(json_zero).unwrap_err();
+        assert!(err.to_string().contains("value 0 is out of bounds; must be between 1 and 720 hours"));
+
+        let json_721 = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://example.com/manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"],
+                "checkIntervalHours": 721
+            }
+        }"#;
+        let err2 = parse_config_json(json_721).unwrap_err();
+        assert!(err2.to_string().contains("value 721 is out of bounds; must be between 1 and 720 hours"));
+    }
+
+    #[test]
+    fn test_phase4_capability_gating_backend_and_updater() {
+        // backend.invoke without backend.enabled
+        let json_backend_cap = r#"{
+            "appId": "test-app",
+            "capabilities": {
+                "backend.invoke": true
+            }
+        }"#;
+        let err = parse_config_json(json_backend_cap).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::BackendCapabilityRequiresBackendEnabled
+        ));
+
+        // updater.check without updater.enabled
+        let json_updater_check = r#"{
+            "appId": "test-app",
+            "capabilities": {
+                "updater.check": true
+            }
+        }"#;
+        let err2 = parse_config_json(json_updater_check).unwrap_err();
+        assert!(matches!(
+            err2,
+            ValidationError::UpdaterCapabilityRequiresUpdaterEnabled(_)
+        ));
+
+        // updater.apply without updater.enabled
+        let json_updater_apply = r#"{
+            "appId": "test-app",
+            "capabilities": {
+                "updater.apply": true
+            }
+        }"#;
+        let err3 = parse_config_json(json_updater_apply).unwrap_err();
+        assert!(matches!(
+            err3,
+            ValidationError::UpdaterCapabilityRequiresUpdaterEnabled(_)
+        ));
+
+        // Valid when enabled
+        let json_both_enabled = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": true,
+                "version": "22.11.0",
+                "entry": "backend/main.js",
+                "methods": ["todos.list"]
+            },
+            "updater": {
+                "enabled": true,
+                "manifestUrl": "https://example.com/manifest.json",
+                "publicKeys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaKA73Y7yCo7"]
+            },
+            "capabilities": {
+                "backend.invoke": true,
+                "updater.check": true,
+                "updater.apply": true
+            }
+        }"#;
+        let config = parse_config_json(json_both_enabled).expect("capabilities valid when enabled");
+        assert!(config.is_capability_granted("backend.invoke"));
+        assert!(config.is_capability_granted("updater.check"));
+        assert!(config.is_capability_granted("updater.apply"));
+    }
+
+    #[test]
+    fn test_phase4_deny_unknown_fields_backend_and_updater() {
+        let json_extra_backend = r#"{
+            "appId": "test-app",
+            "backend": {
+                "enabled": false,
+                "unknownField": 123
+            }
+        }"#;
+        assert!(matches!(
+            parse_config_json(json_extra_backend),
+            Err(ValidationError::MalformedJson(_))
+        ));
+
+        let json_extra_updater = r#"{
+            "appId": "test-app",
+            "updater": {
+                "enabled": false,
+                "unknownField": 123
+            }
+        }"#;
+        assert!(matches!(
+            parse_config_json(json_extra_updater),
+            Err(ValidationError::MalformedJson(_))
+        ));
     }
 
     #[test]
