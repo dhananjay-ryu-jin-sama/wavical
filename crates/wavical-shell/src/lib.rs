@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod backend;
+
 use std::borrow::Cow;
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -1157,7 +1157,10 @@ pub fn validate_backend_entry_path(entry: &str) -> Result<(), ValidationError> {
 }
 
 /// Validate backend permission path (no traversal, UNC, ADS, or reserved names).
-pub fn validate_backend_permission_path(path: &str, field_name: &str) -> Result<(), ValidationError> {
+pub fn validate_backend_permission_path(
+    path: &str,
+    field_name: &str,
+) -> Result<(), ValidationError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err(ValidationError::InvalidBackendConfig(format!(
@@ -1234,7 +1237,8 @@ pub fn validate_backend_config(backend: &BackendConfig) -> Result<(), Validation
 
     let version = backend.version.as_ref().ok_or_else(|| {
         ValidationError::InvalidBackendConfig(
-            "in 'backend.version': version is required when backend is enabled (e.g. '22.11.0')".to_string(),
+            "in 'backend.version': version is required when backend is enabled (e.g. '22.11.0')"
+                .to_string(),
         )
     })?;
 
@@ -1343,7 +1347,9 @@ pub fn validate_backend_config(backend: &BackendConfig) -> Result<(), Validation
     }
 
     if backend.unrestricted {
-        tracing::warn!("SECURITY WARNING: backend.unrestricted is enabled; permission model is disabled!");
+        tracing::warn!(
+            "SECURITY WARNING: backend.unrestricted is enabled; permission model is disabled!"
+        );
     }
 
     Ok(())
@@ -1355,7 +1361,10 @@ fn is_valid_base64_of_length(s: &str, expected_len: usize) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    if !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=') {
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+    {
         return false;
     }
     let mut bytes = Vec::new();
@@ -2635,7 +2644,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_bun).unwrap_err();
-        assert!(err.to_string().contains("unsupported backend runtime 'bun'"));
+        assert!(
+            err.to_string()
+                .contains("unsupported backend runtime 'bun'")
+        );
 
         // Deno or other runtime -> rejected
         let json_other = r#"{
@@ -2648,7 +2660,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_other).unwrap_err();
-        assert!(err2.to_string().contains("unsupported backend runtime 'deno'"));
+        assert!(
+            err2.to_string()
+                .contains("unsupported backend runtime 'deno'")
+        );
     }
 
     #[test]
@@ -2662,7 +2677,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_missing).unwrap_err();
-        assert!(err.to_string().contains("version is required when backend is enabled"));
+        assert!(
+            err.to_string()
+                .contains("version is required when backend is enabled")
+        );
 
         // Invalid semver format
         let json_bad_semver = r#"{
@@ -2686,7 +2704,10 @@ mod tests {
             }
         }"#;
         let err3 = parse_config_json(json_unapproved).unwrap_err();
-        assert!(err3.to_string().contains("not in Wavical's approved runtime manifest"));
+        assert!(
+            err3.to_string()
+                .contains("not in Wavical's approved runtime manifest")
+        );
     }
 
     #[test]
@@ -2700,7 +2721,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_missing).unwrap_err();
-        assert!(err.to_string().contains("entry script path is required when backend is enabled"));
+        assert!(
+            err.to_string()
+                .contains("entry script path is required when backend is enabled")
+        );
 
         // Absolute path rejected
         let json_abs = r#"{
@@ -2712,7 +2736,10 @@ mod tests {
             }
         }"#;
         let err1 = parse_config_json(json_abs).unwrap_err();
-        assert!(err1.to_string().contains("absolute paths are not permitted"));
+        assert!(
+            err1.to_string()
+                .contains("absolute paths are not permitted")
+        );
 
         // Drive letter rejected
         let json_drive = r#"{
@@ -2724,7 +2751,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_drive).unwrap_err();
-        assert!(err2.to_string().contains("Windows drive letters are not permitted"));
+        assert!(
+            err2.to_string()
+                .contains("Windows drive letters are not permitted")
+        );
 
         // UNC rejected
         let json_unc = r#"{
@@ -2736,7 +2766,10 @@ mod tests {
             }
         }"#;
         let err3 = parse_config_json(json_unc).unwrap_err();
-        assert!(err3.to_string().contains("UNC network paths are not permitted"));
+        assert!(
+            err3.to_string()
+                .contains("UNC network paths are not permitted")
+        );
 
         // Traversal rejected
         let json_trav = r#"{
@@ -2748,7 +2781,10 @@ mod tests {
             }
         }"#;
         let err4 = parse_config_json(json_trav).unwrap_err();
-        assert!(err4.to_string().contains("directory traversal ('..') is not permitted"));
+        assert!(
+            err4.to_string()
+                .contains("directory traversal ('..') is not permitted")
+        );
 
         // Alternate Data Stream rejected
         let json_ads = r#"{
@@ -2760,7 +2796,10 @@ mod tests {
             }
         }"#;
         let err5 = parse_config_json(json_ads).unwrap_err();
-        assert!(err5.to_string().contains("alternate data streams (':') are not permitted"));
+        assert!(
+            err5.to_string()
+                .contains("alternate data streams (':') are not permitted")
+        );
 
         // Reserved Windows device name rejected
         let json_res = r#"{
@@ -2772,7 +2811,10 @@ mod tests {
             }
         }"#;
         let err6 = parse_config_json(json_res).unwrap_err();
-        assert!(err6.to_string().contains("reserved Windows device name 'CON.js' is not permitted"));
+        assert!(
+            err6.to_string()
+                .contains("reserved Windows device name 'CON.js' is not permitted")
+        );
 
         // Non-JS extension rejected
         let json_ext = r#"{
@@ -2784,7 +2826,10 @@ mod tests {
             }
         }"#;
         let err7 = parse_config_json(json_ext).unwrap_err();
-        assert!(err7.to_string().contains("must have a JavaScript extension (.js, .mjs, or .cjs)"));
+        assert!(
+            err7.to_string()
+                .contains("must have a JavaScript extension (.js, .mjs, or .cjs)")
+        );
     }
 
     #[test]
@@ -2800,7 +2845,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_bad_method).unwrap_err();
-        assert!(err.to_string().contains("invalid method name 'invalid@method'"));
+        assert!(
+            err.to_string()
+                .contains("invalid method name 'invalid@method'")
+        );
 
         // Duplicate methods rejected
         let json_dup = r#"{
@@ -2813,7 +2861,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_dup).unwrap_err();
-        assert!(err2.to_string().contains("duplicate method 'todos.list' declared"));
+        assert!(
+            err2.to_string()
+                .contains("duplicate method 'todos.list' declared")
+        );
 
         // Duplicate methods casing evasion rejected
         let json_dup_case = r#"{
@@ -2826,7 +2877,10 @@ mod tests {
             }
         }"#;
         let err3 = parse_config_json(json_dup_case).unwrap_err();
-        assert!(err3.to_string().contains("duplicate method 'TODOS.list' declared"));
+        assert!(
+            err3.to_string()
+                .contains("duplicate method 'TODOS.list' declared")
+        );
 
         // Count ceiling 256 exceeded (257 methods)
         let methods: Vec<String> = (0..257).map(|i| format!("m.m{i}")).collect();
@@ -2843,7 +2897,10 @@ mod tests {
             }}"#
         );
         let err4 = parse_config_json(&json_overflow).unwrap_err();
-        assert!(err4.to_string().contains("declared method count 257 exceeds maximum ceiling of 256"));
+        assert!(
+            err4.to_string()
+                .contains("declared method count 257 exceeds maximum ceiling of 256")
+        );
     }
 
     #[test]
@@ -2859,7 +2916,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_zero).unwrap_err();
-        assert!(err.to_string().contains("exceeds hard ceiling of 300 seconds (or is 0)"));
+        assert!(
+            err.to_string()
+                .contains("exceeds hard ceiling of 300 seconds (or is 0)")
+        );
 
         // 301 rejected
         let json_301 = r#"{
@@ -2872,7 +2932,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_301).unwrap_err();
-        assert!(err2.to_string().contains("value 301 exceeds hard ceiling of 300 seconds"));
+        assert!(
+            err2.to_string()
+                .contains("value 301 exceeds hard ceiling of 300 seconds")
+        );
 
         // 300 boundary accepted
         let json_300 = r#"{
@@ -2903,7 +2966,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_read_trav).unwrap_err();
-        assert!(err.to_string().contains("directory traversal ('..') is not permitted"));
+        assert!(
+            err.to_string()
+                .contains("directory traversal ('..') is not permitted")
+        );
 
         // Alternate data stream in fsWrite
         let json_write_ads = r#"{
@@ -2918,7 +2984,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_write_ads).unwrap_err();
-        assert!(err2.to_string().contains("alternate data streams (':') are not permitted"));
+        assert!(
+            err2.to_string()
+                .contains("alternate data streams (':') are not permitted")
+        );
     }
 
     #[test]
@@ -2934,7 +3003,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_bad_name).unwrap_err();
-        assert!(err.to_string().contains("is not a valid environment variable name"));
+        assert!(
+            err.to_string()
+                .contains("is not a valid environment variable name")
+        );
 
         // NODE_OPTIONS prohibited
         let json_opts = r#"{
@@ -2947,7 +3019,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_opts).unwrap_err();
-        assert!(err2.to_string().contains("variable 'NODE_OPTIONS' is prohibited for security"));
+        assert!(
+            err2.to_string()
+                .contains("variable 'NODE_OPTIONS' is prohibited for security")
+        );
 
         // NODE_PATH prohibited
         let json_path = r#"{
@@ -2960,7 +3035,10 @@ mod tests {
             }
         }"#;
         let err3 = parse_config_json(json_path).unwrap_err();
-        assert!(err3.to_string().contains("variable 'NODE_PATH' is prohibited for security"));
+        assert!(
+            err3.to_string()
+                .contains("variable 'NODE_PATH' is prohibited for security")
+        );
 
         // NODE_DEBUG prohibited
         let json_debug = r#"{
@@ -2973,7 +3051,10 @@ mod tests {
             }
         }"#;
         let err4 = parse_config_json(json_debug).unwrap_err();
-        assert!(err4.to_string().contains("variable 'NODE_DEBUG' is prohibited for security"));
+        assert!(
+            err4.to_string()
+                .contains("variable 'NODE_DEBUG' is prohibited for security")
+        );
     }
 
     #[test]
@@ -3014,7 +3095,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_http).unwrap_err();
-        assert!(err.to_string().contains("must use HTTPS scheme ('https://...')"));
+        assert!(
+            err.to_string()
+                .contains("must use HTTPS scheme ('https://...')")
+        );
 
         // Userinfo rejected
         let json_userinfo = r#"{
@@ -3026,7 +3110,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_userinfo).unwrap_err();
-        assert!(err2.to_string().contains("must not contain userinfo ('user:pass@')"));
+        assert!(
+            err2.to_string()
+                .contains("must not contain userinfo ('user:pass@')")
+        );
 
         // Empty host rejected
         let json_nohost = r#"{
@@ -3038,7 +3125,10 @@ mod tests {
             }
         }"#;
         let err3 = parse_config_json(json_nohost).unwrap_err();
-        assert!(err3.to_string().contains("must contain a valid non-empty host"));
+        assert!(
+            err3.to_string()
+                .contains("must contain a valid non-empty host")
+        );
     }
 
     #[test]
@@ -3053,7 +3143,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_empty).unwrap_err();
-        assert!(err.to_string().contains("at least one public key must be provided"));
+        assert!(
+            err.to_string()
+                .contains("at least one public key must be provided")
+        );
 
         // More than 2 keys rejected
         let json_3keys = r#"{
@@ -3069,7 +3162,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_3keys).unwrap_err();
-        assert!(err2.to_string().contains("at most 2 public keys (current and next) may be specified, found 3"));
+        assert!(
+            err2.to_string()
+                .contains("at most 2 public keys (current and next) may be specified, found 3")
+        );
 
         // Malformed public key
         let json_malformed = r#"{
@@ -3081,7 +3177,10 @@ mod tests {
             }
         }"#;
         let err3 = parse_config_json(json_malformed).unwrap_err();
-        assert!(err3.to_string().contains("is malformed; must be a valid 32-byte Ed25519 or Minisign public key"));
+        assert!(
+            err3.to_string()
+                .contains("is malformed; must be a valid 32-byte Ed25519 or Minisign public key")
+        );
     }
 
     #[test]
@@ -3096,7 +3195,11 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_bad_chan).unwrap_err();
-        assert!(err.to_string().contains("invalid channel 'nightly'; must be one of 'stable', 'beta', or 'canary'"));
+        assert!(
+            err.to_string().contains(
+                "invalid channel 'nightly'; must be one of 'stable', 'beta', or 'canary'"
+            )
+        );
     }
 
     #[test]
@@ -3111,7 +3214,10 @@ mod tests {
             }
         }"#;
         let err = parse_config_json(json_zero).unwrap_err();
-        assert!(err.to_string().contains("value 0 is out of bounds; must be between 1 and 720 hours"));
+        assert!(
+            err.to_string()
+                .contains("value 0 is out of bounds; must be between 1 and 720 hours")
+        );
 
         let json_721 = r#"{
             "appId": "test-app",
@@ -3123,7 +3229,10 @@ mod tests {
             }
         }"#;
         let err2 = parse_config_json(json_721).unwrap_err();
-        assert!(err2.to_string().contains("value 721 is out of bounds; must be between 1 and 720 hours"));
+        assert!(
+            err2.to_string()
+                .contains("value 721 is out of bounds; must be between 1 and 720 hours")
+        );
     }
 
     #[test]

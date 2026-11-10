@@ -1,10 +1,17 @@
 #![forbid(unsafe_code)]
 
 pub mod archive;
+pub mod backend_args;
+pub mod backend_restart_policy;
 pub mod runtime_manifest;
 pub mod version_resolver;
 
 pub use archive::{ArchiveEntryError, validate_archive_entry_path};
+pub use backend_args::{
+    BackendArgError, build_node_permission_flags, is_forbidden_backend_arg,
+    is_forbidden_node_env_var, validate_backend_cli_args,
+};
+pub use backend_restart_policy::{BackendCrashLimitExceeded, BackendRestartPolicy};
 pub use runtime_manifest::{
     APPROVED_RUNTIMES, RuntimeArch, RuntimeManifestEntry, RuntimeManifestError,
     find_approved_runtime, list_approved_runtimes,

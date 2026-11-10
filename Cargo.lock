@@ -4990,18 +4990,22 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "global-hotkey",
+ "interprocess",
  "muda",
  "serde",
  "serde_json",
  "tao",
+ "tempfile",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
  "tray-icon",
  "wavical-ai",
+ "wavical-config",
  "wavical-ipc",
  "wavical-native",
  "wavical-protocol",
+ "win32job",
  "wry",
 ]
 

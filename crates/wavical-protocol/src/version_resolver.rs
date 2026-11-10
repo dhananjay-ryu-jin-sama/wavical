@@ -174,7 +174,10 @@ mod tests {
         assert_eq!(res, "22.11.0");
 
         let err = resolve_runtime_version("20.10.0", false, &manifest).unwrap_err();
-        assert!(matches!(err, VersionResolverError::VersionNotFoundInManifest(_)));
+        assert!(matches!(
+            err,
+            VersionResolverError::VersionNotFoundInManifest(_)
+        ));
     }
 
     #[test]
