@@ -287,6 +287,10 @@ pub struct InitArgs {
     /// Comma-separated list of capabilities to grant (default: none / unselected)
     #[arg(long = "accept-capabilities")]
     pub accept_capabilities: Option<String>,
+
+    /// Scaffold optional Node.js backend runtime support (Phase 4 WP5)
+    #[arg(long)]
+    pub backend: bool,
 }
 
 /// Arguments for the `dev` subcommand.
@@ -435,6 +439,130 @@ pub fn derive_title(app_id: &str) -> String {
         .join(" ")
 }
 
+/// Helper JavaScript client library bundled with applications having Node backends.
+pub const WAVICAL_BACKEND_JS: &str = r#"'use strict';
+
+const net = require('net');
+
+// Console Redirection: ensure stdout is never corrupted by console.log
+console.log = function(...args) {
+  process.stderr.write(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n');
+};
+console.info = console.log;
+console.warn = console.log;
+
+const MAX_FRAME_SIZE = 4 * 1024 * 1024; // 4 MB
+
+const handlers = new Map();
+
+function handle(name, fn) {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new TypeError('Method name must be a non-empty string');
+  }
+  if (typeof fn !== 'function') {
+    throw new TypeError('Handler must be a function');
+  }
+  handlers.set(name, fn);
+}
+
+const pipePath = process.env.WAVICAL_IPC_PIPE;
+if (!pipePath) {
+  process.stderr.write('wavical-backend: WAVICAL_IPC_PIPE environment variable is missing\n');
+  process.exit(1);
+}
+
+const client = net.createConnection(pipePath, () => {});
+
+client.on('error', (err) => {
+  process.stderr.write(`wavical-backend pipe error: ${err.message}\n`);
+  process.exit(1);
+});
+
+client.on('close', () => {
+  process.exit(0);
+});
+
+let buffer = Buffer.alloc(0);
+
+client.on('data', (chunk) => {
+  buffer = Buffer.concat([buffer, chunk]);
+
+  while (buffer.length >= 4) {
+    const frameLen = buffer.readUInt32BE(0);
+    if (frameLen > MAX_FRAME_SIZE) {
+      process.stderr.write(`wavical-backend: frame size ${frameLen} exceeds limit\n`);
+      client.destroy();
+      process.exit(1);
+    }
+
+    if (buffer.length < 4 + frameLen) {
+      break;
+    }
+
+    const frameBytes = buffer.subarray(4, 4 + frameLen);
+    buffer = buffer.subarray(4 + frameLen);
+
+    let req;
+    try {
+      req = JSON.parse(frameBytes.toString('utf8'));
+    } catch (e) {
+      process.stderr.write('wavical-backend: malformed JSON request frame\n');
+      continue;
+    }
+
+    dispatchRequest(req);
+  }
+});
+
+function sendResponse(id, ok, result, error) {
+  const resp = { id, ok };
+  if (ok) {
+    resp.result = result !== undefined ? result : null;
+  } else {
+    resp.error = typeof error === 'string' ? error : 'Internal error';
+  }
+
+  const jsonStr = JSON.stringify(resp);
+  const jsonBuf = Buffer.from(jsonStr, 'utf8');
+  if (jsonBuf.length > MAX_FRAME_SIZE) {
+    const errResp = Buffer.from(JSON.stringify({ id, ok: false, error: 'Internal error' }), 'utf8');
+    const hdr = Buffer.alloc(4);
+    hdr.writeUInt32BE(errResp.length, 0);
+    client.write(Buffer.concat([hdr, errResp]));
+    return;
+  }
+
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(jsonBuf.length, 0);
+  client.write(Buffer.concat([header, jsonBuf]));
+}
+
+function dispatchRequest(req) {
+  if (!req || typeof req.id !== 'number' || typeof req.method !== 'string') {
+    return;
+  }
+
+  const fn = handlers.get(req.method);
+  if (!fn) {
+    sendResponse(req.id, false, null, 'Method not found');
+    return;
+  }
+
+  Promise.resolve()
+    .then(() => fn(req.params))
+    .then((result) => {
+      sendResponse(req.id, true, result, null);
+    })
+    .catch(() => {
+      sendResponse(req.id, false, null, 'Internal error');
+    });
+}
+
+module.exports = {
+  handle
+};
+"#;
+
 /// Generate default `wavical.config.js` contents.
 pub fn generate_config_js(app_id: &str, title: &str) -> String {
     format!(
@@ -442,10 +570,116 @@ pub fn generate_config_js(app_id: &str, title: &str) -> String {
     )
 }
 
+/// Generate `wavical.config.js` configured with Node.js backend support.
+pub fn generate_backend_config_js(app_id: &str, title: &str) -> String {
+    format!(
+        r#"export default {{
+  appId: '{app_id}',
+  window: {{ width: 1200, height: 800, title: '{title}' }},
+  capabilities: {{
+    'backend.invoke': true
+  }},
+  backend: {{
+    enabled: true,
+    runtime: 'node',
+    version: '22.11.0',
+    allowPatchUpdates: false,
+    entry: 'backend/main.js',
+    methods: ['hello.greet'],
+    timeoutSeconds: 30,
+    permissions: {{
+      fsRead: [],
+      fsWrite: [],
+      childProcess: false,
+      workers: false
+    }},
+    env: [],
+    unrestricted: false
+  }}
+}};
+"#
+    )
+}
+
+/// Generate starter `backend/main.js`.
+pub fn generate_backend_main_js() -> &'static str {
+    r#"const { handle } = require('./wavical-backend.js');
+
+handle('hello.greet', async (params) => {
+  const name = (params && typeof params.name === 'string') ? params.name : 'World';
+  return { message: `Hello, ${name}!` };
+});
+"#
+}
+
+/// Generate starter `backend/package.json`.
+pub fn generate_backend_package_json() -> &'static str {
+    r#"{
+  "name": "backend",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.js"
+}
+"#
+}
+
+/// Generate starter `backend/package-lock.json`.
+pub fn generate_backend_package_lock_json() -> &'static str {
+    r#"{
+  "name": "backend",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "backend",
+      "version": "1.0.0"
+    }
+  }
+}
+"#
+}
+
 /// Generate minimal starter `src/index.html`.
 pub fn generate_index_html(title: &str) -> String {
     format!(
         "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <title>{title}</title>\n  <link rel=\"stylesheet\" href=\"styles.css\">\n</head>\n<body>\n  <h1>Welcome to {title}</h1>\n  <p>Edit src/index.html to get started.</p>\n</body>\n</html>\n"
+    )
+}
+
+/// Generate starter `src/index.html` with a backend greeting button.
+pub fn generate_backend_index_html(title: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <h1>Welcome to {title}</h1>
+  <p>Edit src/index.html to get started.</p>
+  <div style="margin-top: 1.5rem; padding: 1rem; border: 1px solid #e0e0e0; border-radius: 6px;">
+    <button id="greet-btn" style="padding: 0.5rem 1rem; cursor: pointer;">Call Backend (hello.greet)</button>
+    <p id="greet-result" style="margin-top: 0.75rem; font-weight: bold;"></p>
+  </div>
+  <script>
+    document.getElementById('greet-btn')?.addEventListener('click', async () => {{
+      try {{
+        const res = await window.wavical.invoke('backend.invoke', {{
+          method: 'hello.greet',
+          params: {{ name: 'Wavical Developer' }}
+        }});
+        document.getElementById('greet-result').textContent = res.message;
+      }} catch (err) {{
+        document.getElementById('greet-result').textContent = 'Error: ' + err.message;
+      }}
+    }});
+  </script>
+</body>
+</html>
+"#
     )
 }
 
@@ -459,8 +693,17 @@ pub fn generate_gitignore() -> &'static str {
     "# Build artifacts\ndist/\ntarget/\n\n# Node\nnode_modules/\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*\npnpm-debug.log*\n\n# Environment & OS\n.env\n.env.local\n.DS_Store\nThumbs.db\n"
 }
 
-/// Scaffold a new Wavical project at the given directory.
+/// Scaffold a new Wavical project at the given directory with default options.
 pub fn run_init(dir: &Path, force: bool) -> Result<InitSummary, CliError> {
+    run_init_with_options(dir, force, false)
+}
+
+/// Scaffold a new Wavical project at the given directory with optional backend runtime support.
+pub fn run_init_with_options(
+    dir: &Path,
+    force: bool,
+    backend: bool,
+) -> Result<InitSummary, CliError> {
     let is_empty = if dir.exists() {
         let mut entries = std::fs::read_dir(dir).map_err(|e| CliError::CreateDirFailed {
             path: dir.to_path_buf(),
@@ -491,7 +734,11 @@ pub fn run_init(dir: &Path, force: bool) -> Result<InitSummary, CliError> {
     let title = derive_title(&app_id);
 
     // 1. wavical.config.js
-    let config_content = generate_config_js(&app_id, &title);
+    let config_content = if backend {
+        generate_backend_config_js(&app_id, &title)
+    } else {
+        generate_config_js(&app_id, &title)
+    };
     let config_path = dir.join("wavical.config.js");
     std::fs::write(&config_path, config_content).map_err(|e| CliError::WriteFileFailed {
         path: config_path.clone(),
@@ -499,7 +746,11 @@ pub fn run_init(dir: &Path, force: bool) -> Result<InitSummary, CliError> {
     })?;
 
     // 2. src/index.html
-    let html_content = generate_index_html(&title);
+    let html_content = if backend {
+        generate_backend_index_html(&title)
+    } else {
+        generate_index_html(&title)
+    };
     let html_path = src_dir.join("index.html");
     std::fs::write(&html_path, html_content).map_err(|e| CliError::WriteFileFailed {
         path: html_path.clone(),
@@ -521,6 +772,47 @@ pub fn run_init(dir: &Path, force: bool) -> Result<InitSummary, CliError> {
             source: e,
         }
     })?;
+
+    // 5. If --backend requested, scaffold backend/ directory with main.js, wavical-backend.js, package.json, and lockfile
+    if backend {
+        let backend_dir = dir.join("backend");
+        std::fs::create_dir_all(&backend_dir).map_err(|e| CliError::CreateDirFailed {
+            path: backend_dir.clone(),
+            source: e,
+        })?;
+
+        let helper_path = backend_dir.join("wavical-backend.js");
+        std::fs::write(&helper_path, WAVICAL_BACKEND_JS).map_err(|e| {
+            CliError::WriteFileFailed {
+                path: helper_path.clone(),
+                source: e,
+            }
+        })?;
+
+        let main_path = backend_dir.join("main.js");
+        std::fs::write(&main_path, generate_backend_main_js()).map_err(|e| {
+            CliError::WriteFileFailed {
+                path: main_path.clone(),
+                source: e,
+            }
+        })?;
+
+        let pkg_path = backend_dir.join("package.json");
+        std::fs::write(&pkg_path, generate_backend_package_json()).map_err(|e| {
+            CliError::WriteFileFailed {
+                path: pkg_path.clone(),
+                source: e,
+            }
+        })?;
+
+        let lock_path = backend_dir.join("package-lock.json");
+        std::fs::write(&lock_path, generate_backend_package_lock_json()).map_err(|e| {
+            CliError::WriteFileFailed {
+                path: lock_path.clone(),
+                source: e,
+            }
+        })?;
+    }
 
     let display_path = if dir.is_relative() && !dir.starts_with(".") {
         format!("./{}", dir.display())
@@ -822,6 +1114,12 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     {
         cmd.arg("--dialog-filters").arg(filters_json);
     }
+    if let Some(backend) = &config.backend
+        && let Ok(backend_json) = serde_json::to_string(backend)
+    {
+        cmd.arg("--backend-config").arg(backend_json);
+    }
+    cmd.arg("--project-root").arg(&project_root);
 
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1277,7 +1575,7 @@ pub fn main_entry() -> ExitCode {
                     args.accept_capabilities.as_deref(),
                 )
             } else {
-                run_init(&args.dir, args.force)
+                run_init_with_options(&args.dir, args.force, args.backend)
             };
 
             match res {

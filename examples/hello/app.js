@@ -618,4 +618,25 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // WP5: Node Backend invocation (hello.greet)
+    const btnBackendGreet = document.getElementById('btn-backend-greet');
+    const backendOutput = document.getElementById('backend-output');
+    if (btnBackendGreet && backendOutput) {
+        btnBackendGreet.addEventListener('click', async () => {
+            backendOutput.className = 'output-box running';
+            backendOutput.textContent = 'Calling backend.invoke({ method: "hello.greet" })...';
+            try {
+                const res = await window.wavical.invoke('backend.invoke', {
+                    method: 'hello.greet',
+                    params: { name: 'Wavical Developer' }
+                });
+                backendOutput.className = 'output-box success';
+                backendOutput.textContent = (res && res.message) ? res.message : JSON.stringify(res);
+            } catch (err) {
+                backendOutput.className = 'output-box error';
+                backendOutput.textContent = 'Error: ' + err.message;
+            }
+        });
+    }
 });

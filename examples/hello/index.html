@@ -146,6 +146,17 @@
                 <div id="chat-output" class="chat-output-text"></div>
             </div>
 
+            <div class="section-label">Node Backend Runtime (WP5) &bull; <code>capabilities['backend.invoke']</code></div>
+            <div class="button-row">
+                <button id="btn-backend-greet" class="btn btn-primary" type="button">
+                    <span class="btn-icon">⚡</span>
+                    Call Backend (hello.greet) <small>[backend.invoke]</small>
+                </button>
+            </div>
+            <div id="backend-output" class="output-box idle" style="margin-top: 0.5rem;">
+                <span class="placeholder">Click "Call Backend" to invoke backend/main.js via Named Pipe.</span>
+            </div>
+
             <div id="ipc-output" class="output-box idle">
                 <span class="placeholder">Click any button above to verify IPC capabilities and security guards.</span>
             </div>

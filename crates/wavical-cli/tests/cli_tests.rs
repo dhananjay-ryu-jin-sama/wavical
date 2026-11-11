@@ -120,3 +120,47 @@ fn test_binary_invocations_wavical_and_wca() {
     assert!(wca_app.join("wavical.config.js").is_file());
     assert!(wca_app.join("src").join("index.html").is_file());
 }
+
+#[test]
+fn test_init_backend_scaffolding() {
+    let temp_root = tempdir().expect("create temp dir");
+    let backend_app = temp_root.path().join("backend-app");
+    let summary =
+        wavical_cli::run_init_with_options(&backend_app, false, true).expect("init with backend");
+    assert_eq!(summary.app_id, "backend-app");
+
+    // Verify config contains backend configuration and backend.invoke capability
+    let config_text =
+        fs::read_to_string(backend_app.join("wavical.config.js")).expect("read config");
+    assert!(config_text.contains("'backend.invoke': true"));
+    assert!(config_text.contains("backend: {"));
+    assert!(config_text.contains("enabled: true"));
+    assert!(config_text.contains("methods: ['hello.greet']"));
+
+    // Verify backend files
+    assert!(backend_app.join("backend").join("main.js").is_file());
+    assert!(
+        backend_app
+            .join("backend")
+            .join("wavical-backend.js")
+            .is_file()
+    );
+    assert!(backend_app.join("backend").join("package.json").is_file());
+    assert!(
+        backend_app
+            .join("backend")
+            .join("package-lock.json")
+            .is_file()
+    );
+
+    // Verify main.js contains hello.greet handler
+    let main_js =
+        fs::read_to_string(backend_app.join("backend").join("main.js")).expect("read main.js");
+    assert!(main_js.contains("handle('hello.greet'"));
+
+    // Verify index.html contains button that calls backend.invoke
+    let index_html =
+        fs::read_to_string(backend_app.join("src").join("index.html")).expect("read html");
+    assert!(index_html.contains("backend.invoke"));
+    assert!(index_html.contains("hello.greet"));
+}

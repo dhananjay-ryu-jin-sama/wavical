@@ -27,7 +27,25 @@ export default {
     'menu.showContextMenu': true,
     'shortcut.register': true,
     'badge.set': true,
-    'ai.chat': true
+    'ai.chat': true,
+    'backend.invoke': true
+  },
+  backend: {
+    enabled: true,
+    runtime: 'node',
+    version: '22.11.0',
+    allowPatchUpdates: false,
+    entry: 'backend/main.js',
+    methods: ['hello.greet'],
+    timeoutSeconds: 30,
+    permissions: {
+      fsRead: [],
+      fsWrite: [],
+      childProcess: false,
+      workers: false
+    },
+    env: [],
+    unrestricted: false
   },
   shortcuts: [
     'Ctrl+Shift+K'

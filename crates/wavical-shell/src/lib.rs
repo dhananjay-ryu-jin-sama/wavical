@@ -183,6 +183,12 @@ pub struct WindowConfig {
     pub shortcuts: Vec<String>,
     /// Optional dialog filter mappings configured in app config (WP4).
     pub dialog_filters: std::collections::HashMap<String, (String, Vec<String>)>,
+    /// Optional backend configuration from wavical.config.js (Phase 4 WP5).
+    pub backend_config: Option<wavical_config::BackendConfig>,
+    /// Optional project root directory containing wavical.config.js and backend/ (WP5).
+    pub project_root: Option<std::path::PathBuf>,
+    /// Optional custom or isolated backend bridge service (Phase 4 WP5).
+    pub backend_service: Option<std::sync::Arc<backend::BackendService>>,
 }
 
 impl Default for WindowConfig {
@@ -210,6 +216,9 @@ impl Default for WindowConfig {
             tray_icon: None,
             shortcuts: Vec::new(),
             dialog_filters: std::collections::HashMap::new(),
+            backend_config: None,
+            project_root: None,
+            backend_service: None,
         }
     }
 }
@@ -500,6 +509,103 @@ pub fn process_ipc_message(
             return Ok(Some(wavical_ipc::Response::error(
                 request.id,
                 wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+    }
+
+    if request.method == "backend.invoke" {
+        // 1. Capability check first
+        if !active_capabilities.is_allowed("backend.invoke") {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+
+        // 2. Parse BackendInvokeParams
+        let invoke_params: wavical_ipc::BackendInvokeParams =
+            match serde_json::from_value(request.params.clone()) {
+                Ok(p) => p,
+                Err(_) => {
+                    return Ok(Some(wavical_ipc::Response::error(
+                        request.id,
+                        wavical_ipc::GENERIC_METHOD_ERROR,
+                    )));
+                }
+            };
+
+        // 3. Backend must be enabled in config
+        let backend_cfg = match config.backend_config.as_ref() {
+            Some(cfg) if cfg.enabled => cfg,
+            _ => {
+                return Ok(Some(wavical_ipc::Response::error(
+                    request.id,
+                    wavical_ipc::GENERIC_METHOD_ERROR,
+                )));
+            }
+        };
+
+        // 4. Method must EXACTLY match an entry in backend.methods
+        if wavical_ipc::validate_backend_invoke_method(&invoke_params.method, &backend_cfg.methods)
+            .is_err()
+        {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+
+        // 5. Params validation and size limit
+        if wavical_ipc::validate_backend_invoke_params(&invoke_params.params).is_err() {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_HANDLER_ERROR,
+            )));
+        }
+
+        // 6. Timeout
+        let timeout_secs = if backend_cfg.timeout_seconds == 0 {
+            wavical_ipc::DEFAULT_BACKEND_TIMEOUT_SECS
+        } else {
+            backend_cfg
+                .timeout_seconds
+                .min(wavical_ipc::MAX_BACKEND_TIMEOUT_SECS)
+        };
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+
+        // 7. Forward via window-specific backend service or global backend service
+        let service_opt = config
+            .backend_service
+            .clone()
+            .or_else(backend::global_backend_service)
+            .or_else(|| {
+                let project_root = config.project_root.clone().unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                });
+                let entry_rel = backend_cfg
+                    .entry
+                    .clone()
+                    .unwrap_or_else(|| "backend/main.js".to_string());
+                let launch_cfg =
+                    backend::BackendLaunchConfig::new(&config.window_id, &project_root, &entry_rel);
+                let new_service = std::sync::Arc::new(backend::BackendService::new(launch_cfg));
+                backend::set_global_backend_service(new_service.clone());
+                Some(new_service)
+            });
+
+        if let Some(service) = service_opt {
+            let resp = service.invoke(
+                &config.window_id,
+                request.id,
+                &invoke_params.method,
+                invoke_params.params,
+                timeout,
+            );
+            return Ok(Some(resp));
+        } else {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_HANDLER_ERROR,
             )));
         }
     }

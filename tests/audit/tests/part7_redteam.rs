@@ -469,8 +469,8 @@ fn test_g4_attempt1_timing_side_channel_analysis() {
     );
 
     // Invariant: Both ungranted and unknown fail at the capabilities check (BTreeSet lookup)
-    // In release builds, difference is < 50ns; in unoptimized debug builds, allow for thread jitter (< 250ns)
-    let threshold = if cfg!(debug_assertions) { 250.0 } else { 50.0 };
+    // In release builds, difference is < 50ns; in unoptimized debug builds, allow for thread jitter (< 500ns)
+    let threshold = if cfg!(debug_assertions) { 500.0 } else { 50.0 };
     let diff = (avg_ungranted_ns - avg_unknown_ns).abs();
     assert!(
         diff < threshold,

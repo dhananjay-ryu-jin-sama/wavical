@@ -62,6 +62,14 @@ pub struct ShellCli {
     #[arg(long, env = "WAVICAL_DIALOG_FILTERS")]
     pub dialog_filters: Option<String>,
 
+    /// Optional serialized BackendConfig JSON string (Phase 4 WP5)
+    #[arg(long, env = "WAVICAL_BACKEND_CONFIG")]
+    pub backend_config: Option<String>,
+
+    /// Optional project root directory (Phase 4 WP5)
+    #[arg(long, env = "WAVICAL_PROJECT_ROOT")]
+    pub project_root: Option<PathBuf>,
+
     /// Run in development server mode
     #[arg(long)]
     pub dev: bool,
@@ -153,6 +161,11 @@ fn main() {
         HashMap::new()
     };
 
+    let backend_config = args
+        .backend_config
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<wavical_config::BackendConfig>(raw).ok());
+
     let config = WindowConfig {
         window_id: args.app_id,
         allowed_origins: vec![
@@ -172,6 +185,9 @@ fn main() {
         tray_icon: args.tray_icon,
         shortcuts: initial_shortcuts,
         dialog_filters: initial_dialog_filters,
+        backend_config,
+        project_root: args.project_root,
+        backend_service: None,
     };
 
     run_with_config(asset_root, config);
