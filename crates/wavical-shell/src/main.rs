@@ -188,6 +188,7 @@ fn main() {
         backend_config,
         project_root: args.project_root,
         backend_service: None,
+        asset_root: None,
     };
 
     run_with_config(asset_root, config);

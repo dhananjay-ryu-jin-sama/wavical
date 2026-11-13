@@ -73,6 +73,7 @@ fn setup_test_backend() -> (tempfile::TempDir, Arc<BackendService>, WindowConfig
         backend_config: Some(backend_cfg),
         project_root: Some(project_root),
         backend_service: Some(service.clone()),
+        asset_root: None,
     };
 
     (temp, service, window_config)

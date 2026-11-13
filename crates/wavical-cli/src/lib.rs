@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod backend_build;
 pub mod extractor;
 pub mod runtime;
 mod sha256;
@@ -315,6 +316,18 @@ pub struct BuildArgs {
     /// Build in release mode (reserved for future shell compilation)
     #[arg(long)]
     pub release: bool,
+
+    /// Allow npm lifecycle install scripts to run during backend build (unsafe; prints warning)
+    #[arg(long)]
+    pub allow_install_scripts: bool,
+
+    /// Bundle the verified backend runtime into the build output directory
+    #[arg(long)]
+    pub bundle_runtime: bool,
+
+    /// Include source map (*.map) files in the build output
+    #[arg(long)]
+    pub include_source_maps: bool,
 }
 
 /// Errors that can occur during CLI command execution.
@@ -385,6 +398,17 @@ pub enum CliError {
 
     #[error("runtime error: {0}")]
     RuntimeError(String),
+
+    #[error(
+        "backend lockfile missing in '{0}': package-lock.json (or npm-shrinkwrap.json) is required for reproducible builds"
+    )]
+    MissingBackendLockfile(PathBuf),
+
+    #[error("runtime license file missing in '{0}'")]
+    RuntimeLicenseMissing(PathBuf),
+
+    #[error("backend build error: {0}")]
+    BackendBuildFailed(String),
 }
 
 /// Summary returned after successful initialization of a new project.
@@ -1141,7 +1165,9 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
         r_ctrlc.store(false, Ordering::SeqCst);
     });
 
-    // 6. Setup filesystem watching on src/ and wavical.config.js
+    // 6. Setup filesystem watching on src/, wavical.config.js, and backend/ (when enabled)
+    let backend_enabled = config.backend.as_ref().is_some_and(|b| b.enabled);
+    let backend_dir = project_root.join("backend");
     let (watch_tx, watch_rx) = std::sync::mpsc::channel();
     let watcher_res = notify::recommended_watcher(move |res| {
         let _ = watch_tx.send(res);
@@ -1152,6 +1178,9 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
             use notify::Watcher;
             let _ = w.watch(&src_dir, notify::RecursiveMode::Recursive);
             let _ = w.watch(&config_file, notify::RecursiveMode::NonRecursive);
+            if backend_enabled && backend_dir.is_dir() {
+                let _ = w.watch(&backend_dir, notify::RecursiveMode::Recursive);
+            }
             Some(w)
         }
         Err(err) => {
@@ -1162,6 +1191,7 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
 
     let mut last_asset_reload = Instant::now();
     let mut last_config_reload = Instant::now();
+    let mut last_backend_restart = Instant::now();
 
     while running.load(Ordering::SeqCst) {
         // Check if child shell has terminated
@@ -1180,12 +1210,21 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
         if let Ok(Ok(event)) = watch_rx.recv_timeout(Duration::from_millis(100)) {
             let mut config_changed = false;
             let mut asset_changed = false;
+            let mut backend_changed = false;
 
             for path in &event.paths {
                 if path.file_name().and_then(|n| n.to_str()) == Some("wavical.config.js") {
                     config_changed = true;
                 } else if path.starts_with(&src_dir) {
                     asset_changed = true;
+                } else if backend_enabled && path.starts_with(&backend_dir) {
+                    let is_ignored_subpath = path.components().any(|c| {
+                        let s = c.as_os_str().to_string_lossy();
+                        s == "node_modules" || s == ".git"
+                    });
+                    if !is_ignored_subpath {
+                        backend_changed = true;
+                    }
                 }
             }
 
@@ -1229,6 +1268,18 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
                 println!("✓ Reloaded in {}ms", start.elapsed().as_millis());
                 let _ = std::io::stdout().flush();
             }
+
+            // Handle backend file change (debounced)
+            if backend_changed && last_backend_restart.elapsed() > Duration::from_millis(250) {
+                last_backend_restart = Instant::now();
+                println!("info: backend changed, restarting...");
+                let _ = std::io::stdout().flush();
+                if let Some(ref mut stdin) = child_stdin {
+                    let payload = serde_json::json!({ "action": "restart_backend" });
+                    let _ = writeln!(stdin, "{}", payload);
+                    let _ = stdin.flush();
+                }
+            }
         }
     }
 
@@ -1254,6 +1305,10 @@ pub struct WavicalManifest {
     pub version: String,
     pub capabilities: BTreeMap<String, bool>,
     pub assets: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub backend: Option<backend_build::BackendBuildManifest>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub runtime: Option<backend_build::RuntimeBuildManifest>,
 }
 
 fn has_javascript_files(dir: &Path) -> bool {
@@ -1394,6 +1449,18 @@ pub fn copy_and_hash_assets(
     out_root: &Path,
     assets: &mut BTreeMap<String, String>,
 ) -> Result<(), CliError> {
+    copy_and_hash_assets_filtered(src_root, current_src, out_root, false, &[], assets)
+}
+
+/// Recursively copy assets from `current_src` into `out_root` with configurable exclusion rules.
+pub fn copy_and_hash_assets_filtered(
+    src_root: &Path,
+    current_src: &Path,
+    out_root: &Path,
+    include_source_maps: bool,
+    extra_ignore: &[String],
+    assets: &mut BTreeMap<String, String>,
+) -> Result<(), CliError> {
     for entry in std::fs::read_dir(current_src).map_err(|e| CliError::CreateDirFailed {
         path: current_src.to_path_buf(),
         source: e,
@@ -1406,26 +1473,44 @@ pub fn copy_and_hash_assets(
         let file_name = entry.file_name();
         let file_name_str = file_name.to_string_lossy();
 
-        if is_excluded_asset(&file_name_str) {
-            continue;
-        }
-
         let file_type = entry.file_type().map_err(|e| CliError::CreateDirFailed {
             path: entry_path.clone(),
             source: e,
         })?;
 
+        let rel_path = entry_path.strip_prefix(src_root).unwrap_or(&entry_path);
+        let rel_key = rel_path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        if backend_build::is_excluded_build_entry(
+            &file_name_str,
+            &rel_key,
+            file_type.is_dir(),
+            include_source_maps,
+            extra_ignore,
+        ) {
+            continue;
+        }
+
         if file_type.is_dir() {
-            let rel_sub = entry_path.strip_prefix(src_root).unwrap_or(&entry_path);
-            let dst_sub = out_root.join(rel_sub);
+            let dst_sub = out_root.join(rel_path);
             std::fs::create_dir_all(&dst_sub).map_err(|e| CliError::CreateDirFailed {
                 path: dst_sub.clone(),
                 source: e,
             })?;
-            copy_and_hash_assets(src_root, &entry_path, out_root, assets)?;
+            copy_and_hash_assets_filtered(
+                src_root,
+                &entry_path,
+                out_root,
+                include_source_maps,
+                extra_ignore,
+                assets,
+            )?;
         } else if file_type.is_file() {
-            let rel_file = entry_path.strip_prefix(src_root).unwrap_or(&entry_path);
-            let dst_file = out_root.join(rel_file);
+            let dst_file = out_root.join(rel_path);
             if let Some(parent) = dst_file.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| CliError::CreateDirFailed {
                     path: parent.to_path_buf(),
@@ -1437,12 +1522,6 @@ pub fn copy_and_hash_assets(
                 dst: dst_file.clone(),
                 source: e,
             })?;
-
-            let rel_key = rel_file
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
 
             let hash = sha256::sha256_file(&dst_file).map_err(|e| CliError::WriteFileFailed {
                 path: dst_file.clone(),
@@ -1514,11 +1593,47 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         source: e,
     })?;
 
-    // 5. Copy all files from src/ to out_dir and compute hashes
-    let mut assets = BTreeMap::new();
-    copy_and_hash_assets(&src_dir, &src_dir, &out_dir, &mut assets)?;
+    // 5. Load ignore patterns and display documented exclusion list
+    let extra_ignore = backend_build::load_wavicalignore(&project_root)?;
+    println!(
+        "Build exclusions: {}",
+        backend_build::format_documented_ignore_list(args.include_source_maps, &extra_ignore)
+    );
 
-    // 6. Generate manifest
+    // 6. Copy all files from src/ to out_dir and compute hashes
+    let mut assets = BTreeMap::new();
+    copy_and_hash_assets_filtered(
+        &src_dir,
+        &src_dir,
+        &out_dir,
+        args.include_source_maps,
+        &extra_ignore,
+        &mut assets,
+    )?;
+
+    // 7. Build backend and optionally bundle runtime when backend is enabled
+    let (backend_manifest, runtime_manifest) = match config.backend {
+        Some(ref backend_cfg) if backend_cfg.enabled => {
+            let output = backend_build::build_backend_and_runtime(
+                &project_root,
+                &out_dir,
+                backend_cfg,
+                args.allow_install_scripts,
+                args.bundle_runtime,
+                args.include_source_maps,
+                &extra_ignore,
+            )?;
+            (Some(output.backend), Some(output.runtime))
+        }
+        _ => {
+            if args.bundle_runtime {
+                eprintln!("warning: --bundle-runtime ignored because backend.enabled is not true");
+            }
+            (None, None)
+        }
+    };
+
+    // 8. Generate manifest
     let mut capabilities = BTreeMap::new();
     if let Some(ref caps) = config.capabilities {
         for (k, v) in caps {
@@ -1531,6 +1646,8 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         version: config.version_or_default().to_string(),
         capabilities,
         assets,
+        backend: backend_manifest,
+        runtime: runtime_manifest,
     };
 
     let manifest_path = out_dir.join("wavical-manifest.json");

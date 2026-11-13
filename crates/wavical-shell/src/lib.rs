@@ -119,6 +119,8 @@ pub enum UserEvent {
     ExecuteScript(String),
     /// Reload current webview page.
     Reload,
+    /// Restart the backend process during `wavical dev` (WP6).
+    RestartBackend,
     /// Dynamically update granted capabilities without restarting window.
     UpdateCapabilities(Vec<String>),
     /// Focus existing application window upon second instance launch.
@@ -189,6 +191,8 @@ pub struct WindowConfig {
     pub project_root: Option<std::path::PathBuf>,
     /// Optional custom or isolated backend bridge service (Phase 4 WP5).
     pub backend_service: Option<std::sync::Arc<backend::BackendService>>,
+    /// Optional asset root directory populated by `run_with_config` (Phase 4 WP6).
+    pub asset_root: Option<std::path::PathBuf>,
 }
 
 impl Default for WindowConfig {
@@ -219,6 +223,7 @@ impl Default for WindowConfig {
             backend_config: None,
             project_root: None,
             backend_service: None,
+            asset_root: None,
         }
     }
 }
@@ -579,15 +584,42 @@ pub fn process_ipc_message(
             .clone()
             .or_else(backend::global_backend_service)
             .or_else(|| {
+                let manifest_asset_root = config.asset_root.clone();
                 let project_root = config.project_root.clone().unwrap_or_else(|| {
-                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    if let Some(ref ar) = manifest_asset_root
+                        && ar.join("wavical-manifest.json").is_file()
+                    {
+                        ar.clone()
+                    } else {
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    }
                 });
                 let entry_rel = backend_cfg
                     .entry
                     .clone()
                     .unwrap_or_else(|| "backend/main.js".to_string());
-                let launch_cfg =
+                let mut launch_cfg =
                     backend::BackendLaunchConfig::new(&config.window_id, &project_root, &entry_rel);
+                launch_cfg.runtime = backend_cfg.runtime.clone();
+                if let Some(ref v) = backend_cfg.version {
+                    launch_cfg.version = v.clone();
+                }
+                launch_cfg.allow_patch_updates = backend_cfg.allow_patch_updates;
+                launch_cfg.allow_child_process = backend_cfg.permissions.child_process;
+                launch_cfg.allow_workers = backend_cfg.permissions.workers;
+                launch_cfg.extra_env_vars = backend_cfg.env.clone();
+                launch_cfg.unrestricted = backend_cfg.unrestricted;
+                if let Some(ref ar) = manifest_asset_root
+                    && let Err(err) =
+                        backend::configure_bundled_runtime_from_manifest(&mut launch_cfg, ar)
+                {
+                    tracing::error!(
+                        security_event = "backend_bundled_runtime_error",
+                        error = %err,
+                        "Failed to configure bundled runtime from wavical-manifest.json"
+                    );
+                    return None;
+                }
                 let new_service = std::sync::Arc::new(backend::BackendService::new(launch_cfg));
                 backend::set_global_backend_service(new_service.clone());
                 Some(new_service)
@@ -810,7 +842,8 @@ pub fn is_devtools_enabled() -> bool {
 }
 
 /// Launch and run the Wavical shell with custom asset root and window config.
-pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
+pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
+    config.asset_root = Some(asset_root.clone());
     // 1. Verify WebView2 runtime availability
     let webview_version = match check_webview2_runtime() {
         Ok(ver) => ver,
@@ -933,6 +966,9 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                             match action {
                                 "reload" => {
                                     let _ = stdin_proxy.send_event(UserEvent::Reload);
+                                }
+                                "restart_backend" => {
+                                    let _ = stdin_proxy.send_event(UserEvent::RestartBackend);
                                 }
                                 "update_capabilities" => {
                                     let caps = val
@@ -1313,6 +1349,21 @@ pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
                 tracing::info!("Reload requested via dev server control");
                 if let Err(err) = webview.evaluate_script("location.reload();") {
                     tracing::error!("Failed to reload webview: {err}");
+                }
+            }
+            Event::UserEvent(UserEvent::RestartBackend) => {
+                #[cfg(debug_assertions)]
+                {
+                    tracing::info!("Backend restart requested via dev server control");
+                    if let Some(svc) = config
+                        .backend_service
+                        .as_ref()
+                        .cloned()
+                        .or_else(backend::global_backend_service)
+                        && let Err(err) = svc.restart()
+                    {
+                        tracing::error!("Failed to restart backend: {err}");
+                    }
                 }
             }
             Event::UserEvent(UserEvent::UpdateCapabilities(new_caps)) => {

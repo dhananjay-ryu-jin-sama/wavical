@@ -289,20 +289,97 @@ pub fn verify_executable_hash(path: &Path, expected_hash: &str) -> Result<(), Ba
         return Err(BackendError::RuntimeExecutableNotFound(path.to_path_buf()));
     }
 
+    let expected_hex = expected_hash
+        .strip_prefix("sha256:")
+        .unwrap_or(expected_hash);
+
     let actual_hash = wavical_ai::sha256::sha256_file(path).map_err(|e| BackendError::IoError {
         path: path.to_path_buf(),
         source: e,
     })?;
 
-    if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+    if !actual_hash.eq_ignore_ascii_case(expected_hex) {
         return Err(BackendError::HashMismatch {
             path: path.to_path_buf(),
-            expected: expected_hash.to_string(),
+            expected: expected_hex.to_string(),
             actual: actual_hash,
         });
     }
 
     Ok(())
+}
+
+/// Inspect `<asset_root>/wavical-manifest.json` and, when `runtime.mode == "bundled"`,
+/// configure `launch_cfg` to use the bundled runtime executable and its expected SHA-256
+/// instead of the shared cache.
+pub fn configure_bundled_runtime_from_manifest(
+    launch_cfg: &mut BackendLaunchConfig,
+    asset_root: &Path,
+) -> Result<bool, BackendError> {
+    let manifest_path = asset_root.join("wavical-manifest.json");
+    if !manifest_path.is_file() {
+        return Ok(false);
+    }
+
+    let raw = std::fs::read_to_string(&manifest_path).map_err(|e| BackendError::IoError {
+        path: manifest_path.clone(),
+        source: e,
+    })?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| BackendError::VersionResolutionFailed {
+            version: launch_cfg.version.clone(),
+            message: format!("invalid wavical-manifest.json: {e}"),
+        })?;
+
+    let Some(runtime_obj) = manifest.get("runtime").and_then(|r| r.as_object()) else {
+        return Ok(false);
+    };
+
+    let mode = runtime_obj
+        .get("mode")
+        .and_then(|m| m.as_str())
+        .unwrap_or("");
+    if mode != "bundled" {
+        return Ok(false);
+    }
+
+    let exec_rel = runtime_obj
+        .get("executable")
+        .and_then(|e| e.as_str())
+        .ok_or_else(|| BackendError::VersionResolutionFailed {
+            version: launch_cfg.version.clone(),
+            message: "bundled runtime manifest missing 'executable' field".to_string(),
+        })?;
+
+    // Reject path traversal, drive letters, UNC paths, or absolute paths
+    if exec_rel.is_empty()
+        || exec_rel.starts_with('/')
+        || exec_rel.starts_with('\\')
+        || exec_rel.contains(':')
+        || exec_rel.contains("..")
+    {
+        return Err(BackendError::VersionResolutionFailed {
+            version: launch_cfg.version.clone(),
+            message: "invalid bundled runtime executable path in manifest".to_string(),
+        });
+    }
+
+    let expected_sha256 = runtime_obj
+        .get("sha256")
+        .and_then(|s| s.as_str())
+        .ok_or_else(|| BackendError::VersionResolutionFailed {
+            version: launch_cfg.version.clone(),
+            message: "bundled runtime manifest missing 'sha256' field".to_string(),
+        })?;
+
+    let bundled_exe = asset_root.join(exec_rel);
+    if !bundled_exe.is_file() {
+        return Err(BackendError::RuntimeExecutableNotFound(bundled_exe));
+    }
+
+    launch_cfg.custom_binary_override = Some(bundled_exe);
+    launch_cfg.custom_binary_expected_hash = Some(expected_sha256.to_string());
+    Ok(true)
 }
 
 /// Spawns a background thread reading lines from a process stdout/stderr stream,
@@ -436,7 +513,19 @@ impl BackendLauncher {
             .join(manifest_entry.executable_name);
 
         if cached_path.is_file() {
-            return Ok((cached_path, Some(manifest_entry.sha256.to_string())));
+            let expected = cached_path
+                .parent()
+                .map(|dir| dir.join(".wavical-runtime.json"))
+                .filter(|p| p.is_file())
+                .and_then(|p| fs::read_to_string(p).ok())
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| {
+                    v.get("executable_sha256")
+                        .and_then(|h| h.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| manifest_entry.sha256.to_string());
+            return Ok((cached_path, Some(expected)));
         }
 
         // Fallback to system node if available
@@ -692,6 +781,17 @@ impl BackendProcessManager {
         if let Some(mut proc) = self.active_process.take() {
             let _ = proc.kill();
         }
+    }
+
+    /// Restart the backend process (e.g. on `wavical dev` file changes), subject to
+    /// the same crash/restart rate limit (`BackendRestartPolicy`).
+    pub fn restart_with_policy(&mut self) -> Result<(), BackendError> {
+        let now = Instant::now();
+        let _cooldown = self.restart_policy.record_crash_and_check(now)?;
+        self.stop();
+        let new_proc = BackendLauncher::spawn(&self.config)?;
+        self.active_process = Some(new_proc);
+        Ok(())
     }
 
     /// Return reference to active process if currently running.
@@ -988,6 +1088,24 @@ impl BackendService {
                 }
             }
         }
+    }
+
+    /// Restart the backend process for `wavical dev`, enforcing the restart policy.
+    pub fn restart(&self) -> Result<(), BackendError> {
+        if let Ok(mut sender) = self.send_half.lock() {
+            *sender = None;
+        }
+        fail_all_pending(
+            &self.pending_calls,
+            &self.window_concurrency,
+            &self.window_call_ids,
+        );
+
+        let mut mgr = self
+            .manager
+            .lock()
+            .map_err(|_| BackendError::PipeCreationError("manager mutex poisoned".to_string()))?;
+        mgr.restart_with_policy()
     }
 
     /// Decrement concurrency counter for a window.

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::fs;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -208,4 +209,121 @@ fn test_backend_log_stream_reader_limits() {
 
     // Allow thread to process
     thread::sleep(Duration::from_millis(200));
+}
+
+#[test]
+fn test_bundled_runtime_manifest_configures_override_and_rejects_tamper() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let asset_root = temp.path().join("dist");
+    let rt_dir = asset_root.join("runtime");
+    fs::create_dir_all(&rt_dir).expect("create runtime dir");
+
+    let fake_bin = PathBuf::from(env!("CARGO_BIN_EXE_fake_backend"));
+    let bundled_exe = rt_dir.join("node.exe");
+    fs::copy(&fake_bin, &bundled_exe).expect("copy fake binary");
+    let expected_hash = wavical_ai::sha256::sha256_file(&bundled_exe).expect("hash bundled exe");
+
+    let manifest = serde_json::json!({
+        "appId": "bundled-test",
+        "version": "1.0.0",
+        "capabilities": {},
+        "assets": {},
+        "runtime": {
+            "mode": "bundled",
+            "runtime": "node",
+            "version": "22.11.0",
+            "arch": "x64",
+            "executable": "runtime/node.exe",
+            "sha256": format!("sha256:{expected_hash}"),
+            "license": "runtime/LICENSE"
+        }
+    });
+    fs::write(
+        asset_root.join("wavical-manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .expect("write manifest");
+
+    let mut cfg = BackendLaunchConfig::new("bundled-test", &asset_root, "backend/main.js");
+    let used_bundled =
+        wavical_shell::backend::configure_bundled_runtime_from_manifest(&mut cfg, &asset_root)
+            .expect("configure bundled runtime");
+    assert!(used_bundled);
+    assert_eq!(cfg.custom_binary_override.as_ref(), Some(&bundled_exe));
+
+    // Tamper with bundled binary: launch must be refused with HashMismatch
+    fs::write(&bundled_exe, b"TAMPERED").expect("tamper bundled exe");
+    let err = BackendLauncher::spawn(&cfg)
+        .err()
+        .expect("must fail hash check");
+    assert!(
+        matches!(err, BackendError::HashMismatch { .. }),
+        "expected HashMismatch, got: {err:?}"
+    );
+}
+
+#[test]
+fn test_bundled_runtime_manifest_rejects_path_traversal() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let asset_root = temp.path().join("dist");
+    fs::create_dir_all(&asset_root).expect("create dist dir");
+
+    let manifest = serde_json::json!({
+        "appId": "evil-app",
+        "version": "1.0.0",
+        "capabilities": {},
+        "assets": {},
+        "runtime": {
+            "mode": "bundled",
+            "runtime": "node",
+            "version": "22.11.0",
+            "arch": "x64",
+            "executable": "../outside.exe",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+    });
+    fs::write(
+        asset_root.join("wavical-manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .expect("write manifest");
+
+    let mut cfg = BackendLaunchConfig::new("evil-app", &asset_root, "backend/main.js");
+    let err =
+        wavical_shell::backend::configure_bundled_runtime_from_manifest(&mut cfg, &asset_root)
+            .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("invalid bundled runtime executable path"),
+        "expected path traversal rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_dev_restart_with_policy_enforces_restart_limit() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let fake_bin = PathBuf::from(env!("CARGO_BIN_EXE_fake_backend"));
+    let expected_hash = wavical_ai::sha256::sha256_file(&fake_bin).expect("hash fake_backend");
+
+    let mut cfg = BackendLaunchConfig::new("dev-restart-app", temp.path(), "backend/main.js");
+    cfg.custom_binary_override = Some(fake_bin);
+    cfg.custom_binary_expected_hash = Some(expected_hash);
+    cfg.unrestricted = true;
+    cfg.custom_args = vec!["--sleep-ms".to_string(), "5000".to_string()];
+
+    let mut manager = BackendProcessManager::new(cfg);
+    assert!(manager.ensure_running().expect("initial start"));
+
+    // 3 restarts within 60s are allowed
+    assert!(manager.restart_with_policy().is_ok());
+    assert!(manager.restart_with_policy().is_ok());
+    assert!(manager.restart_with_policy().is_ok());
+
+    // 4th restart within 60s must be rejected by BackendRestartPolicy
+    match manager.restart_with_policy() {
+        Err(BackendError::CrashLimit(e)) => {
+            assert_eq!(e.crash_count, 4);
+        }
+        other => panic!("expected BackendError::CrashLimit, got {:?}", other),
+    }
 }
