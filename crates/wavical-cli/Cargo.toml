@@ -30,6 +30,8 @@ ctrlc = "3.4"
 rpassword = "7.5.4"
 keyring = "4.2.0"
 zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
+ed25519-dalek = "3.0.0"
+getrandom = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

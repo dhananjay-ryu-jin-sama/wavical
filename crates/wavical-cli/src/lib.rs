@@ -4,6 +4,7 @@ pub mod backend_build;
 pub mod extractor;
 pub mod runtime;
 mod sha256;
+pub mod signer;
 
 #[cfg(windows)]
 pub use windows_registry;
@@ -64,6 +65,124 @@ pub enum Commands {
 
     /// Manage backend runtimes (Phase 4 WP2)
     Runtime(RuntimeArgs),
+
+    /// Manage Ed25519 signing keys for app updates (Phase 4 WP7)
+    Signer(SignerArgs),
+
+    /// Build, sign, and verify app update release manifests (Phase 4 WP7)
+    Release(ReleaseArgs),
+}
+
+/// Arguments for the `signer` subcommand.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct SignerArgs {
+    #[command(subcommand)]
+    pub command: SignerCommands,
+}
+
+/// Signing key subcommands (`wavical signer <COMMAND>`).
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum SignerCommands {
+    /// Generate a new Ed25519 signing keypair outside any project or git repository
+    Keygen(SignerKeygenArgs),
+}
+
+/// Arguments for `wavical signer keygen --out <PATH>`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct SignerKeygenArgs {
+    /// Output path for the private key file (must be outside any project or repository)
+    #[arg(long)]
+    pub out: PathBuf,
+}
+
+/// Arguments for the `release` subcommand.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseArgs {
+    #[command(subcommand)]
+    pub command: ReleaseCommands,
+}
+
+/// Release manifest subcommands (`wavical release <COMMAND>`).
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseCommands {
+    /// Build an update manifest.json from a release payload
+    Manifest(ReleaseManifestArgs),
+
+    /// Sign an existing manifest.json over its exact bytes, producing <manifest>.sig
+    Sign(ReleaseSignArgs),
+
+    /// Verify a manifest.json and its .sig file against a public key
+    Verify(ReleaseVerifyArgs),
+}
+
+/// Arguments for `wavical release manifest`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseManifestArgs {
+    /// Path to the release payload archive or binary
+    #[arg(long)]
+    pub payload: PathBuf,
+
+    /// Semver release version (e.g. 1.2.0)
+    #[arg(long)]
+    pub version: String,
+
+    /// Release channel (e.g. stable, beta)
+    #[arg(long)]
+    pub channel: String,
+
+    /// Manifest validity window in days (1..=30)
+    #[arg(long)]
+    pub expires: u64,
+
+    /// Staged rollout percentage (0..=100)
+    #[arg(long)]
+    pub rollout: u8,
+
+    /// Path to plain-text release notes file (up to 8 KB)
+    #[arg(long)]
+    pub notes: PathBuf,
+
+    /// HTTPS URL where the payload will be hosted (defaults from wavical.config or placeholder)
+    #[arg(long)]
+    pub url: Option<String>,
+
+    /// Application ID (defaults from wavical.config in current directory)
+    #[arg(long)]
+    pub app_id: Option<String>,
+
+    /// Minimum supported installed version (defaults to 0.0.0)
+    #[arg(long)]
+    pub min_version: Option<String>,
+
+    /// Output path for the generated manifest JSON
+    #[arg(long, default_value = "manifest.json")]
+    pub out: PathBuf,
+}
+
+/// Arguments for `wavical release sign`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseSignArgs {
+    /// Path to the Ed25519 private key file
+    #[arg(long)]
+    pub key: PathBuf,
+
+    /// Path to manifest.json
+    pub manifest: PathBuf,
+}
+
+/// Arguments for `wavical release verify`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseVerifyArgs {
+    /// Base64-encoded Ed25519 public key
+    #[arg(long)]
+    pub pubkey: String,
+
+    /// Optional explicit signature file path (defaults to <manifest>.sig)
+    #[arg(long)]
+    pub sig: Option<PathBuf>,
+
+    /// Path to manifest.json
+    pub manifest: PathBuf,
 }
 
 /// Arguments for the `runtime` subcommand.
@@ -378,6 +497,9 @@ pub enum CliError {
 
     #[error("file association error: {0}")]
     FileAssociation(#[from] wavical_ipc::FileAssocValidationError),
+
+    #[error("signing/release error: {0}")]
+    SignerError(#[from] signer::SignerError),
 
     #[error(
         "dangerous output directory '{0}': output directory cannot be project root, parent directory, or inside source directory"
@@ -1762,6 +1884,94 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::Signer(args) => match run_signer(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Commands::Release(args) => match run_release(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
+    }
+}
+
+/// Execute `wavical signer` subcommands (Phase 4 WP7).
+pub fn run_signer(args: &SignerArgs) -> Result<(), CliError> {
+    match &args.command {
+        SignerCommands::Keygen(keygen_args) => {
+            let pubkey = signer::generate_signing_key(&keygen_args.out)?;
+            // Print ONLY the public key to stdout per WP7 specification.
+            println!("{pubkey}");
+            Ok(())
+        }
+    }
+}
+
+/// Execute `wavical release` subcommands (Phase 4 WP7).
+pub fn run_release(args: &ReleaseArgs) -> Result<(), CliError> {
+    match &args.command {
+        ReleaseCommands::Manifest(m) => {
+            let cwd_cfg = std::env::current_dir()
+                .ok()
+                .and_then(|cwd| wavical_config::validate_config(&cwd).ok());
+
+            let app_id = m
+                .app_id
+                .clone()
+                .or_else(|| cwd_cfg.as_ref().map(|c| c.app_id.clone()))
+                .unwrap_or_else(|| "com.wavical.app".to_string());
+
+            let payload_url = m.url.clone().unwrap_or_else(|| {
+                let fname = m
+                    .payload
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("update.zip");
+                if let Some(ref cfg) = cwd_cfg
+                    && let Some(ref upd) = cfg.updater
+                    && let Some((base, _)) =
+                        upd.manifest_url.as_deref().and_then(|u| u.rsplit_once('/'))
+                {
+                    return format!("{base}/{fname}");
+                }
+                format!("https://updates.wavical.invalid/{fname}")
+            });
+
+            signer::build_release_manifest(
+                &m.payload,
+                &m.version,
+                &m.channel,
+                m.expires,
+                m.rollout,
+                &m.notes,
+                &app_id,
+                &payload_url,
+                m.min_version.as_deref(),
+                &m.out,
+            )?;
+            println!("Wrote manifest: {}", m.out.display());
+            Ok(())
+        }
+        ReleaseCommands::Sign(s) => {
+            let sig_path = signer::sign_manifest(&s.key, &s.manifest)?;
+            println!("Wrote signature: {}", sig_path.display());
+            Ok(())
+        }
+        ReleaseCommands::Verify(v) => {
+            let manifest =
+                signer::verify_manifest_signature(&v.pubkey, &v.manifest, v.sig.as_deref())?;
+            println!(
+                "Verified {} v{} ({}, {} bytes)",
+                manifest.app_id, manifest.version, manifest.channel, manifest.payload_size
+            );
+            Ok(())
+        }
     }
 }
 

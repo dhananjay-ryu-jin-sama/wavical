@@ -32,6 +32,9 @@ pub use ai::*;
 pub mod backend;
 pub use backend::*;
 
+pub mod update_manifest;
+pub use update_manifest::*;
+
 /// Maximum raw IPC message size in bytes before parsing (1 MB default).
 pub const MAX_MESSAGE_SIZE_BYTES: usize = 1024 * 1024;
 

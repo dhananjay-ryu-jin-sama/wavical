@@ -120,6 +120,9 @@ pub enum DownloadError {
     #[error("downloaded file size mismatch: expected {expected} bytes, got {actual} bytes")]
     SizeMismatch { expected: u64, actual: u64 },
 
+    #[error("downloaded payload exceeded maximum allowed size of {limit} bytes")]
+    PayloadTooLarge { limit: usize },
+
     #[error("SHA-256 integrity check failed: expected '{expected}', computed '{actual}'")]
     HashMismatch { expected: String, actual: String },
 
@@ -271,66 +274,8 @@ pub fn download_verified_file(
         }
     }
 
-    // 4. Configure HTTP client with NO automatic redirects
-    let client = Client::builder()
-        .redirect(Policy::none())
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(3600)) // 1 hour ceiling
-        .build()
-        .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
-
-    let mut current_url = url.to_string();
-    let mut hops = 0;
-
-    let mut response = loop {
-        validate_download_url_for_kind(&current_url, kind, options)?;
-
-        let mut req_builder = client.get(&current_url);
-        if resumed_bytes > 0 {
-            let range_val = format!("bytes={resumed_bytes}-");
-            if let Ok(val) = HeaderValue::from_str(&range_val) {
-                req_builder = req_builder.header(RANGE, val);
-            }
-        }
-
-        let resp = req_builder
-            .send()
-            .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
-
-        let status = resp.status();
-        if status.is_redirection() {
-            hops += 1;
-            if hops > MAX_REDIRECT_HOPS {
-                return Err(DownloadError::TooManyRedirects(MAX_REDIRECT_HOPS));
-            }
-
-            let loc = resp
-                .headers()
-                .get(LOCATION)
-                .ok_or_else(|| {
-                    DownloadError::NetworkError("Redirect missing Location header".to_string())
-                })?
-                .to_str()
-                .map_err(|_| {
-                    DownloadError::NetworkError("Invalid UTF-8 in Location header".to_string())
-                })?;
-
-            let next_url = if loc.starts_with("http://") || loc.starts_with("https://") {
-                loc.to_string()
-            } else {
-                let base = reqwest::Url::parse(&current_url)
-                    .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
-                base.join(loc)
-                    .map_err(|e| DownloadError::NetworkError(e.to_string()))?
-                    .to_string()
-            };
-
-            current_url = next_url;
-            continue;
-        }
-
-        break resp;
-    };
+    // 4. Configure HTTP client with NO automatic redirects and follow hops safely
+    let mut response = fetch_with_validated_redirects(url, resumed_bytes, kind, options)?;
 
     let status = response.status();
     let mut file = match status {
@@ -427,6 +372,114 @@ pub fn download_verified_file(
     })?;
 
     Ok(target_path.to_path_buf())
+}
+
+fn fetch_with_validated_redirects(
+    url: &str,
+    resumed_bytes: u64,
+    kind: DownloadKind,
+    options: &DownloadOptions,
+) -> Result<reqwest::blocking::Response, DownloadError> {
+    let client = Client::builder()
+        .redirect(Policy::none())
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(3600)) // 1 hour ceiling
+        .build()
+        .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
+
+    let mut current_url = url.to_string();
+    let mut hops = 0;
+
+    loop {
+        validate_download_url_for_kind(&current_url, kind, options)?;
+
+        let mut req_builder = client.get(&current_url);
+        if resumed_bytes > 0 {
+            let range_val = format!("bytes={resumed_bytes}-");
+            if let Ok(val) = HeaderValue::from_str(&range_val) {
+                req_builder = req_builder.header(RANGE, val);
+            }
+        }
+
+        let resp = req_builder
+            .send()
+            .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
+
+        let status = resp.status();
+        if status.is_redirection() {
+            hops += 1;
+            if hops > MAX_REDIRECT_HOPS {
+                return Err(DownloadError::TooManyRedirects(MAX_REDIRECT_HOPS));
+            }
+
+            let loc = resp
+                .headers()
+                .get(LOCATION)
+                .ok_or_else(|| {
+                    DownloadError::NetworkError("Redirect missing Location header".to_string())
+                })?
+                .to_str()
+                .map_err(|_| {
+                    DownloadError::NetworkError("Invalid UTF-8 in Location header".to_string())
+                })?;
+
+            let next_url = if loc.starts_with("http://") || loc.starts_with("https://") {
+                loc.to_string()
+            } else {
+                let base = reqwest::Url::parse(&current_url)
+                    .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
+                base.join(loc)
+                    .map_err(|e| DownloadError::NetworkError(e.to_string()))?
+                    .to_string()
+            };
+
+            current_url = next_url;
+            continue;
+        }
+
+        return Ok(resp);
+    }
+}
+
+/// Download a small bounded payload (such as an update manifest or signature)
+/// in memory through the shared downloader's HTTPS, host allowlist, and redirect
+/// validation rules.
+pub fn download_bounded_bytes(
+    url: &str,
+    max_bytes: usize,
+    kind: DownloadKind,
+    options: &DownloadOptions,
+) -> Result<Vec<u8>, DownloadError> {
+    let mut response = fetch_with_validated_redirects(url, 0, kind, options)?;
+    let status = response.status();
+    if status != StatusCode::OK {
+        return Err(DownloadError::HttpStatus {
+            status: status.as_u16(),
+            message: format!("HTTP request returned status {status}"),
+        });
+    }
+
+    if let Some(content_len) = response.content_length()
+        && content_len > max_bytes as u64
+    {
+        return Err(DownloadError::PayloadTooLarge { limit: max_bytes });
+    }
+
+    let mut out = Vec::new();
+    let mut buf = [0u8; 8 * 1024];
+    loop {
+        let n = response
+            .read(&mut buf)
+            .map_err(|e| DownloadError::NetworkError(e.to_string()))?;
+        if n == 0 {
+            break;
+        }
+        if out.len().saturating_add(n) > max_bytes {
+            return Err(DownloadError::PayloadTooLarge { limit: max_bytes });
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    Ok(out)
 }
 
 /// Download a model catalog entry into `models_dir` following all Phase 3 Section 1.6 rules.

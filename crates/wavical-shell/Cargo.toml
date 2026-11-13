@@ -23,9 +23,13 @@ muda = "0.21.2"
 tray-icon = "0.26.1"
 global-hotkey = "0.9.0"
 interprocess = "2.2"
+ed25519-dalek = "3.0.0"
+getrandom = "0.3"
+zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 win32job = "2.0.3"
 
 [dev-dependencies]
 tempfile = "3"
+sha2 = "0.11.1"

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+pub mod updater;
 
 use std::borrow::Cow;
 use std::fs;
@@ -193,6 +194,14 @@ pub struct WindowConfig {
     pub backend_service: Option<std::sync::Arc<backend::BackendService>>,
     /// Optional asset root directory populated by `run_with_config` (Phase 4 WP6).
     pub asset_root: Option<std::path::PathBuf>,
+    /// Optional updater configuration from wavical.config.js (Phase 4 WP7).
+    pub updater_config: Option<wavical_config::UpdaterConfig>,
+    /// Installed application semver version for update comparisons (Phase 4 WP7).
+    pub installed_version: Option<String>,
+    /// Optional override for the updater state directory (`%LOCALAPPDATA%\<appId>`).
+    pub updater_dir: Option<std::path::PathBuf>,
+    /// Optional downloader options (e.g., test-only localhost HTTP overrides).
+    pub updater_download_options: Option<wavical_ai::downloader::DownloadOptions>,
 }
 
 impl Default for WindowConfig {
@@ -224,6 +233,10 @@ impl Default for WindowConfig {
             project_root: None,
             backend_service: None,
             asset_root: None,
+            updater_config: None,
+            installed_version: None,
+            updater_dir: None,
+            updater_download_options: None,
         }
     }
 }
@@ -640,6 +653,111 @@ pub fn process_ipc_message(
                 wavical_ipc::GENERIC_HANDLER_ERROR,
             )));
         }
+    }
+
+    if request.method == "updater.check" {
+        if !active_capabilities.is_allowed("updater.check") {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+        if wavical_ipc::validate_updater_empty_params(&request.params).is_err() {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+        let updater_cfg = match config.updater_config.as_ref() {
+            Some(cfg) if cfg.enabled => cfg,
+            _ => {
+                return Ok(Some(wavical_ipc::Response::error(
+                    request.id,
+                    wavical_ipc::GENERIC_HANDLER_ERROR,
+                )));
+            }
+        };
+        let manifest_url = match updater_cfg.manifest_url.as_ref() {
+            Some(u) if !u.trim().is_empty() => u.clone(),
+            _ => {
+                return Ok(Some(wavical_ipc::Response::error(
+                    request.id,
+                    wavical_ipc::GENERIC_HANDLER_ERROR,
+                )));
+            }
+        };
+        let updater_dir = config.updater_dir.clone().unwrap_or_else(|| {
+            std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+                .join(&config.window_id)
+        });
+        let opts = updater::UpdateCheckOptions {
+            app_id: config.window_id.clone(),
+            installed_version: config
+                .installed_version
+                .clone()
+                .unwrap_or_else(|| "0.0.0".to_string()),
+            channel: updater_cfg.channel.clone(),
+            manifest_url,
+            public_keys: updater_cfg.public_keys.clone(),
+            download_options: config.updater_download_options.unwrap_or_default(),
+            now_unix: None,
+        };
+        return match updater::check_and_stage_update(&updater_dir, &opts) {
+            Ok(res) => match serde_json::to_value(res) {
+                Ok(val) => Ok(Some(wavical_ipc::Response::success(request.id, val))),
+                Err(_) => Ok(Some(wavical_ipc::Response::error(
+                    request.id,
+                    wavical_ipc::GENERIC_HANDLER_ERROR,
+                ))),
+            },
+            Err(_) => Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_HANDLER_ERROR,
+            ))),
+        };
+    }
+
+    if request.method == "updater.apply" {
+        if !active_capabilities.is_allowed("updater.apply") {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+        if wavical_ipc::validate_updater_empty_params(&request.params).is_err() {
+            return Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_METHOD_ERROR,
+            )));
+        }
+        let updater_cfg = match config.updater_config.as_ref() {
+            Some(cfg) if cfg.enabled => cfg,
+            _ => {
+                return Ok(Some(wavical_ipc::Response::error(
+                    request.id,
+                    wavical_ipc::GENERIC_HANDLER_ERROR,
+                )));
+            }
+        };
+        let _ = updater_cfg;
+        let updater_dir = config.updater_dir.clone().unwrap_or_else(|| {
+            std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+                .join(&config.window_id)
+        });
+        return match updater::apply_pending_update(&updater_dir) {
+            Ok(version) => Ok(Some(wavical_ipc::Response::success(
+                request.id,
+                serde_json::json!({ "applied": true, "version": version }),
+            ))),
+            Err(_) => Ok(Some(wavical_ipc::Response::error(
+                request.id,
+                wavical_ipc::GENERIC_HANDLER_ERROR,
+            ))),
+        };
     }
 
     let response = if registry.has_handler(&request.method) {
