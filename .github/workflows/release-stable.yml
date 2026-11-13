@@ -1,0 +1,179 @@
+name: Release Stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      canary_tag:
+        description: "Canary release tag to promote (e.g. v0.5.0-canary.12)"
+        required: true
+        type: string
+      stable_version:
+        description: "Target stable semver version (e.g. 0.5.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Verify canary artifacts and simulate stable promotion without publishing"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  promote-stable:
+    name: Verify Canary & Promote to Stable
+    runs-on: windows-latest
+    environment: production
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Build wavical CLI for manifest verification and signing
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --release -p wavical-cli
+
+      - name: Download and re-verify canary checksums and signature
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WAVICAL_CANARY_PUBKEY: ${{ vars.WAVICAL_CANARY_PUBKEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $canaryTag = "${{ inputs.canary_tag }}"
+          $canaryDir = Join-Path $env:RUNNER_TEMP "canary-assets"
+          New-Item -ItemType Directory -Force -Path $canaryDir | Out-Null
+
+          gh release download $canaryTag --dir $canaryDir
+
+          # 1. Re-verify SHA-256 checksums
+          $sums = Get-Content (Join-Path $canaryDir "SHA256SUMS.txt")
+          foreach ($line in $sums) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $parts = $line -split '\s+', 2
+            $expectedHash = $parts[0].Trim().ToLowerInvariant()
+            $fileName = $parts[1].Trim()
+            $filePath = Join-Path $canaryDir $fileName
+            if (-not (Test-Path $filePath)) {
+              throw "Missing canary archive: $fileName"
+            }
+            $actualHash = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -ne $expectedHash) {
+              throw "SHA-256 mismatch for $fileName (expected $expectedHash, got $actualHash)"
+            }
+            Write-Host "Verified SHA-256 for $fileName"
+          }
+
+          # 2. Re-verify Ed25519 signature over exact manifest.json bytes
+          $canaryPubkey = $env:WAVICAL_CANARY_PUBKEY
+          if ([string]::IsNullOrWhiteSpace($canaryPubkey)) {
+            throw "WAVICAL_CANARY_PUBKEY variable is required to verify canary signature"
+          }
+          & "target/release/wavical.exe" release verify --pubkey $canaryPubkey (Join-Path $canaryDir "manifest.json")
+
+      - name: Prepare stable release artifacts and sign manifest
+        shell: pwsh
+        env:
+          WAVICAL_RELEASE_SIGNING_KEY: ${{ secrets.WAVICAL_RELEASE_SIGNING_KEY }}
+          WAVICAL_RELEASE_PUBKEY: ${{ vars.WAVICAL_RELEASE_PUBKEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $canaryDir = Join-Path $env:RUNNER_TEMP "canary-assets"
+          $stableDir = Join-Path $env:RUNNER_TEMP "stable-dist"
+          New-Item -ItemType Directory -Force -Path $stableDir | Out-Null
+
+          $stableVersion = "${{ inputs.stable_version }}"
+          $canaryArchive = Get-ChildItem -Path $canaryDir -Filter "wavical-v*-windows-x86_64.zip" | Select-Object -First 1
+          if (-not $canaryArchive) {
+            throw "No canary archive found in $canaryDir"
+          }
+
+          $stableArchiveName = "wavical-v$stableVersion-windows-x86_64.zip"
+          $stableArchivePath = Join-Path $stableDir $stableArchiveName
+          Copy-Item $canaryArchive.FullName $stableArchivePath
+
+          $hash = (Get-FileHash -Path $stableArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $stableArchiveName" | Out-File -FilePath (Join-Path $stableDir "SHA256SUMS.txt") -Encoding ascii
+
+          $notesPath = Join-Path $stableDir "release-notes.txt"
+          Set-Content -Path $notesPath -Value "Wavical stable release v$stableVersion (promoted from ${{ inputs.canary_tag }})." -Encoding utf8
+
+          $manifestPath = Join-Path $stableDir "manifest.json"
+          $keyPath = Join-Path $env:RUNNER_TEMP "stable-signing.key"
+
+          try {
+            if ("${{ inputs.dry_run }}" -eq "true" -or [string]::IsNullOrWhiteSpace($env:WAVICAL_RELEASE_SIGNING_KEY)) {
+              Write-Host "[DRY-RUN] Generating ephemeral test keypair outside repo for stable manifest verification"
+              if (Test-Path $keyPath) { Remove-Item $keyPath -Force }
+              $pubkey = (& "target/release/wavical.exe" signer keygen --out $keyPath).Trim()
+            } else {
+              Write-Host "::add-mask::$($env:WAVICAL_RELEASE_SIGNING_KEY)"
+              Set-Content -Path $keyPath -Value $env:WAVICAL_RELEASE_SIGNING_KEY -NoNewline -Encoding ascii
+              $pubkey = $env:WAVICAL_RELEASE_PUBKEY.Trim()
+            }
+
+            & "target/release/wavical.exe" release manifest `
+              --payload $stableArchivePath `
+              --version $stableVersion `
+              --channel stable `
+              --expires 30 `
+              --rollout 100 `
+              --notes $notesPath `
+              --app-id "com.wavical.framework" `
+              --url "https://github.com/${{ github.repository }}/releases/download/v$stableVersion/$stableArchiveName" `
+              --out $manifestPath
+
+            & "target/release/wavical.exe" release sign --key $keyPath $manifestPath
+            & "target/release/wavical.exe" release verify --pubkey $pubkey $manifestPath
+          } finally {
+            if (Test-Path $keyPath) { Remove-Item $keyPath -Force }
+          }
+
+      - name: Upload promoted stable artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wavical-stable-${{ inputs.stable_version }}
+          path: ${{ runner.temp }}/stable-dist/*
+          retention-days: 30
+
+      - name: Attest stable build provenance
+        if: ${{ inputs.dry_run != true }}
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
+        with:
+          subject-path: "${{ runner.temp }}/stable-dist/wavical-v${{ inputs.stable_version }}-windows-x86_64.zip"
+
+      - name: Publish stable GitHub Release
+        if: ${{ inputs.dry_run != true }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "v${{ inputs.stable_version }}"
+          $stableDir = Join-Path $env:RUNNER_TEMP "stable-dist"
+          gh release create $tag `
+            (Join-Path $stableDir "wavical-v${{ inputs.stable_version }}-windows-x86_64.zip") `
+            (Join-Path $stableDir "SHA256SUMS.txt") `
+            (Join-Path $stableDir "manifest.json") `
+            (Join-Path $stableDir "manifest.json.sig") `
+            --title "Wavical $tag" `
+            --notes-file (Join-Path $stableDir "release-notes.txt")
+
+      - name: Dry-run confirmation
+        if: ${{ inputs.dry_run == true }}
+        shell: pwsh
+        run: |
+          Write-Host "[DRY-RUN] Re-verified canary artifacts and signed stable manifest without publishing any GitHub release or provenance attestation."
+

@@ -1,0 +1,204 @@
+name: Release Canary
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run all build, checksum, and signing checks without publishing"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Full Verification Gate
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+      - name: Run security audit suite (including ignored)
+        run: cargo test -p wavical-audit -- --include-ignored
+
+      - name: Run supply-chain & updater verification tests
+        run: |
+          cargo test -p wavical-cli --test runtime_tests --test signer_tests
+          cargo test -p wavical-shell --test updater_tests --test hardening_tests
+
+      - name: Run cargo audit
+        run: cargo audit
+
+      - name: Run cargo deny check
+        run: cargo deny check
+
+  build-and-sign-canary:
+    name: Build, Checksum, Sign & Publish Canary
+    needs: verify
+    runs-on: windows-latest
+    environment: canary
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+
+      - name: Determine canary version and dry-run mode
+        id: meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cargoToml = Get-Content -Raw "Cargo.toml"
+          if ($cargoToml -match '(?m)^version\s*=\s*"([^"]+)"') {
+            $baseVersion = $Matches[1]
+          } else {
+            $baseVersion = "0.5.0"
+          }
+          $canaryVersion = "$baseVersion-canary.${{ github.run_number }}"
+          $isDryRun = ("${{ inputs.dry_run }}" -eq "true") -or ("${{ vars.RELEASE_DRY_RUN }}" -eq "true") -or ("${{ github.event_name }}" -ne "push") -or ("${{ github.ref }}" -ne "refs/heads/main")
+          "version=$canaryVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=v$canaryVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "dry_run=$($isDryRun.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build release binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build --release -p wavical-cli -p wavical-shell
+
+      - name: Package canary archive and SHA-256 checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.meta.outputs.version }}"
+          $distDir = Join-Path $env:RUNNER_TEMP "wavical-dist"
+          $stageDir = Join-Path $env:RUNNER_TEMP "wavical-stage"
+          New-Item -ItemType Directory -Force -Path $distDir, $stageDir | Out-Null
+
+          Copy-Item "target/release/wavical.exe" $stageDir
+          Copy-Item "target/release/wca.exe" $stageDir
+          Copy-Item "target/release/wavical-shell.exe" $stageDir
+
+          $archiveName = "wavical-v$version-windows-x86_64.zip"
+          $archivePath = Join-Path $distDir $archiveName
+          Compress-Archive -Path "$stageDir/*" -DestinationPath $archivePath -Force
+
+          $hash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $archiveName" | Out-File -FilePath (Join-Path $distDir "SHA256SUMS.txt") -Encoding ascii
+
+          Set-Content -Path (Join-Path $distDir "release-notes.txt") -Value "Wavical canary build $version from commit ${{ github.sha }}." -Encoding utf8
+
+      - name: Build, sign, and verify release manifest
+        shell: pwsh
+        env:
+          WAVICAL_CANARY_SIGNING_KEY: ${{ secrets.WAVICAL_CANARY_SIGNING_KEY }}
+          WAVICAL_CANARY_PUBKEY: ${{ vars.WAVICAL_CANARY_PUBKEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.meta.outputs.version }}"
+          $distDir = Join-Path $env:RUNNER_TEMP "wavical-dist"
+          $archivePath = Join-Path $distDir "wavical-v$version-windows-x86_64.zip"
+          $notesPath = Join-Path $distDir "release-notes.txt"
+          $manifestPath = Join-Path $distDir "manifest.json"
+          $keyPath = Join-Path $env:RUNNER_TEMP "canary-signing.key"
+
+          try {
+            if ("${{ steps.meta.outputs.dry_run }}" -eq "true" -or [string]::IsNullOrWhiteSpace($env:WAVICAL_CANARY_SIGNING_KEY)) {
+              Write-Host "[DRY-RUN] Generating ephemeral test keypair outside repo for signing verification"
+              if (Test-Path $keyPath) { Remove-Item $keyPath -Force }
+              $pubkey = & "target/release/wavical.exe" signer keygen --out $keyPath
+              $pubkey = $pubkey.Trim()
+            } else {
+              Write-Host "::add-mask::$($env:WAVICAL_CANARY_SIGNING_KEY)"
+              Set-Content -Path $keyPath -Value $env:WAVICAL_CANARY_SIGNING_KEY -NoNewline -Encoding ascii
+              $pubkey = $env:WAVICAL_CANARY_PUBKEY.Trim()
+            }
+
+            & "target/release/wavical.exe" release manifest `
+              --payload $archivePath `
+              --version $version `
+              --channel canary `
+              --expires 14 `
+              --rollout 100 `
+              --notes $notesPath `
+              --app-id "com.wavical.framework" `
+              --url "https://github.com/${{ github.repository }}/releases/download/v$version/wavical-v$version-windows-x86_64.zip" `
+              --out $manifestPath
+
+            & "target/release/wavical.exe" release sign --key $keyPath $manifestPath
+            & "target/release/wavical.exe" release verify --pubkey $pubkey $manifestPath
+          } finally {
+            if (Test-Path $keyPath) { Remove-Item $keyPath -Force }
+          }
+
+      - name: Upload canary artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wavical-canary-${{ steps.meta.outputs.version }}
+          path: ${{ runner.temp }}/wavical-dist/*
+          retention-days: 14
+
+      - name: Attest build provenance
+        if: ${{ steps.meta.outputs.dry_run != 'true' }}
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
+        with:
+          subject-path: "${{ runner.temp }}/wavical-dist/wavical-v${{ steps.meta.outputs.version }}-windows-x86_64.zip"
+
+      - name: Publish canary GitHub pre-release
+        if: ${{ steps.meta.outputs.dry_run != 'true' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $distDir = Join-Path $env:RUNNER_TEMP "wavical-dist"
+          gh release create $tag `
+            (Join-Path $distDir "wavical-v${{ steps.meta.outputs.version }}-windows-x86_64.zip") `
+            (Join-Path $distDir "SHA256SUMS.txt") `
+            (Join-Path $distDir "manifest.json") `
+            (Join-Path $distDir "manifest.json.sig") `
+            --prerelease `
+            --title "Wavical $tag (Canary)" `
+            --notes-file (Join-Path $distDir "release-notes.txt")
+
+      - name: Dry-run confirmation
+        if: ${{ steps.meta.outputs.dry_run == 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host "[DRY-RUN] Verified build, checksums, manifest, and signature without publishing any GitHub release or provenance attestation."
+
