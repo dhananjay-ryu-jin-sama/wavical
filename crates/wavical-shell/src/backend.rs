@@ -680,9 +680,15 @@ impl BackendLauncher {
 
         // Pass through only safe, explicitly listed environment variables
         for var_name in &config.extra_env_vars {
-            if !is_forbidden_node_env_var(var_name)
-                && let Ok(val) = std::env::var(var_name)
-            {
+            if is_forbidden_node_env_var(var_name) {
+                if is_release {
+                    return Err(BackendError::DebugFlagsForbiddenInRelease(format!(
+                        "environment variable '{var_name}' is forbidden in release builds"
+                    )));
+                }
+                continue;
+            }
+            if let Ok(val) = std::env::var(var_name) {
                 cmd.env(var_name, val);
             }
         }

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+pub mod hardening;
 pub mod updater;
 
 use std::borrow::Cow;
@@ -956,12 +957,32 @@ pub fn get_asset_root() -> PathBuf {
 
 /// Query whether devtools should be enabled.
 pub fn is_devtools_enabled() -> bool {
-    cfg!(debug_assertions)
+    hardening::DEVTOOLS_COMPILED_ENABLED
 }
 
 /// Launch and run the Wavical shell with custom asset root and window config.
 pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
     config.asset_root = Some(asset_root.clone());
+
+    // 0. Release hardening: neutralize dangerous debug env vars via clean relaunch,
+    // then run startup self-check and refuse to start on failure.
+    hardening::neutralize_release_debug_env_or_relaunch();
+    let devtools = is_devtools_enabled();
+    if let Err(err) = hardening::run_startup_self_check(devtools, config.backend_config.as_ref()) {
+        tracing::error!(
+            target: "wavical.security",
+            security_event = "startup_self_check_failed",
+            error = %err,
+            "Refusing to start due to failed release security self-check"
+        );
+        eprintln!("error: {err}");
+        process::exit(1);
+    }
+    if !cfg!(debug_assertions) && devtools {
+        eprintln!("error: devtools cannot be enabled in a release build");
+        process::exit(1);
+    }
+
     // 1. Verify WebView2 runtime availability
     let webview_version = match check_webview2_runtime() {
         Ok(ver) => ver,
@@ -1201,6 +1222,10 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
 
     // 5. Build the webview with custom protocol, CSP, navigation guard, popup blocker, and IPC handler
     let devtools = is_devtools_enabled();
+    if !cfg!(debug_assertions) && devtools {
+        eprintln!("error: devtools cannot be enabled in a release build");
+        process::exit(1);
+    }
     tracing::info!("Initializing webview (devtools enabled: {devtools})");
 
     let data_directory = get_webview_data_directory(&config.window_id);
