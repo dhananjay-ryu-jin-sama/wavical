@@ -5077,6 +5077,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "wavical-supply-chain-bench"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "serde_json",
+ "sha2 0.11.1",
+ "wavical-ai",
+ "wavical-cli",
+ "wavical-ipc",
+ "wavical-protocol",
+ "wavical-shell",
+ "zip",
+]
+
+[[package]]
 name = "wayland-backend"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

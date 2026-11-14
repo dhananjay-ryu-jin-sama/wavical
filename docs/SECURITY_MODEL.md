@@ -198,3 +198,34 @@ Phase 3 introduces local and cloud AI inference (`ai.chat`), semantic indexation
 | `ai_engine_hash_mismatch`| Engine binary SHA-256 hash does not match expected catalog checksum. | `security_event`, `expected_hash`, `actual_hash` |
 | `ai_model_hash_mismatch` | Model file SHA-256 hash does not match expected catalog checksum. | `security_event`, `model_id`, `expected_hash` |
 | `ai_cloud_network_blocked`| Request attempted redirect to different host or network call in local mode. | `security_event`, `target_host`, `reason` |
+
+---
+
+## 5. Optional Node.js Backend Security Model (Phase 4)
+
+### 5.1 Isolation & IPC Mediation
+- **No direct page-to-backend channel:** The webview page has zero direct access to the Node.js backend. All calls must traverse `window.wavical.invoke('backend.invoke', { method, params })`, gated by the `backend.invoke` capability and an exact-match `backend.methods` allowlist (no wildcards, no case-insensitive matching).
+- **Transport isolation:** On Windows, the host and backend communicate over an isolated per-launch named pipe (`\\.\pipe\wavical-backend-<pid>-<random>`) using length-prefixed JSON frames (max 1 MB request, max 4 MB response, max 16 MB frame buffer, max 16 concurrent in-flight calls). Pipe names are never exposed to the page.
+
+### 5.2 Runtime Integrity & Execution Sandboxing
+- **Verified runtime binary:** Every managed Node.js runtime archive is downloaded through the shared downloader (`https://`, `nodejs.org` allowlist, per-hop redirect check, exact size + SHA-256) and extracted via the safe archive extractor. Before **every** launch, the `node.exe` binary's SHA-256 is re-verified against the pinned manifest.
+- **Node Permission Model on by default:** Child processes launch with `--permission` (Node >= 23) or `--experimental-permission` (Node < 23), scoped `--allow-fs-read` / `--allow-fs-write` roots, and child processes / worker threads disabled unless explicitly configured.
+- **Cleaned environment & debug-surface refusal:** Child processes spawn with `Command::env_clear()`, passing only minimal OS essentials and explicitly listed non-forbidden variables. `NODE_OPTIONS`, `NODE_PATH`, `NODE_DEBUG*`, `NODE_INSPECT*`, `--inspect*`, `--require`, and `--import` are stripped from the environment and strictly refused in release builds.
+- **Install scripts off by default:** `wavical build` requires a lockfile (`package-lock.json`) and runs `npm ci --ignore-scripts`.
+- **Lifecycle binding:** On Windows, backend child processes are assigned to a `win32job` Job Object with `KILL_ON_JOB_CLOSE` so they terminate if the parent shell exits or is killed.
+
+---
+
+## 6. App Updater & Release Signing Security Model (Phase 4)
+
+### 6.1 Mandatory Verification Chain
+- **Page isolation:** `updater.check` and `updater.apply` accept zero parameters; the page can never supply a URL, version, public key, channel, or local path.
+- **Check order:** All checks are mandatory and executed before staging:
+  1. Download `manifest.json` (max 64 KB) and `manifest.json.sig` via the shared downloader (`DownloadKind::Update`, HTTPS-only, allowlist, per-hop redirect check).
+  2. Verify the Ed25519 signature over the **exact raw bytes** of `manifest.json` using up to 2 embedded public keys (supporting key rotation).
+  3. Parse with `deny_unknown_fields`; verify `appId`, `channel`, `version > installed` and `>= minimumSupportedVersion`, `expires > now`, and `expires - now <= 30 days`.
+  4. Check local `rollout-bucket` (`0..=99`, generated once per install, never transmitted).
+  5. Download payload via `download_verified_file` (exact size + SHA-256).
+  6. Extract into `versions/<new>.staged/` via the safe archive extractor (1 GB / 20,000 file limits, symlink & traversal rejection) and atomically promote.
+- **Two-strike automatic rollback:** After `updater.apply` (or restart), `previous` stays on disk and `health.json` tracks startup readiness. After 2 consecutive launches without reporting ready, the launcher atomically rolls `current` back to `previous` and logs `updater.rollback`.
+- **Private key isolation:** Private keys are generated outside any project/git repo (`wavical signer keygen --out <path>`) and never appear in the repo, logs, error messages, page responses, or committed test fixtures.

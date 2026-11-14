@@ -45,6 +45,9 @@ jobs:
       - name: Run attack page integration test harness
         run: cargo run -p wavical-integration-tests
 
+      - name: Run supply-chain test bench
+        run: cargo test -p wavical-supply-chain-bench
+
       - name: Build workspace (including wavical-native and wavical-ai)
         run: cargo build --workspace
 

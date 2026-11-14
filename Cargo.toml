@@ -10,6 +10,7 @@ members = [
     "crates/wavical-ai",
     "tests/integration",
     "tests/audit",
+    "tests/supply-chain",
 ]
 exclude = [
     "fuzz",

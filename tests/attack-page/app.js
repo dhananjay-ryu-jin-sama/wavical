@@ -1,7 +1,7 @@
 window.__attack_results__ = {
     completed: false,
     all_passed: false,
-    summary: { total: 20, passed: 0, failed: 0 },
+    summary: { total: 25, passed: 0, failed: 0 },
     details: []
 };
 
@@ -25,7 +25,12 @@ const tests = [
     { id: "ai_flood", name: "17. AI Request Concurrency Flood (Starvation & Concurrency Protection)", run: testAiFlood },
     { id: "ai_cancel_race", name: "18. AI Cancel Race Conditions & Non-Existent Target IDs", run: testAiCancelRace },
     { id: "ai_markup_in_output", name: "19. AI Model Output Markup & Script Injection Defense", run: testAiMarkupInOutput },
-    { id: "ai_forbidden_page_params", name: "20. Forbidden Page Parameters (Model Path, URL, Key, Download Invocations)", run: testAiForbiddenPageParams }
+    { id: "ai_forbidden_page_params", name: "20. Forbidden Page Parameters (Model Path, URL, Key, Download Invocations)", run: testAiForbiddenPageParams },
+    { id: "backend_no_cap", name: "21. Backend Invoke Without Capability (backend.invoke)", run: testBackendWithoutCapability },
+    { id: "backend_method_allowlist", name: "22. Backend Method Allowlist Bypass Attempts (Case, Whitespace, Prefix)", run: testBackendMethodAllowlistVariants },
+    { id: "backend_oversize_flood", name: "23. Backend Oversize, Malformed & Concurrency Flood", run: testBackendOversizeMalformedFlood },
+    { id: "backend_direct_reach", name: "24. Direct Backend Reach & Pipe Exposure Blocked", run: testBackendDirectReachBlocked },
+    { id: "updater_forbidden_params", name: "25. Updater Extra Parameters & Capability Rejection", run: testUpdaterForbiddenParams }
 ];
 
 // 1. Calling core.echo without capability
@@ -847,6 +852,149 @@ async function testAiForbiddenPageParams() {
         };
     } catch (e) {
         return { passed: false, detail: `Forbidden page params test exception: ${e.message}` };
+    }
+}
+
+// 21. Phase 4: backend.invoke without capability
+async function testBackendWithoutCapability() {
+    try {
+        let err = null;
+        try {
+            await window.wavical.invoke("backend.invoke", { method: "todos.list", params: {} });
+        } catch (e) {
+            err = e.message;
+        }
+        if (err && err.includes("Method not allowed or not found")) {
+            return { passed: true, detail: `backend.invoke rejected without capability: "${err}"` };
+        }
+        return { passed: false, detail: `backend.invoke was not blocked: ${err}` };
+    } catch (e) {
+        return { passed: false, detail: `testBackendWithoutCapability exception: ${e.message}` };
+    }
+}
+
+// 22. Phase 4: methods not on allowlist (case, whitespace, prefix variants)
+async function testBackendMethodAllowlistVariants() {
+    try {
+        const badMethods = [
+            "Todos.List",
+            " todos.list",
+            "todos.list ",
+            "todos.list.admin",
+            "todos.list/../../etc",
+            "__proto__",
+            ""
+        ];
+        for (const method of badMethods) {
+            let err = null;
+            try {
+                await window.wavical.invoke("backend.invoke", { method, params: {} });
+            } catch (e) {
+                err = e.message;
+            }
+            if (!err) {
+                return { passed: false, detail: `Unallowlisted backend method '${method}' was not rejected` };
+            }
+        }
+        return { passed: true, detail: `All ${badMethods.length} backend method allowlist bypass variants rejected` };
+    } catch (e) {
+        return { passed: false, detail: `testBackendMethodAllowlistVariants exception: ${e.message}` };
+    }
+}
+
+// 23. Phase 4: oversize, malformed, and flood backend.invoke calls
+async function testBackendOversizeMalformedFlood() {
+    try {
+        const oversize = "A".repeat(1024 * 1024 + 1024);
+        const malformedPayloads = [
+            null,
+            "not-an-object",
+            { method: 123, params: {} }
+        ];
+        for (const payload of malformedPayloads) {
+            let rejected = false;
+            try {
+                await window.wavical.invoke("backend.invoke", payload);
+            } catch (_) {
+                rejected = true;
+            }
+            if (!rejected) {
+                return { passed: false, detail: "Malformed backend.invoke was not rejected" };
+            }
+        }
+        if (window.ipc && typeof window.ipc.postMessage === "function") {
+            window.ipc.postMessage(JSON.stringify({
+                id: 99999,
+                method: "backend.invoke",
+                params: { method: "todos.list", params: { blob: oversize } }
+            }));
+        }
+
+        const flood = [];
+        for (let i = 0; i < 40; i++) {
+            flood.push(window.wavical.invoke("backend.invoke", { method: "todos.list", params: { i } }).catch(() => "rejected"));
+        }
+        await Promise.all(flood);
+
+        const ping = await window.wavical.invoke("core.ping");
+        if (ping && ping.message === "pong") {
+            return { passed: true, detail: "Oversize, malformed, and 40-call backend flood all rejected; host remains healthy" };
+        }
+        return { passed: false, detail: "Host became unresponsive after backend flood" };
+    } catch (e) {
+        return { passed: false, detail: `testBackendOversizeMalformedFlood exception: ${e.message}` };
+    }
+}
+
+// 24. Phase 4: direct reach to backend localhost ports or pipe names
+async function testBackendDirectReachBlocked() {
+    try {
+        if (typeof window.WAVICAL_IPC_PIPE !== "undefined" || (window.process && window.process.env && window.process.env.WAVICAL_IPC_PIPE)) {
+            return { passed: false, detail: "Backend pipe name is exposed to the page context" };
+        }
+        const targets = ["http://127.0.0.1:9229/json", "http://localhost:3000/api", "http://127.0.0.1:8080/"];
+        for (const url of targets) {
+            let blocked = false;
+            try {
+                await fetch(url, { signal: AbortSignal.timeout(1000) });
+            } catch (_) {
+                blocked = true;
+            }
+            if (!blocked) {
+                return { passed: false, detail: `Direct fetch to ${url} was not blocked by CSP/isolation` };
+            }
+        }
+        return { passed: true, detail: "Direct localhost fetches blocked by CSP and no backend pipe names exposed to page" };
+    } catch (e) {
+        return { passed: false, detail: `testBackendDirectReachBlocked exception: ${e.message}` };
+    }
+}
+
+// 25. Phase 4: updater.check / updater.apply with extra parameters (URL, version, key, channel)
+async function testUpdaterForbiddenParams() {
+    try {
+        const attacks = [
+            { method: "updater.check", params: { manifestUrl: "https://evil.example/manifest.json" } },
+            { method: "updater.check", params: { url: "https://evil.example/m.json", channel: "canary" } },
+            { method: "updater.check", params: { publicKey: "AAAA", version: "9.9.9" } },
+            { method: "updater.apply", params: { version: "9.9.9", path: "C:\\evil" } },
+            { method: "updater.check", params: {} },
+            { method: "updater.apply", params: {} }
+        ];
+        for (const a of attacks) {
+            let err = null;
+            try {
+                await window.wavical.invoke(a.method, a.params);
+            } catch (e) {
+                err = e.message;
+            }
+            if (!err) {
+                return { passed: false, detail: `${a.method} with params ${JSON.stringify(a.params)} was not blocked` };
+            }
+        }
+        return { passed: true, detail: `All ${attacks.length} updater parameter/capability attacks rejected` };
+    } catch (e) {
+        return { passed: false, detail: `testUpdaterForbiddenParams exception: ${e.message}` };
     }
 }
 

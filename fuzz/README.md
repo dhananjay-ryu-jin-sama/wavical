@@ -50,6 +50,26 @@ Run in Linux or WSL from the repository root:
    cargo +nightly fuzz run chunker
    ```
 
+9. **Fuzz Backend Frame Parser (Phase 4 WP10):**
+   ```bash
+   cargo +nightly fuzz run backend_frame_parser
+   ```
+
+10. **Fuzz Update Manifest Parser (Phase 4 WP10):**
+    ```bash
+    cargo +nightly fuzz run update_manifest_parser
+    ```
+
+11. **Fuzz Archive Entry Path Checker (Phase 4 WP10):**
+    ```bash
+    cargo +nightly fuzz run archive_entry_path
+    ```
+
+12. **Fuzz Runtime Version Resolver (Phase 4 WP10):**
+    ```bash
+    cargo +nightly fuzz run version_resolver
+    ```
+
 ### Nightly WSL Continuous / Long-Running Fuzzing Commands
 
 To run nightly continuous fuzzing in WSL across all targets:
@@ -67,6 +87,10 @@ cargo +nightly fuzz run grant_table -- -max_total_time=3600
 cargo +nightly fuzz run ai_request_parser -- -max_total_time=3600
 cargo +nightly fuzz run catalog_parser -- -max_total_time=3600
 cargo +nightly fuzz run chunker -- -max_total_time=3600
+cargo +nightly fuzz run backend_frame_parser -- -max_total_time=3600
+cargo +nightly fuzz run update_manifest_parser -- -max_total_time=3600
+cargo +nightly fuzz run archive_entry_path -- -max_total_time=3600
+cargo +nightly fuzz run version_resolver -- -max_total_time=3600
 ```
 
 ### Reproducing Crash Artifacts

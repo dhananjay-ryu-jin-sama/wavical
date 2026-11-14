@@ -61,3 +61,27 @@ name = "chunker"
 path = "fuzz_targets/chunker.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "backend_frame_parser"
+path = "fuzz_targets/backend_frame_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "update_manifest_parser"
+path = "fuzz_targets/update_manifest_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "archive_entry_path"
+path = "fuzz_targets/archive_entry_path.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "version_resolver"
+path = "fuzz_targets/version_resolver.rs"
+test = false
+doc = false

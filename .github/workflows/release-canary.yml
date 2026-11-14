@@ -52,6 +52,7 @@ jobs:
 
       - name: Run supply-chain & updater verification tests
         run: |
+          cargo test -p wavical-supply-chain-bench
           cargo test -p wavical-cli --test runtime_tests --test signer_tests
           cargo test -p wavical-shell --test updater_tests --test hardening_tests
 
