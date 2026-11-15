@@ -31,3 +31,6 @@ $RECYCLE.BIN/
 
 # OS / Crash logs
 *.log
+
+# Documentation (excluded from repo)
+docs/
