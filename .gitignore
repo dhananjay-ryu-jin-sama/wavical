@@ -34,3 +34,7 @@ $RECYCLE.BIN/
 
 # Documentation (excluded from repo)
 docs/
+
+# Node / npm
+node_modules/
+*.tgz

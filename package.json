@@ -1,18 +1,22 @@
 {
   "name": "wavical",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A lightweight, security-first, AI-native desktop app framework built in Rust using OS WebView2, capability-gated IPC, optional sandboxed Node.js backends, and signed auto-updates.",
   "bin": {
     "wavical": "./bin/wavical.js",
     "wca": "./bin/wavical.js"
   },
   "files": [
-    "bin/",
+    "bin/wavical.js",
+    "bin/wavical.exe",
+    "bin/wavical-shell.exe",
     "README.md",
     "LICENSE*"
   ],
   "scripts": {
-    "test": "cargo test --workspace"
+    "test": "cargo test --workspace",
+    "build:release": "cargo build --release --bin wavical --bin wavical-shell",
+    "prepack": "node -e \"const fs=require('node:fs'); for(const f of ['wavical.exe','wavical-shell.exe']){const src='target/release/'+f, dst='bin/'+f; if(fs.existsSync(src)) fs.copyFileSync(src,dst); if(!fs.existsSync(dst)){console.error('Missing '+dst); process.exit(1);}}\""
   },
   "repository": {
     "type": "git",
