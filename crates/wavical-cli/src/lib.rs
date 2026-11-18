@@ -919,6 +919,18 @@ pub fn run_init_with_options(
         }
     })?;
 
+    // 4b. package.json (ensures ESM wavical.config.js works even inside CommonJS parent repos)
+    let package_json_path = dir.join("package.json");
+    let package_json_content = format!(
+        "{{\n  \"name\": \"{app_id}\",\n  \"private\": true,\n  \"type\": \"module\"\n}}\n"
+    );
+    std::fs::write(&package_json_path, package_json_content).map_err(|e| {
+        CliError::WriteFileFailed {
+            path: package_json_path.clone(),
+            source: e,
+        }
+    })?;
+
     // 5. If --backend requested, scaffold backend/ directory with main.js, wavical-backend.js, package.json, and lockfile
     if backend {
         let backend_dir = dir.join("backend");
@@ -1236,8 +1248,7 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
         .arg(&caps_json)
         .arg("--asset-root")
         .arg(&src_dir)
-        .arg("--dev")
-        .arg("--listen-stdin");
+        .arg("--dev");
 
     if !config.persist_window_state() {
         cmd.arg("--persist-state").arg("false");

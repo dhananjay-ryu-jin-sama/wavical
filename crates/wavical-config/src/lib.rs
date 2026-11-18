@@ -1550,7 +1550,18 @@ pub fn execute_node_config_script(
             "console.log = (...args) => console.error(...args);\
              console.info = (...args) => console.error(...args);\
              console.debug = (...args) => console.error(...args);\
-             const m = await import('./wavical.config.js');\
+             let m;\
+             try {\
+               m = await import('./wavical.config.js');\
+             } catch (err) {\
+               if (err && err.name === 'SyntaxError') {\
+                 const fs = await import('node:fs');\
+                 const src = fs.readFileSync('./wavical.config.js', 'utf8');\
+                 m = await import('data:text/javascript;base64,' + Buffer.from(src, 'utf8').toString('base64'));\
+               } else {\
+                 throw err;\
+               }\
+             }\
              const c = m ? m.default : undefined;\
              process.stdout.write('__WAVICAL_CONFIG_JSON_START__\\n' + JSON.stringify(c) + '\\n__WAVICAL_CONFIG_JSON_END__\\n');",
         )
@@ -3341,6 +3352,28 @@ mod tests {
 
         let conf = validate_config(dir.path()).expect("validate_config should isolate stdout");
         assert_eq!(conf.app_id, "isolated-app");
+    }
+
+    #[test]
+    fn test_esm_config_under_commonjs_parent_package_json() {
+        let parent = tempdir().expect("tempdir");
+        std::fs::write(
+            parent.path().join("package.json"),
+            r#"{"name": "parent-cjs", "type": "commonjs"}"#,
+        )
+        .expect("write parent package.json");
+
+        let nested = parent.path().join("nested-app");
+        std::fs::create_dir_all(&nested).expect("create nested dir");
+        std::fs::write(
+            nested.join("wavical.config.js"),
+            "export default { appId: 'nested-esm-app' };\n",
+        )
+        .expect("write wavical.config.js");
+
+        let conf = validate_config(&nested)
+            .expect("validate_config should load ESM config even under CommonJS parent package.json");
+        assert_eq!(conf.app_id, "nested-esm-app");
     }
 
     proptest! {
