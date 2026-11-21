@@ -34,6 +34,7 @@ $RECYCLE.BIN/
 
 # Documentation (excluded from repo)
 docs/
+test_app/
 
 # Node / npm
 node_modules/

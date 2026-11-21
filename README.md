@@ -102,7 +102,11 @@ Both `wavical` and `wca` accept the same commands:
 | Command | Description |
 |---|---|
 | `wavical init <DIR> [--force] [--backend] [--ai "<prompt>"]` | Scaffold a new Wavical project in `<DIR>`. |
-| `wavical dev [DIR]` | Start hot-reload development server and launch the desktop shell. |
+| `wavical dev [DIR]` | Start hot-reload development server in **open** mode and launch the desktop shell. |
+| `wavical dev-safe [DIR] [--record]` | Start dev server in **safe** mode (`wavical.allowlist.json` + inline script hashes). |
+| `wavical dev-ultra-safe [DIR] [--record]` | Start dev server in **ultra-safe** mode (strict local-only CSP; extracts inline scripts). |
+| `wavical allowlist suggest [DIR]` | Review `--record` blocked events and selectively add origins to `wavical.allowlist.json`. |
+| `wavical vendor [DIR] [--allow-unpinned <URL>] [--check] [--update]` | Vendor pinned CDN scripts, styles, fonts, and images into `src/vendor/` for offline & `ultra-safe` use. |
 | `wavical build [DIR] [--outdir dist] [--bundle-runtime]` | Build production assets and generate `wavical-manifest.json`. |
 | `wavical register-filetypes [DIR]` | Register file extensions from `wavical.config.js` in Windows (`HKCU`). |
 | `wavical unregister-filetypes [DIR]` | Remove registered Windows file associations for the project. |
@@ -365,6 +369,7 @@ const res = await window.wavical.invoke('backend.invoke', {
 | **2** | Native Tier 1 APIs: scoped file grants, clipboard, notifications, tray, menus, shortcuts | ✅ Completed |
 | **3** | AI-native: local GGUF engine, cloud fallback + consent, local RAG (`ai.index`/`ai.search`) | ✅ Completed |
 | **4** | Opt-in sandboxed Node.js backend runtime (`wavical runtime`), Ed25519 signed updates | ✅ Completed |
+| **4.5** | Network Modes (`open` / `safe` / `ultra-safe`), `wavical vendor`, `allowlist suggest`, Remote UI (`window.remoteUrl`) | ✅ Implemented (see [`docs/NETWORK_MODES.md`](docs/NETWORK_MODES.md) & [`docs/VENDOR.md`](docs/VENDOR.md)) |
 | **5** | Windows installers (`.exe`/`.msi`), code signing, portable builds, public benchmarks | 📋 Planned |
 | **6** | Enterprise: structured audit logging, SBOM generation, `wavical audit`, private registries | 📋 Planned |
 

@@ -1,0 +1,19 @@
+[package]
+name = "wavical-netpolicy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+url = "2.5.8"
+sha2 = "0.11.1"
+base64 = "0.23.1"
+
+# Dev-only test exception (F-A0-08): proptest pulls windows-sys transitively on Windows dev builds.
+# Production dependency tree (-e normal) strictly contains zero prohibited or OS dependencies.
+[dev-dependencies]
+proptest = "1.12.0"

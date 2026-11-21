@@ -1,6 +1,6 @@
 {
   "name": "wavical",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "A lightweight, security-first, AI-native desktop app framework built in Rust using OS WebView2, capability-gated IPC, optional sandboxed Node.js backends, and signed auto-updates.",
   "bin": {
     "wavical": "bin/wavical.js",
@@ -11,6 +11,7 @@
     "bin/wavical.exe",
     "bin/wavical-shell.exe",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE*"
   ],
   "scripts": {
@@ -51,6 +52,8 @@
   "bugs": {
     "url": "https://github.com/dhananjay-ryu-jin-sama/Wavical/issues"
   },
-  "homepage": "https://github.com/dhananjay-ryu-jin-sama/Wavical#readme"
-
+  "homepage": "https://github.com/dhananjay-ryu-jin-sama/Wavical#readme",
+  "dependencies": {
+    "wavical": "^1.1.0"
+  }
 }

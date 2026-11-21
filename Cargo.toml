@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/wavical-ipc",
     "crates/wavical-protocol",
+    "crates/wavical-netpolicy",
     "crates/wavical-shell",
     "crates/wavical-config",
     "crates/wavical-cli",

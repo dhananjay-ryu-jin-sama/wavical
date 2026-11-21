@@ -1,4 +1,4 @@
-You are building Wavical, a lightweight, security-first desktop app framework (an alternative to Electron and Tauri). Full command: `wavical`, short alias: `wca`. Stack: Rust, tao + wry (WebView2 on Windows). I am not a Rust expert, so you must be careful, explicit and honest.
+We are building Wavical, a lightweight, security-first desktop app framework (an alternative to Electron and Tauri). Full command: `wavical`, short alias: `wca`. Stack: Rust, tao + wry (WebView2 on Windows).
 
 BEFORE ANY CODE, read these files in docs/:
 - WAVICAL_PHASE_0_BUILD_PLAN.md (the plan you must follow)

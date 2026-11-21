@@ -4932,10 +4932,12 @@ name = "wavical-audit"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "hex",
  "proptest",
  "rcgen",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -4944,6 +4946,7 @@ dependencies = [
  "wavical-config",
  "wavical-ipc",
  "wavical-native",
+ "wavical-netpolicy",
  "wavical-protocol",
  "wavical-shell",
  "wry",
@@ -4954,21 +4957,28 @@ name = "wavical-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "cssparser",
  "ctrlc",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "hex",
+ "html5ever",
  "keyring",
  "notify",
  "rpassword",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
+ "tendril",
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
+ "url",
  "wavical-ai",
  "wavical-config",
  "wavical-ipc",
+ "wavical-netpolicy",
  "wavical-protocol",
  "windows-registry 0.100.0",
  "zip",
@@ -5038,6 +5048,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wavical-netpolicy"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+ "url",
+]
+
+[[package]]
 name = "wavical-protocol"
 version = "0.1.0"
 dependencies = [
@@ -5055,6 +5078,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "global-hotkey",
+ "hex",
  "interprocess",
  "muda",
  "serde",
@@ -5066,10 +5090,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon",
+ "url",
  "wavical-ai",
  "wavical-config",
  "wavical-ipc",
  "wavical-native",
+ "wavical-netpolicy",
  "wavical-protocol",
  "win32job",
  "wry",

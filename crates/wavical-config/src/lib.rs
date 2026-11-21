@@ -46,6 +46,15 @@ pub struct WindowConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub persist_state: Option<bool>,
+
+    /// Optional remote UI URL loaded instead of local assets (Phase 4.5).
+    #[serde(
+        default,
+        rename = "remoteUrl",
+        alias = "remote_url",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub remote_url: Option<String>,
 }
 
 impl WindowConfig {
@@ -77,6 +86,7 @@ impl Default for WindowConfig {
             height: Some(DEFAULT_WINDOW_HEIGHT),
             title: None,
             persist_state: None,
+            remote_url: None,
         }
     }
 }
@@ -2069,6 +2079,7 @@ mod tests {
                     height: h,
                     title: t,
                     persist_state: p,
+                    remote_url: None,
                 }),
         );
 
@@ -3371,8 +3382,9 @@ mod tests {
         )
         .expect("write wavical.config.js");
 
-        let conf = validate_config(&nested)
-            .expect("validate_config should load ESM config even under CommonJS parent package.json");
+        let conf = validate_config(&nested).expect(
+            "validate_config should load ESM config even under CommonJS parent package.json",
+        );
         assert_eq!(conf.app_id, "nested-esm-app");
     }
 

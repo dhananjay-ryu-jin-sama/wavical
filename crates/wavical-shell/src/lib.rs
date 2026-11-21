@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod hardening;
+pub mod net_policy;
 pub mod updater;
 
 use std::borrow::Cow;
@@ -17,7 +18,7 @@ use tao::{
 use thiserror::Error;
 use wavical_protocol::{HEADER_NOSNIFF, resolve_asset_path};
 use wry::http::{Request, Response, StatusCode, Uri};
-use wry::{NewWindowResponse, WebViewBuilder};
+use wry::{NewWindowResponse, WebViewBuilder, WebViewBuilderExtWindows};
 
 /// Strict Content-Security-Policy applied by default to all responses.
 pub const DEFAULT_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self';";
@@ -33,6 +34,7 @@ pub const HEADER_CSP: &str = "Content-Security-Policy";
 /// as non-writable and non-configurable properties using `Object.defineProperty`.
 pub const WAVICAL_INIT_SCRIPT: &str = r#"
 (() => {
+    if (window.top !== window.self) return;
     if (window.wavical) return;
 
     const pending = new Map();
@@ -203,6 +205,8 @@ pub struct WindowConfig {
     pub updater_dir: Option<std::path::PathBuf>,
     /// Optional downloader options (e.g., test-only localhost HTTP overrides).
     pub updater_download_options: Option<wavical_ai::downloader::DownloadOptions>,
+    /// Phase 4.5 network mode policy (default: UltraSafe).
+    pub network_policy: net_policy::ShellNetworkPolicy,
 }
 
 impl Default for WindowConfig {
@@ -238,6 +242,7 @@ impl Default for WindowConfig {
             installed_version: None,
             updater_dir: None,
             updater_download_options: None,
+            network_policy: net_policy::ShellNetworkPolicy::default(),
         }
     }
 }
@@ -376,7 +381,27 @@ pub fn process_ipc_message(
     config: &WindowConfig,
     registry: &wavical_ipc::HandlerRegistry,
 ) -> Result<Option<wavical_ipc::Response>, IpcOriginError> {
-    if !is_origin_allowed(uri, &config.allowed_origins) {
+    let is_wavical_scheme = uri
+        .scheme_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case("wavical"));
+    let mut bridge_subset: Option<Vec<String>> = None;
+    let allowed = if is_wavical_scheme {
+        is_origin_allowed(uri, &config.allowed_origins)
+    } else {
+        match net_policy::authorize_bridge_request(
+            &config.network_policy,
+            uri,
+            true,
+            &config.window_id,
+        ) {
+            Ok(caps) => {
+                bridge_subset = Some(caps);
+                true
+            }
+            Err(_) => is_origin_allowed(uri, &config.allowed_origins),
+        }
+    };
+    if !allowed {
         let origin_str = extract_origin(uri).unwrap_or_else(|| uri.to_string());
         tracing::warn!(
             security_event = "origin_rejected",
@@ -414,7 +439,14 @@ pub fn process_ipc_message(
     };
 
     let active_capabilities = config.effective_capabilities();
-    if !active_capabilities.is_allowed(&request.method) {
+    let enforce_remote_subset = config.network_policy.mode == wavical_netpolicy::NetworkMode::Safe
+        && config.network_policy.is_remote_ui_origin(uri);
+    let method_allowed = active_capabilities.is_allowed(&request.method)
+        && (!enforce_remote_subset
+            || bridge_subset
+                .as_ref()
+                .is_some_and(|subset| subset.iter().any(|c| c == &request.method)));
+    if !method_allowed {
         tracing::warn!(
             security_event = "capability_denied",
             window_id = %config.window_id,
@@ -1238,37 +1270,92 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
 
     let protocol_asset_root = asset_root.clone();
     let protocol_csp = effective_csp.clone();
+    let protocol_custom_csp = config.custom_csp.clone();
+    let protocol_policy = config.network_policy.clone();
     let protocol_window_id = config.window_id.clone();
     let ipc_config = config.clone();
     let ipc_registry = registry.clone();
     let ipc_proxy = proxy.clone();
 
-    let nav_allowed_origins = config.allowed_origins.clone();
+    let nav_policy = config.network_policy.clone();
     let nav_window_id = config.window_id.clone();
+    let popup_policy = config.network_policy.clone();
     let popup_window_id = config.window_id.clone();
+    let popup_rate_limiter = std::sync::Arc::new(net_policy::OpenExternalRateLimiter::default());
 
+    let start_url = if config.network_policy.is_dev_command
+        && let Some(ref dev_origin) = config.network_policy.dev_url_origin
+    {
+        dev_origin.as_canonical()
+    } else if let Some(ref remote_url) = config.network_policy.remote_url {
+        remote_url.clone()
+    } else {
+        "wavical://localhost/index.html".to_string()
+    };
+
+    let init_script = net_policy::build_init_script(&config.network_policy);
     let mut web_context = wry::WebContext::new(Some(data_directory));
 
-    let webview = match WebViewBuilder::new_with_web_context(&mut web_context)
+    let mut builder = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_devtools(devtools)
-        .with_initialization_script(WAVICAL_INIT_SCRIPT)
+        .with_initialization_script(init_script)
         .with_custom_protocol("wavical".to_string(), move |_id, request| {
-            handle_protocol_request(
-                request,
-                &protocol_asset_root,
-                &protocol_csp,
-                &protocol_window_id,
-            )
+            if protocol_custom_csp.is_some() {
+                handle_protocol_request(
+                    request,
+                    &protocol_asset_root,
+                    &protocol_csp,
+                    &protocol_window_id,
+                )
+            } else {
+                net_policy::handle_protocol_request_with_policy(
+                    request,
+                    &protocol_asset_root,
+                    &protocol_policy,
+                    &protocol_window_id,
+                )
+            }
         })
         .with_navigation_handler(move |url| {
-            handle_navigation_request(&url, &nav_allowed_origins, &nav_window_id)
+            net_policy::handle_navigation_with_policy(&nav_policy, &url, &nav_window_id)
         })
         .with_new_window_req_handler(move |url, _features| {
-            handle_new_window_request(&url, &popup_window_id)
-        })
+            net_policy::handle_new_window_with_policy(
+                &popup_policy,
+                &url,
+                &popup_window_id,
+                &popup_rate_limiter,
+            )
+        });
+
+    if config.network_policy.mode == wavical_netpolicy::NetworkMode::UltraSafe {
+        builder = builder.with_additional_browser_args(net_policy::ULTRA_SAFE_BROWSER_ARGS);
+    }
+
+    let webview = match builder
         .with_ipc_handler(move |request| {
             let uri = request.uri();
             let body = request.body();
+
+            if ipc_config.network_policy.is_dev_command
+                && let Some(ref recorder) = ipc_config.network_policy.recorder
+                && let Ok(val) = serde_json::from_str::<serde_json::Value>(body)
+                && let Some(rec_obj) = val.get("__wavical_record")
+            {
+                let directive = rec_obj
+                    .get("directive")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let blocked_uri = rec_obj
+                    .get("blockedUri")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                recorder.record_raw(
+                    net_policy::map_csp_directive_to_type(directive),
+                    blocked_uri,
+                );
+                return;
+            }
 
             match process_ipc_message(uri, body, &ipc_config, &ipc_registry) {
                 Ok(Some(response)) => match build_delivery_script(&response) {
@@ -1293,7 +1380,7 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
                 }
             }
         })
-        .with_url("wavical://localhost/index.html")
+        .with_url(&start_url)
         .build(&window)
     {
         Ok(wv) => wv,

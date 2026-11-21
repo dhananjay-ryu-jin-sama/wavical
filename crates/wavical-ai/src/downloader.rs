@@ -59,6 +59,8 @@ pub enum DownloadKind {
     Runtime,
     /// Shipped application update payload.
     Update,
+    /// External CDN asset vendored via `wavical vendor` (HTTPS-only, size-bounded).
+    Vendor,
 }
 
 /// Options to customize download execution (used in tests for mock servers).
@@ -91,6 +93,7 @@ pub fn is_host_allowed_for_kind(
             .iter()
             .any(|&h| lower_host == h || lower_host.ends_with(".nodejs.org")),
         DownloadKind::Update => ALLOWED_UPDATE_HOSTS.iter().any(|&h| lower_host == h),
+        DownloadKind::Vendor => !lower_host.is_empty(),
     }
 }
 

@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 wavical-protocol = { path = "../../crates/wavical-protocol" }
 wavical-ipc = { path = "../../crates/wavical-ipc" }
+wavical-netpolicy = { path = "../../crates/wavical-netpolicy" }
 wavical-shell = { path = "../../crates/wavical-shell" }
 wavical-config = { path = "../../crates/wavical-config" }
 wavical-cli = { path = "../../crates/wavical-cli" }
@@ -21,3 +22,5 @@ proptest = "1.11.0"
 tokio = { version = "1.54.1", features = ["full"] }
 rcgen = "0.14.10"
 tokio-rustls = "0.26.6"
+sha2 = "0.11.1"
+hex = "0.4.3"

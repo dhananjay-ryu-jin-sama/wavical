@@ -73,6 +73,22 @@ pub struct ShellCli {
     /// Run in development server mode
     #[arg(long)]
     pub dev: bool,
+
+    /// Network mode for dev commands (open, safe, ultra-safe). Ignored for built apps.
+    #[arg(long)]
+    pub network_mode: Option<String>,
+
+    /// Dev server URL (localhost/127.0.0.1 with port) for dev commands only.
+    #[arg(long)]
+    pub dev_url: Option<String>,
+
+    /// Remote UI URL from window.remoteUrl (dev commands only; built apps use manifest).
+    #[arg(long)]
+    pub remote_url: Option<String>,
+
+    /// Record blocked events to .wavical/recorded-blocks.json (dev-safe / dev-ultra-safe only).
+    #[arg(long)]
+    pub record: bool,
 }
 
 fn main() {
@@ -82,11 +98,13 @@ fn main() {
     let asset_root = args.asset_root.unwrap_or_else(get_asset_root);
 
     let mut capabilities = wavical_ipc::Capabilities::new();
+    let mut granted_caps = Vec::new();
     if let Some(ref caps_raw) = args.capabilities {
         let trimmed = caps_raw.trim();
         if trimmed.starts_with('[') {
             if let Ok(list) = serde_json::from_str::<Vec<String>>(trimmed) {
                 for cap in list {
+                    granted_caps.push(cap.clone());
                     capabilities.grant(cap);
                 }
             }
@@ -94,6 +112,7 @@ fn main() {
             if let Ok(map) = serde_json::from_str::<HashMap<String, bool>>(trimmed) {
                 for (cap, granted) in map {
                     if granted {
+                        granted_caps.push(cap.clone());
                         capabilities.grant(cap);
                     }
                 }
@@ -102,12 +121,14 @@ fn main() {
             for cap in trimmed.split(',') {
                 let c = cap.trim();
                 if !c.is_empty() {
+                    granted_caps.push(c.to_string());
                     capabilities.grant(c);
                 }
             }
         }
     } else if !args.dev {
         // Phase 0 backward compatibility: grant core.ping for bare execution
+        granted_caps.push("core.ping".to_string());
         capabilities.grant("core.ping");
     }
 
@@ -166,6 +187,27 @@ fn main() {
         .as_deref()
         .and_then(|raw| serde_json::from_str::<wavical_config::BackendConfig>(raw).ok());
 
+    let mut network_policy = wavical_shell::net_policy::resolve_shell_network_policy_with_remote(
+        &asset_root,
+        args.project_root.as_deref(),
+        args.dev,
+        args.network_mode.as_deref(),
+        args.dev_url.as_deref(),
+        args.remote_url.as_deref(),
+        granted_caps,
+    );
+    if args.dev && args.record {
+        let rec_path = args
+            .project_root
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(".wavical")
+            .join("recorded-blocks.json");
+        network_policy.recorder = Some(std::sync::Arc::new(
+            wavical_shell::net_policy::BlockRecorder::new(Some(rec_path)),
+        ));
+    }
+
     let config = WindowConfig {
         window_id: args.app_id,
         allowed_origins: vec![
@@ -186,6 +228,7 @@ fn main() {
         shortcuts: initial_shortcuts,
         dialog_filters: initial_dialog_filters,
         backend_config,
+        network_policy,
         project_root: args.project_root,
         backend_service: None,
         asset_root: None,

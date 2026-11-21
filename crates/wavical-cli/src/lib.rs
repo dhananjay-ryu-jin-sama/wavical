@@ -1,10 +1,13 @@
 #![forbid(unsafe_code)]
 
+pub mod allowlist_suggest;
 pub mod backend_build;
 pub mod extractor;
+pub mod html_scan;
 pub mod runtime;
 mod sha256;
 pub mod signer;
+pub mod vendor;
 
 #[cfg(windows)]
 pub use windows_registry;
@@ -40,8 +43,22 @@ pub enum Commands {
     /// Initialize a new Wavical application in <DIR>
     Init(InitArgs),
 
-    /// Start the development server and launch the application shell
+    /// Start the development server and launch the application shell (open mode)
     Dev(DevArgs),
+
+    /// Start the development server in safe mode (allowlist + inline script hashes)
+    #[command(name = "dev-safe")]
+    DevSafe(DevModeArgs),
+
+    /// Start the development server in ultra-safe mode (strict CSP, local only)
+    #[command(name = "dev-ultra-safe")]
+    DevUltraSafe(DevModeArgs),
+
+    /// Manage wavical.allowlist.json suggestions from --record sessions
+    Allowlist(AllowlistArgs),
+
+    /// Vendor external CDN scripts, styles, fonts, and images into src/vendor/ for offline use
+    Vendor(VendorArgs),
 
     /// Build the application for production
     Build(BuildArgs),
@@ -384,6 +401,60 @@ pub struct FiletypesArgs {
     /// Project root directory containing wavical.config.js (defaults to current directory)
     #[arg(default_value = ".")]
     pub dir: PathBuf,
+}
+
+/// Arguments for `dev-safe` and `dev-ultra-safe` subcommands.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct DevModeArgs {
+    /// Project root directory containing wavical.config.js (defaults to current directory)
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
+
+    /// Record blocked events to .wavical/recorded-blocks.json
+    #[arg(long)]
+    pub record: bool,
+}
+
+/// Arguments for `wavical allowlist <COMMAND>`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct AllowlistArgs {
+    #[command(subcommand)]
+    pub command: AllowlistCommands,
+}
+
+/// Subcommands under `wavical allowlist`.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum AllowlistCommands {
+    /// Suggest additions to wavical.allowlist.json from recorded blocked events
+    Suggest(AllowlistSuggestArgs),
+}
+
+/// Arguments for `wavical allowlist suggest`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct AllowlistSuggestArgs {
+    /// Project root directory (defaults to current directory)
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
+}
+
+/// Arguments for `wavical vendor`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct VendorArgs {
+    /// Project root directory (defaults to current directory)
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
+
+    /// Allow taking a one-time snapshot of an unpinned URL
+    #[arg(long = "allow-unpinned")]
+    pub allow_unpinned: Vec<String>,
+
+    /// Verify every vendored file against vendor.lock.json
+    #[arg(long)]
+    pub check: bool,
+
+    /// Refetch pinned URLs and prompt before updating
+    #[arg(long)]
+    pub update: bool,
 }
 
 /// Arguments for the `init` subcommand.
@@ -836,7 +907,7 @@ pub fn generate_styles_css() -> &'static str {
 
 /// Generate standard `.gitignore` rules covering Rust, Node, and build artifacts.
 pub fn generate_gitignore() -> &'static str {
-    "# Build artifacts\ndist/\ntarget/\n\n# Node\nnode_modules/\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*\npnpm-debug.log*\n\n# Environment & OS\n.env\n.env.local\n.DS_Store\nThumbs.db\n"
+    "# Build artifacts\ndist/\ntarget/\n.wavical/\nsrc/.wavical-extracted/\n\n# Node\nnode_modules/\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*\npnpm-debug.log*\n\n# Environment & OS\n.env\n.env.local\n.DS_Store\nThumbs.db\n"
 }
 
 /// Scaffold a new Wavical project at the given directory with default options.
@@ -1193,6 +1264,11 @@ pub fn find_wavical_shell() -> Result<PathBuf, CliError> {
 
 /// Launch development server with file watching and live shell reload.
 pub fn run_dev(dir: &Path) -> Result<(), CliError> {
+    run_dev_with_mode(dir, "open", false)
+}
+
+/// Launch development server with explicit network mode and optional `--record`.
+pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), CliError> {
     let project_root = if dir == Path::new(".") {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else if dir.is_relative() {
@@ -1228,7 +1304,27 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
         dir
     };
 
-    // 3. Locate wavical-shell
+    // 3. In ultra-safe dev mode, extract inline scripts into src/.wavical-extracted/ and report inline handlers
+    if mode == "ultra-safe" {
+        let extracted_dir = src_dir.join(".wavical-extracted");
+        if let Ok(scans) = html_scan::extract_frontend_inline_scripts(
+            &src_dir,
+            &extracted_dir,
+            ".wavical-extracted/",
+            true,
+        ) {
+            for scan in scans {
+                for h in scan.inline_handlers {
+                    eprintln!(
+                        "warning: inline handler '{}=\"...\"' on <{}> at {}:{} — move to an external script with addEventListener",
+                        h.attribute, h.tag, h.file, h.line
+                    );
+                }
+            }
+        }
+    }
+
+    // 4. Locate wavical-shell
     let shell_bin = find_wavical_shell()?;
 
     // 4. Spawn wavical-shell with initial configuration
@@ -1276,7 +1372,19 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     {
         cmd.arg("--backend-config").arg(backend_json);
     }
-    cmd.arg("--project-root").arg(&project_root);
+    if let Some(ref remote_url) = config.window.as_ref().and_then(|w| w.remote_url.clone()) {
+        eprintln!(
+            "WARNING: window.remoteUrl ('{remote_url}') in open mode grants native app capabilities to that remote site!"
+        );
+        cmd.arg("--remote-url").arg(remote_url);
+    }
+    cmd.arg("--project-root")
+        .arg(&project_root)
+        .arg("--network-mode")
+        .arg(mode);
+    if record {
+        cmd.arg("--record");
+    }
 
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1442,6 +1550,8 @@ pub struct WavicalManifest {
     pub backend: Option<backend_build::BackendBuildManifest>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub runtime: Option<backend_build::RuntimeBuildManifest>,
+    #[serde(rename = "remoteUrl", skip_serializing_if = "Option::is_none", default)]
+    pub remote_url: Option<String>,
 }
 
 fn has_javascript_files(dir: &Path) -> bool {
@@ -1774,6 +1884,13 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         }
     }
 
+    let remote_url = config.window.as_ref().and_then(|w| w.remote_url.clone());
+    if let Some(ref ru) = remote_url {
+        eprintln!(
+            "WARNING: window.remoteUrl ('{ru}') in open mode grants native app capabilities to that remote site!"
+        );
+    }
+
     let manifest = WavicalManifest {
         app_id: config.app_id.clone(),
         version: config.version_or_default().to_string(),
@@ -1781,6 +1898,7 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         assets,
         backend: backend_manifest,
         runtime: runtime_manifest,
+        remote_url,
     };
 
     let manifest_path = out_dir.join("wavical-manifest.json");
@@ -1846,6 +1964,48 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::DevSafe(args) => match run_dev_with_mode(&args.dir, "safe", args.record) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Commands::DevUltraSafe(args) => {
+            match run_dev_with_mode(&args.dir, "ultra-safe", args.record) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Commands::Allowlist(args) => match args.command {
+            AllowlistCommands::Suggest(s_args) => {
+                match allowlist_suggest::run_allowlist_suggest(&s_args.dir) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(err) => {
+                        eprintln!("error: {err}");
+                        ExitCode::FAILURE
+                    }
+                }
+            }
+        },
+        Commands::Vendor(args) => {
+            let opts = vendor::VendorRunOptions {
+                allow_unpinned: args.allow_unpinned,
+                check: args.check,
+                update: args.update,
+                download_options: Default::default(),
+            };
+            match vendor::run_vendor(&args.dir, &opts) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Commands::Build(args) => match run_build(&args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
