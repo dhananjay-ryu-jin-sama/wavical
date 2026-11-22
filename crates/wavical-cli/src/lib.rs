@@ -28,7 +28,7 @@ use thiserror::Error;
 #[command(
     name = "wavical",
     author,
-    version,
+    version = env!("WAVICAL_VERSION_DISPLAY"),
     about = "Wavical CLI - Developer tool for desktop web applications",
     long_about = None
 )]
@@ -88,6 +88,17 @@ pub enum Commands {
 
     /// Build, sign, and verify app update release manifests (Phase 4 WP7)
     Release(ReleaseArgs),
+
+    /// Inspect CLI and shell build version provenance
+    Doctor(DoctorArgs),
+}
+
+/// Arguments for `wavical doctor`.
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct DoctorArgs {
+    /// Print CLI and shell version and commit provenance and whether they match
+    #[arg(long)]
+    pub version_info: bool,
 }
 
 /// Arguments for the `signer` subcommand.
@@ -2069,6 +2080,13 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::Doctor(args) => match run_doctor(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: {err}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -2484,6 +2502,127 @@ pub fn run_secret(args: &SecretArgs) -> Result<(), CliError> {
     }
 }
 
+/// Parsed binary version and git provenance string (e.g., `wavical 1.1.1 (a1b2c3d)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryVersionInfo {
+    pub version: String,
+    pub commit: String,
+    pub dirty: bool,
+}
+
+/// Combined CLI and shell provenance summary for `wavical doctor --version-info`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoctorVersionReport {
+    pub cli: BinaryVersionInfo,
+    pub shell_path: PathBuf,
+    pub shell: BinaryVersionInfo,
+    pub matches: bool,
+}
+
+/// Parse `<name> <version> (<commit>[-dirty])` or `<name> <version>` output from `--version`.
+pub fn parse_binary_version_output(output: &str) -> BinaryVersionInfo {
+    let trimmed = output.trim();
+    let rest = trimmed
+        .split_once(' ')
+        .map(|(_, r)| r.trim())
+        .unwrap_or(trimmed);
+
+    if let Some((ver, meta_with_paren)) = rest.split_once(" (")
+        && let Some(meta) = meta_with_paren.strip_suffix(')')
+    {
+        if let Some(commit) = meta.strip_suffix("-dirty") {
+            return BinaryVersionInfo {
+                version: ver.trim().to_string(),
+                commit: commit.trim().to_string(),
+                dirty: true,
+            };
+        }
+        return BinaryVersionInfo {
+            version: ver.trim().to_string(),
+            commit: meta.trim().to_string(),
+            dirty: false,
+        };
+    }
+
+    BinaryVersionInfo {
+        version: rest.to_string(),
+        commit: "unknown".to_string(),
+        dirty: false,
+    }
+}
+
+/// Collect CLI and shell version provenance and check whether they match.
+pub fn collect_doctor_version_info() -> Result<DoctorVersionReport, CliError> {
+    let cli = BinaryVersionInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        commit: env!("WAVICAL_GIT_COMMIT").to_string(),
+        dirty: env!("WAVICAL_GIT_DIRTY") == "true",
+    };
+
+    let shell_path = find_wavical_shell()?;
+    let output = Command::new(&shell_path)
+        .arg("--version")
+        .output()
+        .map_err(|e| {
+            CliError::ShellNotFound(format!(
+                "failed to execute '{}' --version: {e}",
+                shell_path.display()
+            ))
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(CliError::ShellError(format!(
+            "'{} --version' exited with {}: {}",
+            shell_path.display(),
+            output.status,
+            stderr.trim()
+        )));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let shell = parse_binary_version_output(&stdout);
+    let matches = cli == shell && cli.commit != "unknown";
+
+    Ok(DoctorVersionReport {
+        cli,
+        shell_path,
+        shell,
+        matches,
+    })
+}
+
+/// Format the version provenance report for human inspection.
+pub fn format_doctor_version_report(report: &DoctorVersionReport) -> String {
+    let cli_dirty = if report.cli.dirty { " (dirty)" } else { "" };
+    let shell_dirty = if report.shell.dirty { " (dirty)" } else { "" };
+    let match_line = if report.matches {
+        "yes".to_string()
+    } else if report.cli == report.shell && report.cli.commit == "unknown" {
+        "no (git commit unknown)".to_string()
+    } else {
+        "no (CLI and shell version/commit differ)".to_string()
+    };
+
+    format!(
+        "CLI version:   {}\nCLI commit:    {}{}\nShell binary:  {}\nShell version: {}\nShell commit:  {}{}\nMatch:         {}",
+        report.cli.version,
+        report.cli.commit,
+        cli_dirty,
+        report.shell_path.display(),
+        report.shell.version,
+        report.shell.commit,
+        shell_dirty,
+        match_line,
+    )
+}
+
+/// Execute `wavical doctor` (including `--version-info`).
+pub fn run_doctor(_args: &DoctorArgs) -> Result<(), CliError> {
+    let report = collect_doctor_version_info()?;
+    println!("{}", format_doctor_version_report(&report));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2804,6 +2943,46 @@ mod tests {
             );
             // Cleanup test extension key completely so tests leave no trace
             let _ = CURRENT_USER.remove_tree(r"Software\Classes\.wavlife");
+        }
+    }
+
+    #[test]
+    fn test_parse_binary_version_output_and_doctor_cli() {
+        let clean = parse_binary_version_output("wavical-shell 1.1.1 (a1b2c3d)\n");
+        assert_eq!(
+            clean,
+            BinaryVersionInfo {
+                version: "1.1.1".to_string(),
+                commit: "a1b2c3d".to_string(),
+                dirty: false,
+            }
+        );
+
+        let dirty = parse_binary_version_output("wavical 1.1.1 (a1b2c3d-dirty)");
+        assert_eq!(
+            dirty,
+            BinaryVersionInfo {
+                version: "1.1.1".to_string(),
+                commit: "a1b2c3d".to_string(),
+                dirty: true,
+            }
+        );
+
+        let legacy = parse_binary_version_output("wavical-shell 0.1.0");
+        assert_eq!(
+            legacy,
+            BinaryVersionInfo {
+                version: "0.1.0".to_string(),
+                commit: "unknown".to_string(),
+                dirty: false,
+            }
+        );
+
+        let doctor_cli = Cli::try_parse_from(["wavical", "doctor", "--version-info"])
+            .expect("parse doctor --version-info");
+        match doctor_cli.command {
+            Commands::Doctor(args) => assert!(args.version_info),
+            _ => panic!("expected doctor command"),
         }
     }
 }

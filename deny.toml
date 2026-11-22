@@ -48,7 +48,8 @@ registries = []
 [bans]
 # Warn on duplicate crate versions in the dependency tree
 multiple-versions = "warn"
-wildcards = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
 highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"

@@ -3,7 +3,7 @@ name = "wavical-netpolicy"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = false
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }

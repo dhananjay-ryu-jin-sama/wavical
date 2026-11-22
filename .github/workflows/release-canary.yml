@@ -25,6 +25,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+
+      - name: Verify Cargo.toml and package.json versions match
+        run: node scripts/sync-version.js --check
+
+      - name: Run packaging script unit tests
+        run: node --test scripts/scripts.test.js
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
@@ -75,6 +86,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+
+      - name: Verify Cargo.toml and package.json versions match
+        run: node scripts/sync-version.js --check
+
+      - name: Run packaging script unit tests
+        run: node --test scripts/scripts.test.js
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
@@ -91,6 +113,7 @@ jobs:
           }
           $canaryVersion = "$baseVersion-canary.${{ github.run_number }}"
           $isDryRun = ("${{ inputs.dry_run }}" -eq "true") -or ("${{ vars.RELEASE_DRY_RUN }}" -eq "true") -or ("${{ github.event_name }}" -ne "push") -or ("${{ github.ref }}" -ne "refs/heads/main")
+          "base_version=$baseVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "version=$canaryVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "tag=v$canaryVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "dry_run=$($isDryRun.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -99,7 +122,40 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cargo build --release -p wavical-cli -p wavical-shell
+          cargo build --release --locked -p wavical-cli -p wavical-shell
+
+      - name: Pack npm tarball, verify tarball, and smoke-install into temp project
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $baseVersion = "${{ steps.meta.outputs.base_version }}"
+          $tgzName = "wavical-$baseVersion.tgz"
+          npm pack
+          if ($LASTEXITCODE -ne 0) { throw "npm pack failed" }
+          node scripts/verify-package.js --tarball $tgzName
+          if ($LASTEXITCODE -ne 0) { throw "verify-package.js failed on $tgzName" }
+
+          $smokeDir = Join-Path $env:RUNNER_TEMP "wavical-npm-smoke"
+          if (Test-Path $smokeDir) { Remove-Item -Recurse -Force $smokeDir }
+          New-Item -ItemType Directory -Force -Path $smokeDir | Out-Null
+          $tgzFull = (Resolve-Path $tgzName).Path
+          Push-Location $smokeDir
+          try {
+            npm init -y | Out-Null
+            npm install $tgzFull
+            if ($LASTEXITCODE -ne 0) { throw "npm install $tgzFull failed" }
+            npx wavical --version
+            if ($LASTEXITCODE -ne 0) { throw "npx wavical --version failed" }
+            npx wavical --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "npx wavical --help failed" }
+          } finally {
+            Pop-Location
+            Remove-Item -Recurse -Force $smokeDir -ErrorAction SilentlyContinue
+          }
+
+          $distDir = Join-Path $env:RUNNER_TEMP "wavical-dist"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          Copy-Item $tgzName (Join-Path $distDir $tgzName)
 
       - name: Package canary archive and SHA-256 checksums
         shell: pwsh

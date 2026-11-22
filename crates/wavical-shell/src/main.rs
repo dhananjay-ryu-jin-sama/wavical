@@ -10,7 +10,7 @@ use wavical_shell::{WindowConfig, get_asset_root, run_with_config};
 #[command(
     name = "wavical-shell",
     about = "Wavical Phase 0/1 Native Application Shell",
-    version
+    version = env!("WAVICAL_VERSION_DISPLAY")
 )]
 pub struct ShellCli {
     /// Unique application identifier

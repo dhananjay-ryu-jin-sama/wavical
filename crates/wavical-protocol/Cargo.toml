@@ -3,7 +3,7 @@ name = "wavical-protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = false
 
 [dependencies]
 thiserror = "2.0.21"

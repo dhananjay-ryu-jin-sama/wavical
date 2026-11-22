@@ -4904,7 +4904,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-ai"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "fs4",
  "getrandom 0.3.4",
@@ -4954,7 +4954,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-cli"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "clap",
  "cssparser",
@@ -4986,7 +4986,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-config"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "proptest",
  "serde",
@@ -5016,7 +5016,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-ipc"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "getrandom 0.3.4",
  "proptest",
@@ -5028,7 +5028,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-native"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "arboard",
  "global-hotkey",
@@ -5049,7 +5049,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-netpolicy"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "base64 0.23.1",
  "proptest",
@@ -5062,7 +5062,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-protocol"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "proptest",
  "tempfile",
@@ -5072,7 +5072,7 @@ dependencies = [
 
 [[package]]
 name = "wavical-shell"
-version = "0.1.0"
+version = "1.1.1"
 dependencies = [
  "clap",
  "ed25519-dalek",

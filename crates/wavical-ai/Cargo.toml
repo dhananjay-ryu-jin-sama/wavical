@@ -3,7 +3,7 @@ name = "wavical-ai"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = false
 
 [dependencies]
 fs4 = "1.1.0"

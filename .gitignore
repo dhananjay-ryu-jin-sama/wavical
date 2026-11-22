@@ -17,6 +17,7 @@ $RECYCLE.BIN/
 # Local binaries and tooling
 /agy.exe*
 *.exe
+bin/checksums.txt
 *.old
 *.dll
 *.pdb

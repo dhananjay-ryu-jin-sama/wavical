@@ -3,19 +3,19 @@ name = "wavical-shell"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = false
 
 [dependencies]
 tao = "0.37.1"
 thiserror = "2.0.21"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
-wavical-protocol = { version = "0.1.0", path = "../wavical-protocol" }
-wavical-ipc = { version = "0.1.0", path = "../wavical-ipc" }
-wavical-config = { version = "0.1.0", path = "../wavical-config" }
-wavical-native = { version = "0.1.0", path = "../wavical-native" }
-wavical-ai = { version = "0.1.0", path = "../wavical-ai" }
-wavical-netpolicy = { version = "0.1.0", path = "../wavical-netpolicy" }
+wavical-protocol = { path = "../wavical-protocol" }
+wavical-ipc = { path = "../wavical-ipc" }
+wavical-config = { path = "../wavical-config" }
+wavical-native = { path = "../wavical-native" }
+wavical-ai = { path = "../wavical-ai" }
+wavical-netpolicy = { path = "../wavical-netpolicy" }
 sha2 = "0.11.1"
 hex = "0.4.3"
 url = "2.5.8"
