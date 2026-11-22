@@ -3719,9 +3719,9 @@ mod tests {
             _ => panic!("expected dev subcommand"),
         }
 
-        let build_cli = Cli::try_parse_from(["wavical", "build"]).expect("parse build");
+        let build_cli = Cli::try_parse_from(["wavical", "build-ultra-safe"]).expect("parse build");
         match build_cli.command {
-            Commands::Build(args) => {
+            Commands::BuildUltraSafe(args) => {
                 assert_eq!(args.dir, PathBuf::from("."));
                 assert_eq!(args.outdir, PathBuf::from("dist"));
                 assert!(!args.release);
@@ -3731,7 +3731,7 @@ mod tests {
 
         let build_custom_cli = Cli::try_parse_from([
             "wavical",
-            "build",
+            "build-ultra-safe",
             "custom-app",
             "--outdir",
             "custom-dist",
@@ -3739,7 +3739,7 @@ mod tests {
         ])
         .expect("parse build custom");
         match build_custom_cli.command {
-            Commands::Build(args) => {
+            Commands::BuildUltraSafe(args) => {
                 assert_eq!(args.dir, PathBuf::from("custom-app"));
                 assert_eq!(args.outdir, PathBuf::from("custom-dist"));
                 assert!(args.release);

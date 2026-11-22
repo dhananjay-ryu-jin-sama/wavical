@@ -11,7 +11,7 @@ fn test_build_creates_dist_and_valid_manifest() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build");
@@ -79,7 +79,7 @@ export default {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build");
@@ -104,7 +104,7 @@ fn test_build_with_outdir_flag() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .arg("--outdir")
         .arg("custom-output")
@@ -136,7 +136,7 @@ fn test_build_overwrites_existing_directory() {
 
     // First build
     let out1 = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build 1");
@@ -158,7 +158,7 @@ fn test_build_overwrites_existing_directory() {
 
     // Second build in same target directory
     let out2 = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build 2");
@@ -197,7 +197,7 @@ fn test_build_removes_stale_files_on_rebuild() {
 
     // First build
     let out1 = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build 1");
@@ -209,7 +209,7 @@ fn test_build_removes_stale_files_on_rebuild() {
 
     // Second build
     let out2 = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build 2");
@@ -231,7 +231,7 @@ fn test_build_refuses_dangerous_outdir() {
 
     for dangerous in &[".", "src", "..", "src/nested"] {
         let out = Command::new(wavical_bin)
-            .arg("build")
+            .arg("build-ultra-safe")
             .arg(&target)
             .arg("--outdir")
             .arg(dangerous)
@@ -264,7 +264,7 @@ fn test_build_excludes_sensitive_and_metadata_files() {
     fs::write(src.join(".git/config"), "git-config").expect("write .git/config");
 
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build");
@@ -301,7 +301,7 @@ fn test_build_fails_when_src_missing() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build");
@@ -331,7 +331,7 @@ export default {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build");
@@ -353,7 +353,7 @@ fn test_build_warns_on_missing_index_html_and_no_javascript() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build");

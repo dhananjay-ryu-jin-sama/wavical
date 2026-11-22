@@ -99,7 +99,7 @@ fn test_build_backend_requires_lockfile() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&project_dir)
         .env("WAVICAL_RUNTIMES_DIR", &runtimes_dir)
         .output()
@@ -192,7 +192,7 @@ fn test_build_backend_ignores_install_scripts_and_excludes_env_and_test_folders(
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&project_dir)
         .env("WAVICAL_RUNTIMES_DIR", &runtimes_dir)
         .output()
@@ -285,7 +285,7 @@ fn test_build_backend_ignores_install_scripts_and_excludes_env_and_test_folders(
 
     // 5. Now test --allow-install-scripts runs the script with warning + manifest note
     let out_allow = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&project_dir)
         .arg("--allow-install-scripts")
         .env("WAVICAL_RUNTIMES_DIR", &runtimes_dir)
@@ -322,7 +322,7 @@ fn test_build_bundle_runtime_includes_verified_binary_and_license() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&project_dir)
         .arg("--bundle-runtime")
         .env("WAVICAL_RUNTIMES_DIR", &runtimes_dir)
@@ -384,7 +384,7 @@ fn test_build_fails_if_runtime_hash_is_wrong() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&project_dir)
         .arg("--bundle-runtime")
         .env("WAVICAL_RUNTIMES_DIR", &runtimes_dir)

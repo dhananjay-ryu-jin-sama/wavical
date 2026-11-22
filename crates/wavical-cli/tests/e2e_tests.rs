@@ -135,7 +135,7 @@ fn test_e2e_full_lifecycle_workflow() {
 
     // 3. wavical build
     let build_out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .current_dir(&project_dir)
         .output()
         .expect("run wavical build");
@@ -231,7 +231,7 @@ fn test_e2e_error_build_without_src() {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .output()
         .expect("execute build");
@@ -256,7 +256,7 @@ fn test_e2e_error_build_invalid_outdir() {
     };
 
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .arg("--outdir")
         .arg(invalid_path)
@@ -286,7 +286,7 @@ fn test_e2e_security_node_timeout_enforced() {
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let start = Instant::now();
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&target)
         .env("WAVICAL_NODE_TIMEOUT", "1")
         .output()

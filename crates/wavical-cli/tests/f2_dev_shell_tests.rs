@@ -103,7 +103,7 @@ export default {
 
     let wavical_bin = env!("CARGO_BIN_EXE_wavical");
     let out = Command::new(wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg(&proj)
         .output()
         .expect("run wavical build");

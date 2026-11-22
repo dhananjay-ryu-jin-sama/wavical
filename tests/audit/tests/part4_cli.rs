@@ -235,7 +235,7 @@ fn test_cli_node_execution_battery() {
     .unwrap();
     let wavical_bin = get_wavical_bin();
     let res_env = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .current_dir(&proj)
         .env("TEST_CUSTOM_APP_ID", "dynamic-env-app")
         .output()
@@ -251,7 +251,7 @@ fn test_cli_node_execution_battery() {
     )
     .unwrap();
     let res_loop = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .current_dir(&proj)
         .env("WAVICAL_NODE_TIMEOUT", "1")
         .output()
@@ -400,7 +400,7 @@ fn test_cli_build_manifest_and_determinism() {
 
     let wavical_bin = get_wavical_bin();
     let res = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .current_dir(&proj)
         .output()
         .expect("run wavical build");
@@ -448,7 +448,7 @@ fn test_cli_build_removes_stale_files_from_outdir() {
 
     // 1. First build
     let b1 = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .current_dir(&proj)
         .output()
         .unwrap();
@@ -460,7 +460,7 @@ fn test_cli_build_removes_stale_files_from_outdir() {
 
     // 3. Second build
     let b2 = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .current_dir(&proj)
         .output()
         .unwrap();
@@ -491,7 +491,7 @@ fn test_cli_build_refuses_dangerous_outdir_paths() {
 
     // Build into '.' must be refused
     let b_dot = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg("--outdir")
         .arg(".")
         .current_dir(&proj)
@@ -504,7 +504,7 @@ fn test_cli_build_refuses_dangerous_outdir_paths() {
 
     // Build into 'src' must be refused
     let b_src = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .arg("--outdir")
         .arg("src")
         .current_dir(&proj)
@@ -533,7 +533,7 @@ fn test_cli_build_excludes_sensitive_files() {
 
     let wavical_bin = get_wavical_bin();
     let res = Command::new(&wavical_bin)
-        .arg("build")
+        .arg("build-ultra-safe")
         .current_dir(&proj)
         .output()
         .unwrap();
