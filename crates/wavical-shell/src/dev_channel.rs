@@ -5,12 +5,14 @@
 
 use std::io::{BufRead, BufReader, Stdin, Write};
 use std::path::Path;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use wavical_netpolicy::diagnostics::DevDiagnosticEvent;
 
 /// Unique binary marker present only in `wavical-shell-dev` (`#[cfg(feature = "dev-shell")]`).
 /// Checked negatively against production `wavical-shell.exe` by package verification and audit tests.
@@ -85,9 +87,21 @@ impl DevCommand {
 pub struct DevCommandReply {
     pub id: u64,
     pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub elapsed_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub csp_summary: Option<String>,
+}
+
+/// Asynchronous diagnostic event envelope emitted on stdout by `wavical-shell-dev`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DevDiagnosticEnvelope {
+    pub event: String,
+    pub payload: DevDiagnosticEvent,
 }
 
 impl DevCommandReply {
@@ -98,6 +112,20 @@ impl DevCommandReply {
             ok: true,
             error: None,
             elapsed_ms,
+            shell_version: None,
+            csp_summary: None,
+        }
+    }
+
+    /// Construct a successful `auth` reply carrying shell version and CSP summary provenance.
+    pub fn ok_auth(id: u64, elapsed_ms: u64, shell_version: String, csp_summary: String) -> Self {
+        Self {
+            id,
+            ok: true,
+            error: None,
+            elapsed_ms,
+            shell_version: Some(shell_version),
+            csp_summary: Some(csp_summary),
         }
     }
 
@@ -108,6 +136,8 @@ impl DevCommandReply {
             ok: false,
             error: Some(error.into()),
             elapsed_ms,
+            shell_version: None,
+            csp_summary: None,
         }
     }
 }
@@ -287,13 +317,36 @@ pub fn validate_dev_startup_requirements(
     Ok(token.to_string())
 }
 
-/// Write a single JSON reply line to stdout and flush immediately.
-pub fn write_reply(reply: &DevCommandReply) -> std::io::Result<()> {
-    let json = serde_json::to_string(reply)
-        .map_err(|e| std::io::Error::other(format!("serialize reply: {e}")))?;
+static STDOUT_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static DEV_STDOUT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn write_stdout_json_line<T: Serialize>(value: &T) -> std::io::Result<()> {
+    let json = serde_json::to_string(value)
+        .map_err(|e| std::io::Error::other(format!("serialize stdout json: {e}")))?;
+    let _guard = STDOUT_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{json}")?;
     stdout.flush()
+}
+
+/// Write a single JSON reply line to stdout and flush immediately.
+pub fn write_reply(reply: &DevCommandReply) -> std::io::Result<()> {
+    write_stdout_json_line(reply)
+}
+
+/// Emit a dev diagnostic event to the parent CLI over stdout when an authenticated
+/// dev session is active.
+pub fn emit_dev_diagnostic(event: &DevDiagnosticEvent) {
+    if !DEV_STDOUT_ACTIVE.load(Ordering::Acquire) {
+        return;
+    }
+    let envelope = DevDiagnosticEnvelope {
+        event: "diagnostic".to_string(),
+        payload: event.clone(),
+    };
+    let _ = write_stdout_json_line(&envelope);
 }
 
 /// Runtime command dispatched from the stdin channel to the tao UI event loop.
@@ -328,9 +381,20 @@ pub struct DevSessionHandle {
 impl DevSessionHandle {
     /// Attach the tao event loop proxy so the stdin thread can write the `auth` reply
     /// and begin dispatching live dev commands.
-    pub fn activate(self, proxy: tao::event_loop::EventLoopProxy<crate::UserEvent>) {
+    pub fn activate(
+        self,
+        proxy: tao::event_loop::EventLoopProxy<crate::UserEvent>,
+        shell_version: String,
+        csp_summary: String,
+    ) {
         let elapsed_ms = self.auth_started.elapsed().as_millis() as u64;
-        let _ = write_reply(&DevCommandReply::ok(self.auth_id, elapsed_ms));
+        DEV_STDOUT_ACTIVE.store(true, Ordering::Release);
+        let _ = write_reply(&DevCommandReply::ok_auth(
+            self.auth_id,
+            elapsed_ms,
+            shell_version,
+            csp_summary,
+        ));
         let _ = self.proxy_tx.send(crate::UserEventProxyHandle(proxy));
     }
 }

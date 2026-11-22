@@ -19,6 +19,12 @@ use wavical_netpolicy::decisions::{
     BridgeDecision, PolicyContext, PolicyDecision, decide_bridge_allowed, decide_navigation,
     decide_open_external, decide_remote_ui, validate_dev_url,
 };
+use wavical_netpolicy::diagnostics::{DevDiagnosticEvent, normalize_csp_directive};
+#[cfg(feature = "dev-shell")]
+use wavical_netpolicy::diagnostics::{
+    MAX_JS_ERROR_CHARS, map_directive_to_resource_type_and_allowlist_key, sanitize_location,
+    sanitize_single_line, truncate_chars,
+};
 use wavical_netpolicy::html::CspHash;
 use wavical_netpolicy::limits::{
     MAX_RECORDED_EVENTS_PER_SESSION, OPEN_EXTERNAL_RATE_LIMIT_COUNT,
@@ -703,15 +709,23 @@ pub fn handle_navigation_with_policy(
             if let Some(ref rec) = policy.recorder {
                 rec.record_raw("navigate", url_str);
             }
+            let safe_origin = safe_log_origin(url_str);
             tracing::warn!(
                 security_event = "navigation_blocked",
                 mode = mode_label(policy.mode),
                 block_type = "navigate",
-                origin = %safe_log_origin(url_str),
+                origin = %safe_origin,
                 window_id = %window_id,
                 rule = rule,
                 "Security check failed: navigation blocked"
             );
+            #[cfg(feature = "dev-shell")]
+            if policy.is_dev_command {
+                crate::dev_channel::emit_dev_diagnostic(&DevDiagnosticEvent::BlockedNavigation {
+                    origin: safe_origin,
+                    rule: rule.to_string(),
+                });
+            }
             false
         }
     }
@@ -781,14 +795,281 @@ pub fn handle_new_window_with_policy(
     window_id: &str,
     rate_limiter: &Arc<OpenExternalRateLimiter>,
 ) -> NewWindowResponse {
-    let _ = open_external_validated(
+    let res = open_external_validated(
         policy,
         url_str,
         window_id,
         rate_limiter,
         launch_system_browser_windows,
     );
+    #[cfg(feature = "dev-shell")]
+    if policy.is_dev_command {
+        match res {
+            Err(OpenExternalError::PolicyDenied(rule)) => {
+                crate::dev_channel::emit_dev_diagnostic(&DevDiagnosticEvent::BlockedNewWindow {
+                    origin: safe_log_origin(url_str),
+                    rule: rule.to_string(),
+                });
+            }
+            Err(OpenExternalError::RateLimited) => {
+                crate::dev_channel::emit_dev_diagnostic(&DevDiagnosticEvent::BlockedNewWindow {
+                    origin: safe_log_origin(url_str),
+                    rule: "rate_limit_exceeded".to_string(),
+                });
+            }
+            Ok(()) | Err(OpenExternalError::LaunchFailed) => {}
+        }
+    }
+    let _ = res;
     NewWindowResponse::Deny
+}
+
+/// Internal IPC method used by the dev shell init script to forward diagnostics.
+pub const DEV_REPORT_IPC_METHOD: &str = "dev.report";
+
+/// Internal IPC method used by built apps to log CSP violations via tracing (origin and type only).
+pub const CSP_TELEMETRY_IPC_METHOD: &str = "telemetry.cspBlock";
+
+/// Strict payload for built-app CSP violation telemetry (`telemetry.cspBlock`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CspTelemetryParams {
+    pub directive: String,
+    pub blocked_uri: String,
+    pub top_frame: bool,
+}
+
+/// Strict payload for dev-shell diagnostic reports (`dev.report`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DevReportParams {
+    pub kind: String,
+    #[serde(default)]
+    pub directive: Option<String>,
+    #[serde(default)]
+    pub blocked_uri: Option<String>,
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    pub top_frame: bool,
+}
+
+/// Outcome of inspecting a candidate diagnostic/telemetry bridge report message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BridgeReportOutcome {
+    /// Report was validated and processed (with optional dev diagnostic event when dev forwarding is active).
+    Handled(Option<DevDiagnosticEvent>),
+    /// Report failed validation or came from a non-top frame and was dropped.
+    Dropped,
+    /// Message should be handled by standard `process_ipc_message` (e.g. `dev.report` in production shell).
+    ForwardToIpc,
+}
+
+/// Fast pre-check before routing an IPC body through [`process_bridge_report_message`].
+#[must_use]
+pub fn is_bridge_report_candidate(body: &str) -> bool {
+    body.contains("\"telemetry.cspBlock\"") || body.contains("\"dev.report\"")
+}
+
+/// Validate and process a diagnostic/telemetry report sent over `window.ipc.postMessage`.
+///
+/// Enforces the exact same origin check, top-frame check, and `wavical_ipc::parse_request`
+/// validation (1 MB size cap, null-byte check, depth <= 32, `deny_unknown_fields`) as any IPC call.
+pub fn process_bridge_report_message(
+    uri: &Uri,
+    is_top_frame: bool,
+    body: &str,
+    config: &crate::WindowConfig,
+) -> Result<BridgeReportOutcome, crate::IpcOriginError> {
+    let is_wavical_scheme = uri
+        .scheme_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case("wavical"));
+    let allowed = if !is_top_frame {
+        false
+    } else if is_wavical_scheme {
+        crate::is_origin_allowed(uri, &config.allowed_origins)
+    } else {
+        authorize_bridge_request(&config.network_policy, uri, is_top_frame, &config.window_id)
+            .is_ok()
+            || crate::is_origin_allowed(uri, &config.allowed_origins)
+    };
+
+    if !allowed {
+        let origin_str = crate::extract_origin(uri).unwrap_or_else(|| uri.to_string());
+        tracing::warn!(
+            security_event = "origin_rejected",
+            window_id = %config.window_id,
+            origin = %origin_str,
+            reason = "Bridge report caller origin or frame is not authorized",
+            "Security check failed: bridge report origin rejected"
+        );
+        return Err(crate::IpcOriginError::DisallowedOrigin(origin_str));
+    }
+
+    let request = match wavical_ipc::parse_request(body) {
+        Ok(req) => req,
+        Err(wavical_ipc::IpcError::MessageTooLarge { size, max }) => {
+            tracing::warn!(
+                security_event = "oversize_message",
+                window_id = %config.window_id,
+                size = size,
+                max_size = max,
+                reason = "Raw bridge report exceeds maximum size limit",
+                "Security check failed: oversize IPC bridge report rejected"
+            );
+            return Ok(BridgeReportOutcome::Dropped);
+        }
+        Err(other_err) => {
+            tracing::warn!(
+                security_event = "malformed_message",
+                window_id = %config.window_id,
+                payload = %crate::truncate_payload(body, 64),
+                reason = %other_err,
+                "Security check failed: malformed IPC bridge report rejected"
+            );
+            return Ok(BridgeReportOutcome::Dropped);
+        }
+    };
+
+    if request.method == CSP_TELEMETRY_IPC_METHOD {
+        let Ok(params) = serde_json::from_value::<CspTelemetryParams>(request.params) else {
+            return Ok(BridgeReportOutcome::Dropped);
+        };
+        if !params.top_frame {
+            return Ok(BridgeReportOutcome::Dropped);
+        }
+        let norm_dir = normalize_csp_directive(&params.directive);
+        let block_type = map_csp_directive_to_type(&norm_dir);
+        let safe_origin = sanitize_recorded_origin(&params.blocked_uri);
+
+        tracing::warn!(
+            security_event = "csp_blocked",
+            mode = mode_label(config.network_policy.mode),
+            block_type = block_type,
+            origin = %safe_origin,
+            directive = %norm_dir,
+            window_id = %config.window_id,
+            "Security check failed: resource blocked by CSP"
+        );
+
+        if config.network_policy.is_dev_command
+            && let Some(ref rec) = config.network_policy.recorder
+        {
+            rec.record_raw(block_type, &params.blocked_uri);
+        }
+        // Built apps never forward console/terminal diagnostics.
+        return Ok(BridgeReportOutcome::Handled(None));
+    }
+
+    if request.method == DEV_REPORT_IPC_METHOD {
+        #[cfg(not(feature = "dev-shell"))]
+        {
+            return Ok(BridgeReportOutcome::ForwardToIpc);
+        }
+
+        #[cfg(feature = "dev-shell")]
+        {
+            // Forwarding is strictly disabled in non-dev windows.
+            if !config.network_policy.is_dev_command {
+                return Ok(BridgeReportOutcome::ForwardToIpc);
+            }
+
+            let Ok(params) = serde_json::from_value::<DevReportParams>(request.params) else {
+                return Ok(BridgeReportOutcome::Dropped);
+            };
+            if !params.top_frame {
+                return Ok(BridgeReportOutcome::Dropped);
+            }
+
+            match params.kind.as_str() {
+                "csp" => {
+                    let Some(directive) = params.directive else {
+                        return Ok(BridgeReportOutcome::Dropped);
+                    };
+                    let Some(blocked_uri) = params.blocked_uri else {
+                        return Ok(BridgeReportOutcome::Dropped);
+                    };
+                    let norm_dir = normalize_csp_directive(&directive);
+                    let (res_type, _) = map_directive_to_resource_type_and_allowlist_key(&norm_dir);
+                    let rec_type = map_csp_directive_to_type(&norm_dir);
+                    let safe_origin = sanitize_recorded_origin(&blocked_uri);
+
+                    if let Some(ref rec) = config.network_policy.recorder {
+                        rec.record_raw(rec_type, &blocked_uri);
+                    }
+
+                    tracing::warn!(
+                        security_event = "csp_blocked",
+                        mode = mode_label(config.network_policy.mode),
+                        block_type = rec_type,
+                        origin = %safe_origin,
+                        directive = %norm_dir,
+                        window_id = %config.window_id,
+                        "Security check failed: resource blocked by CSP"
+                    );
+
+                    return Ok(BridgeReportOutcome::Handled(Some(
+                        DevDiagnosticEvent::CspViolation {
+                            directive: norm_dir,
+                            origin: safe_origin,
+                            resource_type: res_type.to_string(),
+                        },
+                    )));
+                }
+                "jsError" => {
+                    let msg = params.message.unwrap_or_default();
+                    let loc = params.location.unwrap_or_default();
+                    return Ok(BridgeReportOutcome::Handled(Some(
+                        DevDiagnosticEvent::JsError {
+                            message: truncate_chars(
+                                &sanitize_single_line(&msg),
+                                MAX_JS_ERROR_CHARS,
+                            ),
+                            location: sanitize_location(&loc),
+                        },
+                    )));
+                }
+                "consoleError" => {
+                    let msg = params.message.unwrap_or_default();
+                    let loc = params.location.unwrap_or_default();
+                    return Ok(BridgeReportOutcome::Handled(Some(
+                        DevDiagnosticEvent::ConsoleError {
+                            message: truncate_chars(
+                                &sanitize_single_line(&msg),
+                                MAX_JS_ERROR_CHARS,
+                            ),
+                            location: sanitize_location(&loc),
+                        },
+                    )));
+                }
+                "resourceError" => {
+                    let Some(blocked_uri) = params.blocked_uri else {
+                        return Ok(BridgeReportOutcome::Dropped);
+                    };
+                    let safe_origin = sanitize_recorded_origin(&blocked_uri);
+                    let res_type =
+                        sanitize_single_line(params.resource_type.as_deref().unwrap_or("resource"));
+                    let final_type = if res_type.is_empty() {
+                        "resource".to_string()
+                    } else {
+                        res_type
+                    };
+                    return Ok(BridgeReportOutcome::Handled(Some(
+                        DevDiagnosticEvent::ResourceLoadFailed {
+                            resource_type: final_type,
+                            origin: safe_origin,
+                        },
+                    )));
+                }
+                _ => return Ok(BridgeReportOutcome::Dropped),
+            }
+        }
+    }
+
+    Ok(BridgeReportOutcome::ForwardToIpc)
 }
 
 /// Builds the initialization script with an origin and top-frame guard so `window.wavical`
@@ -822,28 +1103,198 @@ pub fn build_init_script(policy: &ShellNetworkPolicy) -> String {
         }
     }
     let allowed_json = serde_json::to_string(&allowed).unwrap_or_else(|_| "[]".to_string());
-    let record_hook = if policy.is_dev_command && policy.recorder.is_some() {
+    let report_hook = build_report_hook_js(policy.is_dev_command);
+    format!(
+        "(() => {{ if (window.top !== window.self) return; const __allowed = {allowed_json}; if (!__allowed.includes(window.location.origin)) return;\n{}\n{report_hook}\n}})();",
+        crate::WAVICAL_INIT_SCRIPT
+    )
+}
+
+#[cfg(feature = "dev-shell")]
+fn build_report_hook_js(is_dev_command: bool) -> &'static str {
+    if is_dev_command {
         r#"
+const __safeOrigin = (raw) => {
+  const s = String(raw || '');
+  if (s === 'inline' || s === 'eval' || s === 'wasm-eval') return s;
+  if (s.startsWith('data:')) return 'data:';
+  if (s.startsWith('blob:')) return 'blob:';
+  try {
+    const u = new URL(s, window.location.href);
+    return (u.origin && u.origin !== 'null') ? u.origin : (u.protocol || '');
+  } catch (_) {
+    return '';
+  }
+};
+const __stripUrlQuery = (raw) => {
+  const s = String(raw || '');
+  if (!s) return '';
+  try {
+    const u = new URL(s, window.location.href);
+    return u.origin + u.pathname;
+  } catch (_) {
+    return s.split('?')[0].split('#')[0];
+  }
+};
+const __sendDevReport = (params) => {
+  try {
+    if (window.top !== window.self) return;
+    if (!window.ipc || typeof window.ipc.postMessage !== 'function') return;
+    window.ipc.postMessage(JSON.stringify({
+      id: 0,
+      method: 'dev.report',
+      params: Object.assign({}, params, { topFrame: true })
+    }));
+  } catch (_) {}
+};
+const __recentCsp = new Map();
+const __directiveToType = (dir) => {
+  const d = String(dir || '').toLowerCase();
+  if (d.startsWith('script-src')) return 'script';
+  if (d.startsWith('style-src')) return 'style';
+  if (d.startsWith('font-src')) return 'font';
+  if (d.startsWith('img-src')) return 'image';
+  if (d.startsWith('media-src')) return 'media';
+  if (d.startsWith('connect-src')) return 'connect';
+  if (d.startsWith('frame-src')) return 'frame';
+  return 'resource';
+};
+document.addEventListener('securitypolicyviolation', (e) => {
+  const directive = String(e.effectiveDirective || e.violatedDirective || '');
+  const origin = __safeOrigin(e.blockedURI || '');
+  const rtype = __directiveToType(directive);
+  __recentCsp.set(rtype + '|' + origin, Date.now());
+  __sendDevReport({
+    kind: 'csp',
+    directive: directive,
+    blockedUri: origin,
+    resourceType: rtype
+  });
+});
+window.addEventListener('error', (e) => {
+  const tgt = e && e.target;
+  if (tgt && tgt !== window && tgt.tagName) {
+    const tag = String(tgt.tagName).toLowerCase();
+    let rtype = 'resource';
+    if (tag === 'script') rtype = 'script';
+    else if (tag === 'link') rtype = (String(tgt.rel || '').toLowerCase().includes('stylesheet')) ? 'style' : 'link';
+    else if (tag === 'img') rtype = 'image';
+    else if (tag === 'audio' || tag === 'video' || tag === 'source') rtype = 'media';
+    else if (tag === 'iframe') rtype = 'frame';
+    const rawUrl = tgt.src || tgt.href || '';
+    if (!rawUrl) return;
+    const origin = __safeOrigin(rawUrl);
+    const key = rtype + '|' + origin;
+    const ts = __recentCsp.get(key);
+    if (ts && (Date.now() - ts) < 1000) return;
+    __sendDevReport({
+      kind: 'resourceError',
+      resourceType: rtype,
+      blockedUri: origin
+    });
+    return;
+  }
+  const msg = String((e && (e.message || (e.error && e.error.message))) || 'Uncaught error').slice(0, 500);
+  const file = __stripUrlQuery((e && e.filename) || '');
+  const line = (e && typeof e.lineno === 'number' && e.lineno > 0) ? (':' + e.lineno) : '';
+  __sendDevReport({
+    kind: 'jsError',
+    message: msg,
+    location: (file + line).slice(0, 200)
+  });
+}, true);
+window.addEventListener('unhandledrejection', (e) => {
+  const reason = e && e.reason;
+  const msg = String((reason && reason.message) ? reason.message : (reason || 'Unhandled promise rejection')).slice(0, 500);
+  let loc = '';
+  if (reason && typeof reason.stack === 'string') {
+    const m = reason.stack.match(/(?:https?|wavical):\/\/[^\s)]+:\d+/);
+    if (m) {
+      const idx = m[0].lastIndexOf(':');
+      loc = __stripUrlQuery(m[0].slice(0, idx)) + m[0].slice(idx);
+    }
+  }
+  __sendDevReport({
+    kind: 'jsError',
+    message: ('Unhandled rejection: ' + msg).slice(0, 500),
+    location: loc.slice(0, 200)
+  });
+});
+if (typeof console !== 'undefined' && typeof console.error === 'function') {
+  const __origConsoleError = console.error.bind(console);
+  console.error = function(...args) {
+    try {
+      const msg = args.map((a) => {
+        if (a instanceof Error) return a.message || String(a);
+        if (typeof a === 'string') return a;
+        try { return JSON.stringify(a); } catch (_) { return String(a); }
+      }).join(' ').slice(0, 500);
+      let loc = '';
+      try {
+        const stack = (new Error()).stack || '';
+        const lines = stack.split('\n');
+        for (let i = 1; i < lines.length; i++) {
+          const l = lines[i];
+          if (l.includes('__sendDevReport') || l.includes('console.error')) continue;
+          const m = l.match(/((?:https?|wavical):\/\/[^\s()]+):(\d+)(?::\d+)?/);
+          if (m) {
+            loc = __stripUrlQuery(m[1]) + ':' + m[2];
+            break;
+          }
+        }
+      } catch (_) {}
+      __sendDevReport({
+        kind: 'consoleError',
+        message: msg,
+        location: loc.slice(0, 200)
+      });
+    } catch (_) {}
+    return __origConsoleError(...args);
+  };
+}
+"#
+    } else {
+        built_app_csp_telemetry_js()
+    }
+}
+
+#[cfg(not(feature = "dev-shell"))]
+fn build_report_hook_js(_is_dev_command: bool) -> &'static str {
+    built_app_csp_telemetry_js()
+}
+
+fn built_app_csp_telemetry_js() -> &'static str {
+    r#"
 document.addEventListener('securitypolicyviolation', (e) => {
   try {
-    if (window.ipc && typeof window.ipc.postMessage === 'function') {
-      window.ipc.postMessage(JSON.stringify({
-        __wavical_record: {
-          directive: String(e.effectiveDirective || ''),
-          blockedUri: String(e.blockedURI || '')
-        }
-      }));
+    if (window.top !== window.self) return;
+    if (!window.ipc || typeof window.ipc.postMessage !== 'function') return;
+    const raw = String(e.blockedURI || '');
+    let safeOrigin = raw;
+    if (raw === 'inline' || raw === 'eval' || raw === 'wasm-eval') {
+      safeOrigin = raw;
+    } else if (raw.startsWith('data:')) {
+      safeOrigin = 'data:';
+    } else if (raw.startsWith('blob:')) {
+      safeOrigin = 'blob:';
+    } else {
+      try {
+        const u = new URL(raw, window.location.href);
+        safeOrigin = (u.origin && u.origin !== 'null') ? u.origin : (u.protocol || '');
+      } catch (_) {}
     }
+    window.ipc.postMessage(JSON.stringify({
+      id: 0,
+      method: 'telemetry.cspBlock',
+      params: {
+        directive: String(e.effectiveDirective || e.violatedDirective || ''),
+        blockedUri: safeOrigin,
+        topFrame: true
+      }
+    }));
   } catch (_) {}
 });
 "#
-    } else {
-        ""
-    };
-    format!(
-        "(() => {{ if (window.top !== window.self) return; const __allowed = {allowed_json}; if (!__allowed.includes(window.location.origin)) return;\n{}\n{record_hook}\n}})();",
-        crate::WAVICAL_INIT_SCRIPT
-    )
 }
 
 /// Friendly offline error page with a retry button (Plan 1.6, WP5 Task 4).

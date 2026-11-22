@@ -92,9 +92,11 @@ pub struct DevShellCli {
 }
 
 fn main() {
-    // Route all tracing logs to stderr so stdout remains clean for JSON command replies.
+    // Route tracing errors to stderr so stdout remains clean for JSON replies/diagnostics
+    // and dev terminal output is not duplicated with raw INFO/WARN tracing lines.
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        .with_max_level(tracing::Level::ERROR)
         .init();
 
     // Neutralize dangerous debug env vars before reading stdin handshake so a relaunch

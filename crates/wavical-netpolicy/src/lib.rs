@@ -10,6 +10,7 @@
 pub mod allowlist;
 pub mod csp;
 pub mod decisions;
+pub mod diagnostics;
 pub mod html;
 pub mod limits;
 pub mod origin;

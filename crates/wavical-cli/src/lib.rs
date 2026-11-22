@@ -100,6 +100,10 @@ pub struct DoctorArgs {
     /// Print CLI and shell version and commit provenance and whether they match
     #[arg(long)]
     pub version_info: bool,
+
+    /// Inspect a built app directory (or wavical-manifest.json) and print its mode, CSP, and shell version
+    #[arg(long, value_name = "PATH")]
+    pub app: Option<PathBuf>,
 }
 
 /// Arguments for the `signer` subcommand.
@@ -1280,6 +1284,9 @@ pub const DEV_SESSION_TOKEN_ENV: &str = "WAVICAL_DEV_SESSION_TOKEN";
 /// Timeout waiting for `wavical-shell-dev` to acknowledge a dev command.
 pub const DEV_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Timeout waiting for `wavical-shell-dev` to initialize WebView2 and acknowledge initial `auth`.
+pub const DEV_AUTH_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Reply frame sent by `wavical-shell-dev` over stdout as line-delimited JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1289,6 +1296,18 @@ pub struct DevShellReply {
     #[serde(default)]
     pub error: Option<String>,
     pub elapsed_ms: u64,
+    #[serde(default)]
+    pub shell_version: Option<String>,
+    #[serde(default)]
+    pub csp_summary: Option<String>,
+}
+
+/// Asynchronous diagnostic envelope sent by `wavical-shell-dev` over stdout.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DevDiagnosticEnvelope {
+    pub event: String,
+    pub payload: wavical_netpolicy::diagnostics::DevDiagnosticEvent,
 }
 
 /// Locate the `wavical-shell-dev` executable next to `wavical` (or via `WAVICAL_DEV_SHELL_BIN`).
@@ -1363,7 +1382,20 @@ pub fn generate_dev_session_token() -> Result<String, CliError> {
 pub fn spawn_dev_reply_reader(
     stdout: ChildStdout,
 ) -> mpsc::Receiver<Result<DevShellReply, String>> {
-    let (tx, rx) = mpsc::channel();
+    let (reply_rx, _diag_rx) = spawn_dev_stream_reader(stdout);
+    reply_rx
+}
+
+/// Spawn a background reader demultiplexing [`DevShellReply`] frames and asynchronous
+/// [`wavical_netpolicy::diagnostics::DevDiagnosticEvent`] frames from `wavical-shell-dev` stdout.
+pub fn spawn_dev_stream_reader(
+    stdout: ChildStdout,
+) -> (
+    mpsc::Receiver<Result<DevShellReply, String>>,
+    mpsc::Receiver<wavical_netpolicy::diagnostics::DevDiagnosticEvent>,
+) {
+    let (reply_tx, reply_rx) = mpsc::channel();
+    let (diag_tx, diag_rx) = mpsc::channel();
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
@@ -1373,20 +1405,46 @@ pub fn spawn_dev_reply_reader(
                     if trimmed.is_empty() {
                         continue;
                     }
+                    if let Ok(env) = serde_json::from_str::<DevDiagnosticEnvelope>(trimmed)
+                        && env.event == "diagnostic"
+                    {
+                        let _ = diag_tx.send(env.payload);
+                        continue;
+                    }
                     let parsed = serde_json::from_str::<DevShellReply>(trimmed)
                         .map_err(|e| format!("invalid reply from dev shell: {e}"));
-                    if tx.send(parsed).is_err() {
+                    if reply_tx.send(parsed).is_err() {
                         break;
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(Err(format!("failed reading dev shell stdout: {e}")));
+                    let _ = reply_tx.send(Err(format!("failed reading dev shell stdout: {e}")));
                     break;
                 }
             }
         }
     });
-    rx
+    (reply_rx, diag_rx)
+}
+
+/// Format the one-line startup summary printed by every dev command.
+#[must_use]
+pub fn format_dev_startup_line(
+    mode: &str,
+    csp_summary: &str,
+    allowlist_file: Option<&str>,
+    dev_url: Option<&str>,
+    shell_version: &str,
+) -> String {
+    let mut parts = vec![format!("mode={mode}"), format!("csp={csp_summary}")];
+    if let Some(al) = allowlist_file {
+        parts.push(format!("allowlist={al}"));
+    }
+    if let Some(du) = dev_url {
+        parts.push(format!("dev.url={du}"));
+    }
+    parts.push(format!("shell={shell_version}"));
+    format!("dev: {}", parts.join(" | "))
 }
 
 /// Send a JSON dev command line to the shell and block until the matching `id` reply
@@ -1641,7 +1699,7 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         .stdout
         .take()
         .ok_or_else(|| CliError::ShellError("dev shell stdout pipe unavailable".to_string()))?;
-    let reply_rx = spawn_dev_reply_reader(child_stdout);
+    let (reply_rx, diag_rx) = spawn_dev_stream_reader(child_stdout);
 
     // Authenticate command channel before advertising dev server ready
     let auth_payload = serde_json::json!({
@@ -1649,19 +1707,69 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         "id": 0,
         "token": session_token,
     });
-    if let Err(err) = send_dev_command_and_wait(
+    let auth_reply = match send_dev_command_and_wait(
         &mut child_stdin,
         &reply_rx,
         0,
         &auth_payload,
-        DEV_COMMAND_TIMEOUT,
+        DEV_AUTH_TIMEOUT,
     ) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(CliError::ShellError(format!(
-            "dev shell session authentication failed: {err}"
-        )));
-    }
+        Ok(reply) => reply,
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CliError::ShellError(format!(
+                "dev shell session authentication failed: {err}"
+            )));
+        }
+    };
+
+    let parsed_mode = match mode {
+        "open" => wavical_netpolicy::NetworkMode::Open,
+        "safe" => wavical_netpolicy::NetworkMode::Safe,
+        _ => wavical_netpolicy::NetworkMode::UltraSafe,
+    };
+    let allowlist_path = project_root.join("wavical.allowlist.json");
+    let allowlist_opt = if allowlist_path.is_file() {
+        std::fs::read(&allowlist_path)
+            .ok()
+            .and_then(|bytes| wavical_netpolicy::allowlist::Allowlist::parse_bytes(&bytes).ok())
+    } else {
+        None
+    };
+    let dev_origin_opt = config
+        .dev_url()
+        .and_then(|u| wavical_netpolicy::decisions::validate_dev_url(u).ok());
+    let fallback_csp = wavical_netpolicy::csp::generate_csp(
+        parsed_mode,
+        allowlist_opt.as_ref(),
+        &[],
+        dev_origin_opt.as_ref(),
+    )
+    .unwrap_or_else(|_| wavical_netpolicy::csp::ULTRA_SAFE_CSP.to_string());
+    let csp_summary = auth_reply
+        .csp_summary
+        .unwrap_or_else(|| wavical_netpolicy::diagnostics::summarize_csp(&fallback_csp));
+    let allowlist_display = if mode == "safe" {
+        if allowlist_path.is_file() {
+            Some("wavical.allowlist.json")
+        } else {
+            Some("none (wavical.allowlist.json missing)")
+        }
+    } else if mode == "open" && allowlist_path.is_file() {
+        Some("wavical.allowlist.json (localExceptions)")
+    } else {
+        None
+    };
+    let shell_version = auth_reply.shell_version.as_deref().unwrap_or("unknown");
+    let startup_line = format_dev_startup_line(
+        mode,
+        &csp_summary,
+        allowlist_display,
+        config.dev_url(),
+        shell_version,
+    );
+    println!("{startup_line}");
 
     let pid = child.id();
     println!("Dev server running (PID: {pid}). Press Ctrl+C to stop.");
@@ -1702,17 +1810,59 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
     let mut last_asset_reload = Instant::now();
     let mut last_config_reload = Instant::now();
     let mut last_backend_restart = Instant::now();
+    let mut last_diag_flush = Instant::now();
+    let mut forwarder = wavical_netpolicy::diagnostics::DevDiagnosticAggregator::new(parsed_mode);
     let mut next_cmd_id: u64 = 1;
 
+    let drain_diagnostics =
+        |rx: &mpsc::Receiver<wavical_netpolicy::diagnostics::DevDiagnosticEvent>,
+         agg: &mut wavical_netpolicy::diagnostics::DevDiagnosticAggregator,
+         force_flush: bool| {
+            let now = Instant::now();
+            let mut printed = false;
+            while let Ok(diag) = rx.try_recv() {
+                if let Some(line) = agg.push(diag, now) {
+                    eprintln!("{line}");
+                    printed = true;
+                }
+            }
+            if force_flush {
+                for line in agg.flush(now, true) {
+                    eprintln!("{line}");
+                    printed = true;
+                }
+            }
+            if printed {
+                let _ = std::io::stderr().flush();
+            }
+        };
+
     while running.load(Ordering::SeqCst) {
+        drain_diagnostics(&diag_rx, &mut forwarder, false);
+        if last_diag_flush.elapsed()
+            >= Duration::from_millis(wavical_netpolicy::diagnostics::DEDUP_FLUSH_INTERVAL_MS)
+        {
+            let now = Instant::now();
+            let flushed = forwarder.flush(now, false);
+            if !flushed.is_empty() {
+                for line in flushed {
+                    eprintln!("{line}");
+                }
+                let _ = std::io::stderr().flush();
+            }
+            last_diag_flush = now;
+        }
+
         // Check if child shell has terminated
         match child.try_wait() {
             Ok(Some(status)) => {
+                drain_diagnostics(&diag_rx, &mut forwarder, true);
                 tracing::info!("Shell process exited with status: {status}");
                 return Ok(());
             }
             Ok(None) => {}
             Err(e) => {
+                drain_diagnostics(&diag_rx, &mut forwarder, true);
                 return Err(CliError::ShellError(e.to_string()));
             }
         }
@@ -1875,6 +2025,7 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
 
     // Clean child shutdown
     terminate_child(&mut child, &mut child_stdin, &session_token, next_cmd_id);
+    drain_diagnostics(&diag_rx, &mut forwarder, true);
     Ok(())
 }
 
@@ -2962,8 +3113,249 @@ pub fn format_doctor_version_report(report: &DoctorVersionReport) -> String {
     )
 }
 
-/// Execute `wavical doctor` (including `--version-info`).
-pub fn run_doctor(_args: &DoctorArgs) -> Result<(), CliError> {
+/// Inspection report produced by `wavical doctor --app <path>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoctorAppReport {
+    pub manifest_path: PathBuf,
+    pub app_id: String,
+    pub app_version: String,
+    pub declared_mode: Option<String>,
+    pub effective_mode: String,
+    pub fallback_reason: Option<String>,
+    pub csp: String,
+    pub shell_path: Option<PathBuf>,
+    pub shell_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct DoctorManifestView {
+    #[serde(default)]
+    app_id: String,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    allowlist_sha256: Option<String>,
+    #[serde(default)]
+    inline_script_hashes: BTreeMap<String, Vec<String>>,
+}
+
+fn resolve_manifest_path(app_path: &Path) -> Result<PathBuf, CliError> {
+    if app_path.is_file() {
+        return Ok(app_path.to_path_buf());
+    }
+    let direct = app_path.join("wavical-manifest.json");
+    if direct.is_file() {
+        return Ok(direct);
+    }
+    let dist = app_path.join("dist").join("wavical-manifest.json");
+    if dist.is_file() {
+        return Ok(dist);
+    }
+    Err(CliError::ShellError(format!(
+        "wavical-manifest.json not found in '{}'",
+        app_path.display()
+    )))
+}
+
+fn query_shell_version_string(shell_path: &Path) -> Option<String> {
+    let out = Command::new(shell_path).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let parsed = parse_binary_version_output(&String::from_utf8_lossy(&out.stdout));
+    let dirty = if parsed.dirty { "-dirty" } else { "" };
+    if parsed.version.is_empty() {
+        None
+    } else {
+        Some(format!("{} ({}{})", parsed.version, parsed.commit, dirty))
+    }
+}
+
+/// Inspect a built app directory (or `wavical-manifest.json`) for `wavical doctor --app <path>`.
+pub fn inspect_built_app(app_path: &Path) -> Result<DoctorAppReport, CliError> {
+    let manifest_path = resolve_manifest_path(app_path)?;
+    let raw = std::fs::read(&manifest_path).map_err(|e| CliError::ShellError(e.to_string()))?;
+    let manifest: DoctorManifestView = serde_json::from_slice(&raw).map_err(|e| {
+        CliError::ShellError(format!(
+            "invalid wavical-manifest.json at '{}': {e}",
+            manifest_path.display()
+        ))
+    })?;
+
+    let app_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let declared_mode = manifest.mode.clone();
+    let mut fallback_reason: Option<String> = None;
+    let mut effective_mode = match manifest.mode.as_deref().map(str::trim) {
+        Some("open") => wavical_netpolicy::NetworkMode::Open,
+        Some("safe") => wavical_netpolicy::NetworkMode::Safe,
+        Some("ultra-safe") => wavical_netpolicy::NetworkMode::UltraSafe,
+        Some(other) => {
+            fallback_reason = Some(format!(
+                "invalid mode '{other}' in manifest; shell falls back to ultra-safe"
+            ));
+            wavical_netpolicy::NetworkMode::UltraSafe
+        }
+        None => {
+            fallback_reason =
+                Some("manifest missing 'mode' field; shell falls back to ultra-safe".to_string());
+            wavical_netpolicy::NetworkMode::UltraSafe
+        }
+    };
+
+    let mut allowlist_opt = None;
+    if matches!(
+        effective_mode,
+        wavical_netpolicy::NetworkMode::Open | wavical_netpolicy::NetworkMode::Safe
+    ) {
+        let candidate_al = [
+            app_dir.join("wavical.allowlist.json"),
+            app_dir
+                .parent()
+                .map(|p| p.join("wavical.allowlist.json"))
+                .unwrap_or_else(|| app_dir.join("wavical.allowlist.json")),
+        ]
+        .into_iter()
+        .find(|p| p.is_file());
+
+        if let Some(al_path) = candidate_al {
+            let bytes = std::fs::read(&al_path).map_err(|e| CliError::ShellError(e.to_string()))?;
+            if effective_mode == wavical_netpolicy::NetworkMode::Safe {
+                let actual_hash = sha256::sha256_digest(&bytes);
+                if manifest.allowlist_sha256.as_deref() != Some(actual_hash.as_str()) {
+                    effective_mode = wavical_netpolicy::NetworkMode::UltraSafe;
+                    fallback_reason = Some(
+                        "wavical.allowlist.json allowlistSha256 mismatch; shell falls back to ultra-safe"
+                            .to_string(),
+                    );
+                } else {
+                    match wavical_netpolicy::allowlist::Allowlist::parse_bytes(&bytes) {
+                        Ok(al) => allowlist_opt = Some(al),
+                        Err(_) => {
+                            effective_mode = wavical_netpolicy::NetworkMode::UltraSafe;
+                            fallback_reason = Some(
+                                "invalid wavical.allowlist.json; shell falls back to ultra-safe"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+            } else if let Ok(al) = wavical_netpolicy::allowlist::Allowlist::parse_bytes(&bytes) {
+                allowlist_opt = Some(al);
+            }
+        } else if effective_mode == wavical_netpolicy::NetworkMode::Safe {
+            effective_mode = wavical_netpolicy::NetworkMode::UltraSafe;
+            fallback_reason = Some(
+                "wavical.allowlist.json missing in safe build; shell falls back to ultra-safe"
+                    .to_string(),
+            );
+        }
+    }
+
+    let index_hashes: Vec<wavical_netpolicy::html::CspHash> = manifest
+        .inline_script_hashes
+        .get("index.html")
+        .map(|tokens| {
+            tokens
+                .iter()
+                .filter_map(|t| {
+                    t.strip_prefix("'sha256-")
+                        .and_then(|rest| rest.strip_suffix('\''))
+                        .map(|b64| wavical_netpolicy::html::CspHash {
+                            base64_digest: b64.to_string(),
+                        })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let csp = if effective_mode == wavical_netpolicy::NetworkMode::UltraSafe {
+        wavical_netpolicy::csp::ULTRA_SAFE_CSP.to_string()
+    } else {
+        wavical_netpolicy::csp::generate_csp(
+            effective_mode,
+            allowlist_opt.as_ref(),
+            &index_hashes,
+            None,
+        )
+        .unwrap_or_else(|_| wavical_netpolicy::csp::ULTRA_SAFE_CSP.to_string())
+    };
+
+    let shell_exe_name = if cfg!(windows) {
+        "wavical-shell.exe"
+    } else {
+        "wavical-shell"
+    };
+    let local_shell = [
+        app_dir.join(shell_exe_name),
+        app_dir
+            .parent()
+            .map(|p| p.join(shell_exe_name))
+            .unwrap_or_else(|| app_dir.join(shell_exe_name)),
+    ]
+    .into_iter()
+    .find(|p| p.is_file());
+
+    let shell_path = local_shell.or_else(|| find_wavical_shell().ok());
+    let shell_version = shell_path.as_deref().and_then(query_shell_version_string);
+
+    let effective_mode_str = match effective_mode {
+        wavical_netpolicy::NetworkMode::Open => "open",
+        wavical_netpolicy::NetworkMode::Safe => "safe",
+        wavical_netpolicy::NetworkMode::UltraSafe => "ultra-safe",
+    }
+    .to_string();
+
+    Ok(DoctorAppReport {
+        manifest_path,
+        app_id: manifest.app_id,
+        app_version: manifest.version,
+        declared_mode,
+        effective_mode: effective_mode_str,
+        fallback_reason,
+        csp,
+        shell_path,
+        shell_version,
+    })
+}
+
+/// Format the built-app inspection report for `wavical doctor --app <path>`.
+#[must_use]
+pub fn format_doctor_app_report(report: &DoctorAppReport) -> String {
+    let declared = report.declared_mode.as_deref().unwrap_or("(missing)");
+    let mode_line = match &report.fallback_reason {
+        Some(reason) => format!("{} ({reason})", report.effective_mode),
+        None => report.effective_mode.clone(),
+    };
+    let shell_bin = report
+        .shell_path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "not found".to_string());
+    let shell_ver = report.shell_version.as_deref().unwrap_or("unavailable");
+
+    format!(
+        "App ID:         {}\nApp version:    {}\nManifest:       {}\nDeclared mode:  {}\nEffective mode: {}\nCSP:            {}\nShell binary:   {}\nShell version:  {}",
+        report.app_id,
+        report.app_version,
+        report.manifest_path.display(),
+        declared,
+        mode_line,
+        report.csp,
+        shell_bin,
+        shell_ver,
+    )
+}
+
+/// Execute `wavical doctor` (including `--version-info` and `--app <path>`).
+pub fn run_doctor(args: &DoctorArgs) -> Result<(), CliError> {
+    if let Some(ref app_path) = args.app {
+        let report = inspect_built_app(app_path)?;
+        println!("{}", format_doctor_app_report(&report));
+        return Ok(());
+    }
     let report = collect_doctor_version_info()?;
     println!("{}", format_doctor_version_report(&report));
     Ok(())

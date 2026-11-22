@@ -1228,11 +1228,17 @@ fn run_with_config_inner(
 
     // 5. Build the webview with custom protocol, CSP, navigation guard, popup blocker, and IPC handler
     let devtools = is_devtools_enabled();
-    if !cfg!(debug_assertions) && devtools {
+    #[cfg(feature = "dev-shell")]
+    let is_dev_session = dev_session.is_some();
+    #[cfg(not(feature = "dev-shell"))]
+    let is_dev_session = false;
+
+    let effective_devtools = if is_dev_session { true } else { devtools };
+    if !cfg!(debug_assertions) && effective_devtools && !is_dev_session {
         eprintln!("error: devtools cannot be enabled in a release build");
         process::exit(1);
     }
-    tracing::info!("Initializing webview (devtools enabled: {devtools})");
+    tracing::info!("Initializing webview (devtools enabled: {effective_devtools})");
 
     let data_directory = get_webview_data_directory(&config.window_id);
     if let Err(err) = std::fs::create_dir_all(&data_directory) {
@@ -1297,7 +1303,7 @@ fn run_with_config_inner(
     let mut web_context = wry::WebContext::new(Some(data_directory));
 
     let mut builder = WebViewBuilder::new_with_web_context(&mut web_context)
-        .with_devtools(devtools)
+        .with_devtools(effective_devtools)
         .with_initialization_script(init_script)
         .with_custom_protocol("wavical".to_string(), move |_id, request| {
             if protocol_custom_csp.is_some() {
@@ -1364,6 +1370,12 @@ fn run_with_config_inner(
             }
         });
 
+    if effective_devtools {
+        builder = builder
+            .with_default_context_menus(true)
+            .with_browser_accelerator_keys(true);
+    }
+
     if config.network_policy.mode == wavical_netpolicy::NetworkMode::UltraSafe {
         builder = builder.with_additional_browser_args(net_policy::ULTRA_SAFE_BROWSER_ARGS);
     }
@@ -1380,26 +1392,6 @@ fn run_with_config_inner(
                     .unwrap_or_else(|e| e.into_inner())
                     .clone();
 
-                if current_policy.is_dev_command
-                    && let Some(ref recorder) = current_policy.recorder
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(body)
-                    && let Some(rec_obj) = val.get("__wavical_record")
-                {
-                    let directive = rec_obj
-                        .get("directive")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let blocked_uri = rec_obj
-                        .get("blockedUri")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    recorder.record_raw(
-                        net_policy::map_csp_directive_to_type(directive),
-                        blocked_uri,
-                    );
-                    return;
-                }
-
                 let mut cloned = ipc_config.clone();
                 cloned.network_policy = current_policy;
                 cloned
@@ -1408,6 +1400,39 @@ fn run_with_config_inner(
             let effective_ipc_config: &WindowConfig = &effective_ipc_owned;
             #[cfg(not(feature = "dev-shell"))]
             let effective_ipc_config: &WindowConfig = &ipc_config;
+
+            if net_policy::is_bridge_report_candidate(body) {
+                match net_policy::process_bridge_report_message(
+                    uri,
+                    true,
+                    body,
+                    effective_ipc_config,
+                ) {
+                    Ok(net_policy::BridgeReportOutcome::Handled(diag_opt)) => {
+                        #[cfg(feature = "dev-shell")]
+                        if effective_ipc_config.network_policy.is_dev_command
+                            && let Some(ev) = diag_opt
+                        {
+                            dev_channel::emit_dev_diagnostic(&ev);
+                        }
+                        #[cfg(not(feature = "dev-shell"))]
+                        let _ = diag_opt;
+                        return;
+                    }
+                    Ok(net_policy::BridgeReportOutcome::Dropped) => return,
+                    Ok(net_policy::BridgeReportOutcome::ForwardToIpc) => {}
+                    Err(IpcOriginError::DisallowedOrigin(_)) => return,
+                    Err(IpcOriginError::InvalidUri) => {
+                        tracing::warn!(
+                            security_event = "origin_rejected",
+                            window_id = %ipc_config.window_id,
+                            reason = "Unable to parse origin from request URI",
+                            "Security check failed: IPC origin rejected"
+                        );
+                        return;
+                    }
+                }
+            }
 
             match process_ipc_message(uri, body, effective_ipc_config, &ipc_registry) {
                 Ok(Some(response)) => match build_delivery_script(&response) {
@@ -1496,7 +1521,11 @@ fn run_with_config_inner(
 
     #[cfg(feature = "dev-shell")]
     if let Some(session) = dev_session {
-        session.activate(proxy.clone());
+        let shell_version = env!("WAVICAL_VERSION_DISPLAY").to_string();
+        let csp_summary = wavical_netpolicy::diagnostics::summarize_csp(
+            &config.network_policy.csp_for_path("index.html"),
+        );
+        session.activate(proxy.clone(), shell_version, csp_summary);
     }
 
     #[cfg(feature = "dev-shell")]
