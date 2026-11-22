@@ -1762,11 +1762,69 @@ fn run_with_config_inner(
     });
 }
 
+/// Maximum production shell log file size before startup rotation (5 MB).
+pub const SHELL_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+
+/// Opens `<local_appdata>/Wavical/apps/<app_id>/logs/shell.log` in append mode,
+/// rotating `shell.log` -> `shell.log.1` when its size exceeds `max_bytes`.
+/// Returns `None` if `app_id` is invalid or the file/directory cannot be opened.
+pub fn prepare_rotated_log_file(
+    local_appdata: &Path,
+    app_id: &str,
+    max_bytes: u64,
+) -> Option<(PathBuf, fs::File)> {
+    let log_path = wavical_config::app_log_file_path(local_appdata, app_id)?;
+    let parent = log_path.parent()?;
+    fs::create_dir_all(parent).ok()?;
+
+    if let Ok(meta) = fs::metadata(&log_path)
+        && meta.len() > max_bytes
+    {
+        let backup_path = log_path.with_file_name("shell.log.1");
+        let _ = fs::remove_file(&backup_path);
+        if fs::rename(&log_path, &backup_path).is_err() {
+            return None;
+        }
+    }
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .ok()?;
+    Some((log_path, file))
+}
+
+/// Initializes production file-only tracing at `<local_appdata>/Wavical/apps/<app_id>/logs/shell.log`.
+/// Never falls back to stdout/stderr and never panics if the directory or file cannot be opened.
+pub fn init_production_file_logging_in_dir(
+    local_appdata: Option<&Path>,
+    app_id: &str,
+) -> Option<PathBuf> {
+    let base = local_appdata?;
+    let (log_path, file) = prepare_rotated_log_file(base, app_id, SHELL_LOG_MAX_BYTES)?;
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(file))
+        .try_init();
+    Some(log_path)
+}
+
+/// Initializes production file-only tracing using `%LOCALAPPDATA%`.
+pub fn init_production_file_logging(app_id: &str) -> Option<PathBuf> {
+    let local_appdata = std::env::var_os("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    init_production_file_logging_in_dir(local_appdata.as_deref(), app_id)
+}
+
 /// Standard launcher for the main Wavical binary application.
 pub fn run() {
-    tracing_subscriber::fmt::init();
-    tracing::info!("Starting Wavical foundation shell (WP7/WP8)");
     let asset_root = get_asset_root();
+    let app_id = net_policy::resolve_manifest_app_id(&asset_root, None)
+        .unwrap_or_else(|| "main".to_string());
+    let _ = init_production_file_logging(&app_id);
+    tracing::info!("Starting Wavical foundation shell (WP7/WP8)");
     let config = WindowConfig::default();
     run_with_config(asset_root, config);
 }
@@ -2316,5 +2374,59 @@ mod tests {
                 "Stdin capability reload enabled when dev-shell feature is active"
             );
         }
+    }
+
+    #[test]
+    fn test_production_log_rotation_and_unwritable_fallback() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let app_id = "log-rot-app";
+
+        // 1. Seed a log file over a small test cap and verify rotation to shell.log.1
+        let (log_path, mut file) =
+            prepare_rotated_log_file(temp.path(), app_id, 64).expect("initial log file");
+        use std::io::Write;
+        writeln!(file, "{}", "X".repeat(120)).expect("write oversized log");
+        drop(file);
+
+        let (log_path_2, mut file_2) =
+            prepare_rotated_log_file(temp.path(), app_id, 64).expect("rotated log file");
+        assert_eq!(log_path, log_path_2);
+        let backup_path = log_path.with_file_name("shell.log.1");
+        assert!(
+            backup_path.is_file(),
+            "shell.log.1 should be created on rotation"
+        );
+        assert!(
+            fs::metadata(&backup_path).unwrap().len() > 64,
+            "rotated backup should preserve old log contents"
+        );
+        writeln!(file_2, "fresh log").expect("write fresh log");
+        drop(file_2);
+        let fresh_contents = fs::read_to_string(&log_path).expect("read fresh shell.log");
+        assert!(fresh_contents.contains("fresh log"));
+        assert!(!fresh_contents.contains(&"X".repeat(120)));
+
+        // 2. Second rotation replaces existing shell.log.1
+        let mut f_grow = fs::OpenOptions::new().append(true).open(&log_path).unwrap();
+        writeln!(f_grow, "{}", "Y".repeat(100)).unwrap();
+        drop(f_grow);
+        let (_p3, _f3) = prepare_rotated_log_file(temp.path(), app_id, 64).expect("2nd rotation");
+        let backup_contents = fs::read_to_string(&backup_path).unwrap();
+        assert!(backup_contents.contains(&"Y".repeat(100)));
+        assert!(!backup_contents.contains(&"X".repeat(120)));
+
+        // 3. Invalid / traversal / reserved appId returns None without crashing
+        assert!(init_production_file_logging_in_dir(Some(temp.path()), "../evil").is_none());
+        assert!(init_production_file_logging_in_dir(Some(temp.path()), "CON").is_none());
+        assert!(init_production_file_logging_in_dir(None, "valid-app").is_none());
+
+        // 4. Unwritable path (file blocking Wavical directory) returns None without crashing
+        let blocked_base = temp.path().join("blocked-base");
+        fs::create_dir_all(&blocked_base).unwrap();
+        fs::write(blocked_base.join("Wavical"), b"not-a-directory").unwrap();
+        assert!(
+            prepare_rotated_log_file(&blocked_base, "valid-app", SHELL_LOG_MAX_BYTES).is_none()
+        );
+        assert!(init_production_file_logging_in_dir(Some(&blocked_base), "valid-app").is_none());
     }
 }

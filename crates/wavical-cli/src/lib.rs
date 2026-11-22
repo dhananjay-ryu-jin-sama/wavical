@@ -61,8 +61,16 @@ pub enum Commands {
     /// Vendor external CDN scripts, styles, fonts, and images into src/vendor/ for offline use
     Vendor(VendorArgs),
 
-    /// Build the application for production
+    /// Build the application for production (requires --allow-open; or use build-safe / build-ultra-safe)
     Build(BuildArgs),
+
+    /// Build the application in safe mode (allowlisted origins + hashed inline scripts)
+    #[command(name = "build-safe")]
+    BuildSafe(BuildArgs),
+
+    /// Build the application in ultra-safe mode (strict local-only CSP; extracts inline scripts)
+    #[command(name = "build-ultra-safe")]
+    BuildUltraSafe(BuildArgs),
 
     /// Register file associations declared in wavical.config.js under HKCU\Software\Classes (WP8)
     #[command(name = "register-filetypes")]
@@ -534,6 +542,10 @@ pub struct BuildArgs {
     /// Include source map (*.map) files in the build output
     #[arg(long)]
     pub include_source_maps: bool,
+
+    /// Explicitly allow building in open mode (allows any https external origin and inline scripts)
+    #[arg(long = "allow-open")]
+    pub allow_open: bool,
 }
 
 /// Errors that can occur during CLI command execution.
@@ -618,6 +630,17 @@ pub enum CliError {
 
     #[error("backend build error: {0}")]
     BackendBuildFailed(String),
+
+    #[error(
+        "refusing to run 'wavical build' without an explicit network mode.\nChoose one of:\n  wavical build --allow-open   (open mode: allows any https external content; baseline protections kept)\n  wavical build-safe           (safe mode: allowlisted origins from wavical.allowlist.json + hashed inline scripts)\n  wavical build-ultra-safe     (ultra-safe mode: strict local-only CSP; extracts inline scripts)"
+    )]
+    BuildModeRequired,
+
+    #[error("safe build failed: {0}")]
+    BuildSafeAllowlistError(String),
+
+    #[error("build policy error: {0}")]
+    BuildPolicyError(String),
 }
 
 /// Summary returned after successful initialization of a new project.
@@ -2052,6 +2075,19 @@ pub struct WavicalManifest {
     #[serde(rename = "appId")]
     pub app_id: String,
     pub version: String,
+    pub mode: String,
+    #[serde(
+        rename = "allowlistSha256",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub allowlist_sha256: Option<String>,
+    #[serde(
+        rename = "inlineScriptHashes",
+        skip_serializing_if = "BTreeMap::is_empty",
+        default
+    )]
+    pub inline_script_hashes: BTreeMap<String, Vec<String>>,
     pub capabilities: BTreeMap<String, bool>,
     pub assets: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -2285,8 +2321,159 @@ pub fn copy_and_hash_assets_filtered(
     Ok(())
 }
 
-/// Execute the `wavical build` command.
+/// Recursively hash all frontend files already present in `out_root` (excluding `wavical-manifest.json`).
+fn hash_out_dir_assets(
+    out_root: &Path,
+    current_dir: &Path,
+    assets: &mut BTreeMap<String, String>,
+) -> Result<(), CliError> {
+    for entry in std::fs::read_dir(current_dir).map_err(|e| CliError::CreateDirFailed {
+        path: current_dir.to_path_buf(),
+        source: e,
+    })? {
+        let entry = entry.map_err(|e| CliError::CreateDirFailed {
+            path: current_dir.to_path_buf(),
+            source: e,
+        })?;
+        let entry_path = entry.path();
+        let file_type = entry.file_type().map_err(|e| CliError::CreateDirFailed {
+            path: entry_path.clone(),
+            source: e,
+        })?;
+        if file_type.is_dir() {
+            hash_out_dir_assets(out_root, &entry_path, assets)?;
+        } else if file_type.is_file() {
+            let rel_path = entry_path.strip_prefix(out_root).unwrap_or(&entry_path);
+            let rel_key = rel_path
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            if rel_key == "wavical-manifest.json" {
+                continue;
+            }
+            let hash = sha256::sha256_file(&entry_path).map_err(|e| CliError::WriteFileFailed {
+                path: entry_path.clone(),
+                source: e,
+            })?;
+            assets.insert(rel_key, hash);
+        }
+    }
+    Ok(())
+}
+
+fn collect_html_files_in_dir(
+    root: &Path,
+    cur: &Path,
+    out: &mut Vec<(String, PathBuf)>,
+) -> Result<(), CliError> {
+    for entry in std::fs::read_dir(cur).map_err(|e| CliError::ShellError(e.to_string()))? {
+        let entry = entry.map_err(|e| CliError::ShellError(e.to_string()))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "vendor" || name == "node_modules" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_html_files_in_dir(root, &path, out)?;
+        } else if path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "html" | "htm"))
+        {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.push((rel, path));
+        }
+    }
+    Ok(())
+}
+
+fn warn_inline_handlers(handlers: &[wavical_netpolicy::html::InlineHandlerFinding]) {
+    for h in handlers {
+        eprintln!(
+            "warning: inline handler '{}=\"...\"' on <{}> at {}:{} — move to an external script with addEventListener",
+            h.attribute, h.tag, h.file, h.line
+        );
+    }
+}
+
+fn collect_safe_inline_script_hashes(
+    out_root: &Path,
+) -> Result<BTreeMap<String, Vec<String>>, CliError> {
+    let mut html_files = Vec::new();
+    collect_html_files_in_dir(out_root, out_root, &mut html_files)?;
+    html_files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut per_page = BTreeMap::new();
+    for (rel, full_path) in html_files {
+        let raw =
+            std::fs::read_to_string(&full_path).map_err(|e| CliError::ShellError(e.to_string()))?;
+        let scan = html_scan::scan_html(&rel, &raw);
+        warn_inline_handlers(&scan.inline_handlers);
+        if scan.inline_scripts.len() > wavical_netpolicy::limits::MAX_INLINE_SCRIPTS_HASHED_PER_PAGE
+        {
+            return Err(CliError::BuildPolicyError(format!(
+                "'{rel}' contains {} inline <script> blocks (max {})",
+                scan.inline_scripts.len(),
+                wavical_netpolicy::limits::MAX_INLINE_SCRIPTS_HASHED_PER_PAGE
+            )));
+        }
+        if !scan.inline_scripts.is_empty() {
+            let hashes: Vec<String> = scan
+                .inline_scripts
+                .iter()
+                .map(|b| b.hash.as_csp_token())
+                .collect();
+            per_page.insert(rel, hashes);
+        }
+    }
+    Ok(per_page)
+}
+
+/// Single shared writer for `wavical-manifest.json` used by all build commands (`--allow-open`, `build-safe`, `build-ultra-safe`).
+pub fn write_wavical_manifest(
+    out_dir: &Path,
+    manifest: &WavicalManifest,
+) -> Result<PathBuf, CliError> {
+    let manifest_path = out_dir.join("wavical-manifest.json");
+    let manifest_json =
+        serde_json::to_string_pretty(manifest).map_err(|e| CliError::ShellError(e.to_string()))?;
+    std::fs::write(&manifest_path, manifest_json).map_err(|e| CliError::WriteFileFailed {
+        path: manifest_path.clone(),
+        source: e,
+    })?;
+    Ok(manifest_path)
+}
+
+fn mode_str(mode: wavical_netpolicy::NetworkMode) -> &'static str {
+    match mode {
+        wavical_netpolicy::NetworkMode::Open => "open",
+        wavical_netpolicy::NetworkMode::Safe => "safe",
+        wavical_netpolicy::NetworkMode::UltraSafe => "ultra-safe",
+    }
+}
+
+/// Execute the `wavical build` command (requires `--allow-open`; otherwise refuses and explains the three choices).
 pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
+    if !args.allow_open {
+        return Err(CliError::BuildModeRequired);
+    }
+    eprintln!(
+        "WARNING: Building in 'open' mode (--allow-open). Any HTTPS external origin and inline scripts are allowed; prefer 'wavical build-safe' or 'wavical build-ultra-safe' where possible."
+    );
+    run_build_with_mode(args, wavical_netpolicy::NetworkMode::Open)
+}
+
+/// Execute a build in the specified [`wavical_netpolicy::NetworkMode`] (`open`, `safe`, or `ultra-safe`).
+pub fn run_build_with_mode(
+    args: &BuildArgs,
+    mode: wavical_netpolicy::NetworkMode,
+) -> Result<(), CliError> {
     let project_root = if args.dir == Path::new(".") {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else if args.dir.is_relative() {
@@ -2312,7 +2499,55 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         return Err(CliError::SrcNotFound(src_dir));
     }
 
-    // 3. Warnings
+    // 3. Mode-specific preflight validation (allowlist / remoteUrl)
+    let mut allowlist_bytes: Option<Vec<u8>> = None;
+    let mut allowlist_sha256: Option<String> = None;
+    if mode == wavical_netpolicy::NetworkMode::Safe {
+        let allowlist_path = project_root.join("wavical.allowlist.json");
+        if !allowlist_path.is_file() {
+            return Err(CliError::BuildSafeAllowlistError(format!(
+                "wavical.allowlist.json not found in '{}'. Run 'wavical dev-safe --record' + 'wavical allowlist suggest' or create wavical.allowlist.json.",
+                project_root.display()
+            )));
+        }
+        let al_bytes = std::fs::read(&allowlist_path).map_err(|e| {
+            CliError::BuildSafeAllowlistError(format!(
+                "failed to read '{}': {e}",
+                allowlist_path.display()
+            ))
+        })?;
+        let parsed_al =
+            wavical_netpolicy::allowlist::Allowlist::parse_bytes(&al_bytes).map_err(|e| {
+                CliError::BuildSafeAllowlistError(format!("invalid wavical.allowlist.json: {e}"))
+            })?;
+        if !parsed_al.local_exceptions.is_empty() {
+            eprintln!(
+                "warning: wavical.allowlist.json defines {} localExceptions entry(s) permitting plain http/ws or loopback",
+                parsed_al.local_exceptions.len()
+            );
+        }
+        allowlist_sha256 = Some(sha256::sha256_digest(&al_bytes));
+        allowlist_bytes = Some(al_bytes);
+    }
+
+    let remote_url = config.window.as_ref().and_then(|w| w.remote_url.clone());
+    if let Some(ref ru) = remote_url {
+        match mode {
+            wavical_netpolicy::NetworkMode::UltraSafe => {
+                return Err(CliError::BuildPolicyError(
+                    "window.remoteUrl is not allowed in ultra-safe mode".to_string(),
+                ));
+            }
+            wavical_netpolicy::NetworkMode::Open => {
+                eprintln!(
+                    "WARNING: window.remoteUrl ('{ru}') in open mode grants native app capabilities to that remote site!"
+                );
+            }
+            wavical_netpolicy::NetworkMode::Safe => {}
+        }
+    }
+
+    // 4. Warnings
     let index_html = src_dir.join("index.html");
     if !index_html.is_file() {
         eprintln!("warning: 'src/index.html' not found; application may fail to load default page");
@@ -2325,7 +2560,7 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         );
     }
 
-    // 4. Resolve outdir and validate it is not dangerous
+    // 5. Resolve outdir and validate it is not dangerous
     let out_dir = if args.outdir.is_absolute() {
         args.outdir.clone()
     } else {
@@ -2344,14 +2579,14 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         source: e,
     })?;
 
-    // 5. Load ignore patterns and display documented exclusion list
+    // 6. Load ignore patterns and display documented exclusion list
     let extra_ignore = backend_build::load_wavicalignore(&project_root)?;
     println!(
         "Build exclusions: {}",
         backend_build::format_documented_ignore_list(args.include_source_maps, &extra_ignore)
     );
 
-    // 6. Copy all files from src/ to out_dir and compute hashes
+    // 7. Copy all files from src/ to out_dir and compute hashes
     let mut assets = BTreeMap::new();
     copy_and_hash_assets_filtered(
         &src_dir,
@@ -2362,7 +2597,39 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         &mut assets,
     )?;
 
-    // 7. Build backend and optionally bundle runtime when backend is enabled
+    // 8. Mode-specific frontend processing inside out_dir (never mutates src/)
+    let mut inline_script_hashes = BTreeMap::new();
+    match mode {
+        wavical_netpolicy::NetworkMode::UltraSafe => {
+            let extracted_dir = out_dir.join(".wavical-extracted");
+            let scans = html_scan::extract_frontend_inline_scripts(
+                &out_dir,
+                &extracted_dir,
+                ".wavical-extracted/",
+                true,
+            )?;
+            for scan in scans {
+                warn_inline_handlers(&scan.inline_handlers);
+            }
+            assets.clear();
+            hash_out_dir_assets(&out_dir, &out_dir, &mut assets)?;
+        }
+        wavical_netpolicy::NetworkMode::Safe => {
+            inline_script_hashes = collect_safe_inline_script_hashes(&out_dir)?;
+            if let Some(ref al_bytes) = allowlist_bytes {
+                let dst_allowlist = out_dir.join("wavical.allowlist.json");
+                std::fs::write(&dst_allowlist, al_bytes).map_err(|e| {
+                    CliError::WriteFileFailed {
+                        path: dst_allowlist,
+                        source: e,
+                    }
+                })?;
+            }
+        }
+        wavical_netpolicy::NetworkMode::Open => {}
+    }
+
+    // 9. Build backend and optionally bundle runtime when backend is enabled
     let (backend_manifest, runtime_manifest) = match config.backend {
         Some(ref backend_cfg) if backend_cfg.enabled => {
             let output = backend_build::build_backend_and_runtime(
@@ -2384,7 +2651,7 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         }
     };
 
-    // 8. Generate manifest
+    // 10. Generate and write manifest through the single shared writer
     let mut capabilities = BTreeMap::new();
     if let Some(ref caps) = config.capabilities {
         for (k, v) in caps {
@@ -2392,16 +2659,12 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         }
     }
 
-    let remote_url = config.window.as_ref().and_then(|w| w.remote_url.clone());
-    if let Some(ref ru) = remote_url {
-        eprintln!(
-            "WARNING: window.remoteUrl ('{ru}') in open mode grants native app capabilities to that remote site!"
-        );
-    }
-
     let manifest = WavicalManifest {
         app_id: config.app_id.clone(),
         version: config.version_or_default().to_string(),
+        mode: mode_str(mode).to_string(),
+        allowlist_sha256,
+        inline_script_hashes,
         capabilities,
         assets,
         backend: backend_manifest,
@@ -2409,13 +2672,7 @@ pub fn run_build(args: &BuildArgs) -> Result<(), CliError> {
         remote_url,
     };
 
-    let manifest_path = out_dir.join("wavical-manifest.json");
-    let manifest_json =
-        serde_json::to_string_pretty(&manifest).map_err(|e| CliError::ShellError(e.to_string()))?;
-    std::fs::write(&manifest_path, manifest_json).map_err(|e| CliError::WriteFileFailed {
-        path: manifest_path.clone(),
-        source: e,
-    })?;
+    write_wavical_manifest(&out_dir, &manifest)?;
 
     if args.release {
         tracing::info!("Build mode: release");
@@ -2521,6 +2778,24 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Commands::BuildSafe(args) => {
+            match run_build_with_mode(&args, wavical_netpolicy::NetworkMode::Safe) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Commands::BuildUltraSafe(args) => {
+            match run_build_with_mode(&args, wavical_netpolicy::NetworkMode::UltraSafe) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Commands::RegisterFiletypes(args) => match run_register_filetypes(&args.dir) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
@@ -3125,6 +3400,7 @@ pub struct DoctorAppReport {
     pub csp: String,
     pub shell_path: Option<PathBuf>,
     pub shell_version: Option<String>,
+    pub log_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -3199,8 +3475,7 @@ pub fn inspect_built_app(app_path: &Path) -> Result<DoctorAppReport, CliError> {
             wavical_netpolicy::NetworkMode::UltraSafe
         }
         None => {
-            fallback_reason =
-                Some("manifest missing 'mode' field; shell falls back to ultra-safe".to_string());
+            fallback_reason = Some("manifest has no mode: app runs in ultra-safe".to_string());
             wavical_netpolicy::NetworkMode::UltraSafe
         }
     };
@@ -3308,6 +3583,10 @@ pub fn inspect_built_app(app_path: &Path) -> Result<DoctorAppReport, CliError> {
     }
     .to_string();
 
+    let log_path = std::env::var_os("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .and_then(|la| wavical_config::app_log_file_path(Path::new(&la), &manifest.app_id));
+
     Ok(DoctorAppReport {
         manifest_path,
         app_id: manifest.app_id,
@@ -3318,6 +3597,7 @@ pub fn inspect_built_app(app_path: &Path) -> Result<DoctorAppReport, CliError> {
         csp,
         shell_path,
         shell_version,
+        log_path,
     })
 }
 
@@ -3335,9 +3615,14 @@ pub fn format_doctor_app_report(report: &DoctorAppReport) -> String {
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "not found".to_string());
     let shell_ver = report.shell_version.as_deref().unwrap_or("unavailable");
+    let log_file = report
+        .log_path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "unavailable".to_string());
 
     format!(
-        "App ID:         {}\nApp version:    {}\nManifest:       {}\nDeclared mode:  {}\nEffective mode: {}\nCSP:            {}\nShell binary:   {}\nShell version:  {}",
+        "App ID:         {}\nApp version:    {}\nManifest:       {}\nDeclared mode:  {}\nEffective mode: {}\nCSP:            {}\nShell binary:   {}\nShell version:  {}\nLog file:       {}",
         report.app_id,
         report.app_version,
         report.manifest_path.display(),
@@ -3346,6 +3631,7 @@ pub fn format_doctor_app_report(report: &DoctorAppReport) -> String {
         report.csp,
         shell_bin,
         shell_ver,
+        log_file,
     )
 }
 

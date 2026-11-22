@@ -187,6 +187,8 @@ fn sanitize_recorded_origin(raw: &str) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct ShellBuildManifest {
     #[serde(default)]
+    pub app_id: Option<String>,
+    #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
     pub allowlist_sha256: Option<String>,
@@ -354,6 +356,79 @@ pub fn safe_log_origin(raw_url: &str) -> String {
     "<invalid>".to_string()
 }
 
+/// Shared allowlist SHA-256 comparison used by both startup integrity refusal and policy resolution.
+#[must_use]
+pub fn verify_allowlist_sha256(allowlist_bytes: &[u8], expected_sha256: Option<&str>) -> bool {
+    let actual_hash = hex::encode(Sha256::digest(allowlist_bytes));
+    expected_sha256 == Some(actual_hash.as_str())
+}
+
+fn find_allowlist_path(manifest_path: &Path, project_root: Option<&Path>) -> Option<PathBuf> {
+    project_root
+        .map(|p| p.join("wavical.allowlist.json"))
+        .filter(|p| p.is_file())
+        .or_else(|| {
+            manifest_path
+                .parent()
+                .map(|p| p.join("wavical.allowlist.json"))
+                .filter(|p| p.is_file())
+        })
+}
+
+/// Reads `appId` from `wavical-manifest.json` if present and non-empty.
+#[must_use]
+pub fn resolve_manifest_app_id(asset_root: &Path, project_root: Option<&Path>) -> Option<String> {
+    let m_path = find_manifest_path(asset_root, project_root)?;
+    let raw_bytes = fs::read(&m_path).ok()?;
+    let manifest = serde_json::from_slice::<ShellBuildManifest>(&raw_bytes).ok()?;
+    manifest
+        .app_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Verifies a built safe-mode app's `wavical.allowlist.json` against `manifest.allowlistSha256`
+/// before any window or WebView2 instance is created.
+///
+/// Only runs when `!is_dev_command` and `wavical-manifest.json` explicitly sets `"mode": "safe"`.
+/// Uses the exact same [`verify_allowlist_sha256`] check as [`resolve_shell_network_policy_with_remote`].
+pub fn verify_safe_mode_startup_integrity(
+    asset_root: &Path,
+    project_root: Option<&Path>,
+    is_dev_command: bool,
+) -> Result<(), String> {
+    if is_dev_command {
+        return Ok(());
+    }
+    let Some(m_path) = find_manifest_path(asset_root, project_root) else {
+        return Ok(());
+    };
+    let Ok(raw_bytes) = fs::read(&m_path) else {
+        return Ok(());
+    };
+    let Ok(manifest) = serde_json::from_slice::<ShellBuildManifest>(&raw_bytes) else {
+        return Ok(());
+    };
+    if manifest.mode.as_deref().and_then(parse_network_mode) != Some(NetworkMode::Safe) {
+        return Ok(());
+    }
+
+    let Some(al_path) = find_allowlist_path(&m_path, project_root) else {
+        return Err("safe-mode allowlist missing (wavical.allowlist.json not found)".to_string());
+    };
+    let al_bytes =
+        fs::read(&al_path).map_err(|_| "safe-mode allowlist could not be read".to_string())?;
+    if !verify_allowlist_sha256(&al_bytes, manifest.allowlist_sha256.as_deref()) {
+        return Err(
+            "safe-mode allowlist hash mismatch (wavical.allowlist.json was modified)".to_string(),
+        );
+    }
+    if Allowlist::parse_bytes(&al_bytes).is_err() {
+        return Err("safe-mode allowlist is invalid".to_string());
+    }
+    Ok(())
+}
+
 /// Resolves the shell's `ShellNetworkPolicy` from either the build manifest (built apps)
 /// or dev CLI flags (dev commands only).
 ///
@@ -429,7 +504,8 @@ pub fn resolve_shell_network_policy_with_remote(
             tracing::warn!(
                 security_event = "manifest_mode_fallback",
                 mode = "ultra-safe",
-                reason = "manifest missing mode field; falling back to ultra-safe"
+                reason = "manifest has no mode: app runs in ultra-safe",
+                "manifest has no mode: app runs in ultra-safe"
             );
             policy.manifest_assets = Some(manifest.assets);
             return policy;
@@ -464,29 +540,21 @@ pub fn resolve_shell_network_policy_with_remote(
         }
 
         if matches!(mode, NetworkMode::Open | NetworkMode::Safe) {
-            let allowlist_path = project_root
-                .map(|p| p.join("wavical.allowlist.json"))
-                .filter(|p| p.is_file())
-                .or_else(|| {
-                    m_path
-                        .parent()
-                        .map(|p| p.join("wavical.allowlist.json"))
-                        .filter(|p| p.is_file())
-                });
+            let allowlist_path = find_allowlist_path(&m_path, project_root);
 
             if let Some(al_path) = allowlist_path {
                 if let Ok(al_bytes) = fs::read(&al_path) {
-                    if mode == NetworkMode::Safe {
-                        let actual_hash = hex::encode(Sha256::digest(&al_bytes));
-                        if manifest.allowlist_sha256.as_deref() != Some(actual_hash.as_str()) {
-                            tracing::error!(
-                                security_event = "allowlist_hash_mismatch",
-                                mode = "ultra-safe",
-                                reason = "wavical.allowlist.json hash mismatch; falling back to ultra-safe"
-                            );
-                            policy.mode = NetworkMode::UltraSafe;
-                            return policy;
-                        }
+                    if mode == NetworkMode::Safe
+                        && !verify_allowlist_sha256(&al_bytes, manifest.allowlist_sha256.as_deref())
+                    {
+                        tracing::error!(
+                            security_event = "allowlist_hash_mismatch",
+                            mode = "ultra-safe",
+                            reason =
+                                "wavical.allowlist.json hash mismatch; falling back to ultra-safe"
+                        );
+                        policy.mode = NetworkMode::UltraSafe;
+                        return policy;
                     }
                     match Allowlist::parse_bytes(&al_bytes) {
                         Ok(al) => policy.allowlist = Some(al),
@@ -636,8 +704,10 @@ pub fn handle_protocol_request_with_policy(
                     && let Some(ref manifest_assets) = policy.manifest_assets
                 {
                     let actual_hash = hex::encode(Sha256::digest(&bytes));
-                    let expected = manifest_assets.get(rel_key);
-                    if expected.map(String::as_str) != Some(actual_hash.as_str()) {
+                    let expected = manifest_assets
+                        .get(rel_key)
+                        .map(|s| s.strip_prefix("sha256:").unwrap_or(s.as_str()));
+                    if expected != Some(actual_hash.as_str()) {
                         tracing::warn!(
                             security_event = "asset_hash_mismatch",
                             mode = mode_label(policy.mode),

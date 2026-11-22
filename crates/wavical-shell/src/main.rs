@@ -75,10 +75,38 @@ pub struct ShellCli {
 }
 
 fn main() {
-    tracing_subscriber::fmt::init();
     let args = ShellCli::parse();
 
     let asset_root = args.asset_root.unwrap_or_else(get_asset_root);
+    let effective_app_id = if args.app_id != "main" || std::env::var_os("WAVICAL_APP_ID").is_some()
+    {
+        args.app_id.clone()
+    } else {
+        wavical_shell::net_policy::resolve_manifest_app_id(
+            &asset_root,
+            args.project_root.as_deref(),
+        )
+        .unwrap_or_else(|| args.app_id.clone())
+    };
+
+    let _ = wavical_shell::init_production_file_logging(&effective_app_id);
+
+    if let Err(reason) = wavical_shell::net_policy::verify_safe_mode_startup_integrity(
+        &asset_root,
+        args.project_root.as_deref(),
+        false,
+    ) {
+        tracing::error!(
+            target: "wavical.security",
+            security_event = "allowlist_integrity_refused",
+            reason = %reason,
+            "Refusing to start safe-mode app: application files were changed and cannot start safely"
+        );
+        if std::env::var("WAVICAL_HEADLESS_TEST").is_err() {
+            wavical_native::show_tampered_files_dialog();
+        }
+        std::process::exit(1);
+    }
 
     let mut capabilities = wavical_ipc::Capabilities::new();
     let mut granted_caps = Vec::new();
@@ -120,7 +148,7 @@ fn main() {
     let title = args
         .window_title
         .clone()
-        .unwrap_or_else(|| args.app_id.clone());
+        .unwrap_or_else(|| effective_app_id.clone());
 
     let initial_shortcuts = if let Some(ref raw) = args.shortcuts {
         let trimmed = raw.trim();
@@ -178,7 +206,7 @@ fn main() {
     );
 
     let config = WindowConfig {
-        window_id: args.app_id,
+        window_id: effective_app_id,
         allowed_origins: vec![
             "http://wavical.localhost".to_string(),
             "wavical://localhost".to_string(),

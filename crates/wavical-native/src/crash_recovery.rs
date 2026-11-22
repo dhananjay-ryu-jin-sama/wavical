@@ -31,6 +31,20 @@ pub fn show_renderer_crashed_dialog() {
         .show();
 }
 
+/// Display a friendly native message box explaining that the application's files were changed
+/// and it cannot start safely.
+pub fn show_tampered_files_dialog() {
+    rfd::MessageDialog::new()
+        .set_title("Application Integrity Check Failed")
+        .set_description(
+            "This application's files were changed and it cannot start safely.\n\n\
+             Please reinstall the application or restore the original files.\n\n\
+             The application will now close.",
+        )
+        .set_level(rfd::MessageLevel::Error)
+        .show();
+}
+
 /// Attach an event listener for WebView2 renderer process failure.
 ///
 /// Direct hooking of Win32 COM `ICoreWebView2::add_ProcessFailed` would violate
@@ -52,5 +66,6 @@ mod tests {
         // Verification that types and dialog builder definitions compile cleanly
         let _ = show_missing_webview2_dialog as fn();
         let _ = show_renderer_crashed_dialog as fn();
+        let _ = show_tampered_files_dialog as fn();
     }
 }

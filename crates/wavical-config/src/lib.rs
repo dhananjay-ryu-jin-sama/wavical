@@ -760,6 +760,37 @@ pub fn is_valid_app_id(id: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Maximum length of an `appId` used for per-app data and log directories.
+pub const MAX_APP_ID_LEN: usize = 64;
+
+/// Validate `app_id` for filesystem directory construction:
+/// reuses [`is_valid_app_id`] (no traversal, slashes, or dots), bounds length to 64 chars,
+/// and rejects Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`).
+#[must_use]
+pub fn is_safe_app_id_for_path(app_id: &str) -> bool {
+    !app_id.is_empty()
+        && app_id.len() <= MAX_APP_ID_LEN
+        && is_valid_app_id(app_id)
+        && !wavical_ipc::ai::is_reserved_name(app_id)
+}
+
+/// Build `<local_appdata>/Wavical/apps/<appId>/logs/shell.log` from a validated `app_id`.
+/// Returns `None` if `app_id` fails path-safety validation.
+#[must_use]
+pub fn app_log_file_path(local_appdata: &Path, app_id: &str) -> Option<PathBuf> {
+    if !is_safe_app_id_for_path(app_id) {
+        return None;
+    }
+    Some(
+        local_appdata
+            .join("Wavical")
+            .join("apps")
+            .join(app_id)
+            .join("logs")
+            .join("shell.log"),
+    )
+}
+
 fn extract_missing_field(msg: &str) -> Option<String> {
     if let Some(start) = msg.find("missing field `") {
         let remainder = &msg[start + "missing field `".len()..];
@@ -3511,6 +3542,32 @@ mod tests {
                 "invalid dev.url '{invalid}' must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn test_app_log_file_path_validation() {
+        let base = Path::new("C:\\Users\\demo\\AppData\\Local");
+        let ok = app_log_file_path(base, "my-app_1").expect("valid appId");
+        assert_eq!(
+            ok,
+            base.join("Wavical")
+                .join("apps")
+                .join("my-app_1")
+                .join("logs")
+                .join("shell.log")
+        );
+
+        for bad in [
+            "", "..", ".", "../evil", "a/b", "a\\b", "con", "CON", "NUL", "COM1", "LPT9",
+            "app.name", "a b",
+        ] {
+            assert!(
+                app_log_file_path(base, bad).is_none(),
+                "invalid appId '{bad}' must be rejected for log path"
+            );
+        }
+        let too_long = "a".repeat(MAX_APP_ID_LEN + 1);
+        assert!(app_log_file_path(base, &too_long).is_none());
     }
 
     proptest! {
