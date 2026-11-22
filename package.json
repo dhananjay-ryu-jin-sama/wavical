@@ -10,6 +10,7 @@
     "bin/wavical.js",
     "bin/wavical.exe",
     "bin/wavical-shell.exe",
+    "bin/wavical-shell-dev.exe",
     "bin/checksums.txt",
     "README.md",
     "CHANGELOG.md",
@@ -17,7 +18,7 @@
   ],
   "scripts": {
     "test": "cargo test --workspace && node --test scripts/scripts.test.js",
-    "build:release": "cargo build --release --locked --bin wavical --bin wavical-shell",
+    "build:release": "cargo build --release --locked -p wavical-cli --bin wavical && cargo build --release --locked -p wavical-shell --bin wavical-shell && cargo build --release --locked -p wavical-shell --bin wavical-shell-dev --features dev-shell --target-dir target/dev-shell",
     "sync:version": "node scripts/sync-version.js",
     "verify:package": "node scripts/verify-package.js",
     "prepack": "node scripts/prepack.js",

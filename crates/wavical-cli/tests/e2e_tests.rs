@@ -1,10 +1,50 @@
 use std::fs;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+#[cfg(windows)]
+fn ensure_dev_shell_bin() -> &'static PathBuf {
+    static DEV_SHELL_BIN: OnceLock<PathBuf> = OnceLock::new();
+    DEV_SHELL_BIN.get_or_init(|| {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("workspace root");
+        let target_dir = workspace_root.join("target").join("dev-shell");
+        let out = Command::new("cargo")
+            .args([
+                "build",
+                "-p",
+                "wavical-shell",
+                "--bin",
+                "wavical-shell-dev",
+                "--features",
+                "dev-shell",
+                "--target-dir",
+            ])
+            .arg(&target_dir)
+            .current_dir(workspace_root)
+            .output()
+            .expect("build wavical-shell-dev");
+        assert!(
+            out.status.success(),
+            "failed to build wavical-shell-dev: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let exe = if cfg!(windows) {
+            "wavical-shell-dev.exe"
+        } else {
+            "wavical-shell-dev"
+        };
+        target_dir.join("debug").join(exe)
+    })
+}
 
 #[test]
 #[cfg(windows)]
@@ -26,7 +66,9 @@ fn test_e2e_full_lifecycle_workflow() {
     assert!(project_dir.join("src").join("index.html").is_file());
 
     // 2. cd test-project && wavical dev (run, wait 3 seconds, kill cleanly)
+    let dev_shell = ensure_dev_shell_bin();
     let mut dev_child = Command::new(wavical_bin)
+        .env("WAVICAL_DEV_SHELL_BIN", dev_shell)
         .arg("dev")
         .current_dir(&project_dir)
         .stdout(Stdio::piped())

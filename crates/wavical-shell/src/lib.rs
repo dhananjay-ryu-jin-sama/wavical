@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 pub mod backend;
+#[cfg(feature = "dev-shell")]
+pub mod dev_channel;
 pub mod hardening;
 pub mod net_policy;
 pub mod updater;
@@ -116,17 +118,18 @@ pub const WAVICAL_INIT_SCRIPT: &str = r#"
 })();
 "#;
 
+/// Wrapper around `EventLoopProxy<UserEvent>` used by the dev command channel.
+#[cfg(feature = "dev-shell")]
+pub struct UserEventProxyHandle(pub tao::event_loop::EventLoopProxy<UserEvent>);
+
 /// Custom events sent to the tao event loop for execution on the UI thread.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum UserEvent {
     /// Safe JavaScript evaluation string delivered to the webview.
     ExecuteScript(String),
-    /// Reload current webview page.
-    Reload,
-    /// Restart the backend process during `wavical dev` (WP6).
-    RestartBackend,
-    /// Dynamically update granted capabilities without restarting window.
-    UpdateCapabilities(Vec<String>),
+    /// Development command with one-shot acknowledgement channel (dev shell only).
+    #[cfg(feature = "dev-shell")]
+    DevCommand(dev_channel::DevLoopRequest),
     /// Focus existing application window upon second instance launch.
     FocusWindow,
     /// WebView2 renderer process failure / crash event with reason code.
@@ -889,7 +892,7 @@ pub fn get_webview_data_directory(app_id: &str) -> PathBuf {
 
 /// Helper checking whether dynamic capability reloading via standard input is enabled in current build.
 pub fn is_stdin_capability_reload_enabled() -> bool {
-    cfg!(debug_assertions)
+    cfg!(feature = "dev-shell")
 }
 
 /// Initialize window with tao.
@@ -992,8 +995,31 @@ pub fn is_devtools_enabled() -> bool {
     hardening::DEVTOOLS_COMPILED_ENABLED
 }
 
-/// Launch and run the Wavical shell with custom asset root and window config.
-pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
+/// Launch and run the Wavical production shell with custom asset root and window config.
+pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
+    run_with_config_inner(
+        asset_root,
+        config,
+        #[cfg(feature = "dev-shell")]
+        None,
+    );
+}
+
+/// Launch and run the Wavical dev shell with an authenticated stdin dev command session.
+#[cfg(feature = "dev-shell")]
+pub fn run_dev_with_config(
+    asset_root: PathBuf,
+    config: WindowConfig,
+    dev_session: dev_channel::DevSessionHandle,
+) {
+    run_with_config_inner(asset_root, config, Some(dev_session));
+}
+
+fn run_with_config_inner(
+    asset_root: PathBuf,
+    mut config: WindowConfig,
+    #[cfg(feature = "dev-shell")] dev_session: Option<dev_channel::DevSessionHandle>,
+) {
     config.asset_root = Some(asset_root.clone());
 
     // 0. Release hardening: neutralize dangerous debug env vars via clean relaunch,
@@ -1118,61 +1144,9 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
         }
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(not(feature = "dev-shell"))]
     if config.listen_stdin {
-        let stdin_proxy = proxy.clone();
-        std::thread::spawn(move || {
-            use std::io::BufRead;
-            let stdin = std::io::stdin();
-            let reader = stdin.lock();
-            for line in reader.lines() {
-                match line {
-                    Ok(raw) => {
-                        let trimmed = raw.trim();
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                            let action = val.get("action").and_then(|a| a.as_str()).unwrap_or("");
-                            match action {
-                                "reload" => {
-                                    let _ = stdin_proxy.send_event(UserEvent::Reload);
-                                }
-                                "restart_backend" => {
-                                    let _ = stdin_proxy.send_event(UserEvent::RestartBackend);
-                                }
-                                "update_capabilities" => {
-                                    let caps = val
-                                        .get("capabilities")
-                                        .and_then(|c| c.as_array())
-                                        .map(|arr| {
-                                            arr.iter()
-                                                .filter_map(|i| i.as_str().map(|s| s.to_string()))
-                                                .collect()
-                                        })
-                                        .unwrap_or_default();
-                                    let _ =
-                                        stdin_proxy.send_event(UserEvent::UpdateCapabilities(caps));
-                                }
-                                "exit" => {
-                                    let _ = stdin_proxy.send_event(UserEvent::Exit);
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-            // When stdin is closed (parent process exited), shut down shell event loop cleanly
-            let _ = stdin_proxy.send_event(UserEvent::Exit);
-        });
-    }
-
-    #[cfg(not(debug_assertions))]
-    if config.listen_stdin {
-        tracing::warn!("Dynamic stdin command listener is disabled in release builds");
+        tracing::warn!("Dynamic stdin command listener is disabled in production shell");
     }
 
     // 4. Initialize handler registry
@@ -1271,22 +1245,48 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
     let protocol_asset_root = asset_root.clone();
     let protocol_csp = effective_csp.clone();
     let protocol_custom_csp = config.custom_csp.clone();
-    let protocol_policy = config.network_policy.clone();
     let protocol_window_id = config.window_id.clone();
     let ipc_config = config.clone();
     let ipc_registry = registry.clone();
     let ipc_proxy = proxy.clone();
 
-    let nav_policy = config.network_policy.clone();
     let nav_window_id = config.window_id.clone();
-    let popup_policy = config.network_policy.clone();
     let popup_window_id = config.window_id.clone();
     let popup_rate_limiter = std::sync::Arc::new(net_policy::OpenExternalRateLimiter::default());
 
-    let start_url = if config.network_policy.is_dev_command
-        && let Some(ref dev_origin) = config.network_policy.dev_url_origin
-    {
-        dev_origin.as_canonical()
+    #[cfg(feature = "dev-shell")]
+    let live_policy = std::sync::Arc::new(std::sync::RwLock::new(config.network_policy.clone()));
+    #[cfg(feature = "dev-shell")]
+    let protocol_live_policy = live_policy.clone();
+    #[cfg(feature = "dev-shell")]
+    let nav_live_policy = live_policy.clone();
+    #[cfg(feature = "dev-shell")]
+    let popup_live_policy = live_policy.clone();
+    #[cfg(feature = "dev-shell")]
+    let ipc_live_policy = live_policy.clone();
+
+    #[cfg(not(feature = "dev-shell"))]
+    let protocol_policy = config.network_policy.clone();
+    #[cfg(not(feature = "dev-shell"))]
+    let nav_policy = config.network_policy.clone();
+    #[cfg(not(feature = "dev-shell"))]
+    let popup_policy = config.network_policy.clone();
+
+    #[cfg(feature = "dev-shell")]
+    let dev_start_url = if config.network_policy.is_dev_command {
+        config
+            .network_policy
+            .dev_url_origin
+            .as_ref()
+            .map(|o| o.as_canonical())
+    } else {
+        None
+    };
+    #[cfg(not(feature = "dev-shell"))]
+    let dev_start_url: Option<String> = None;
+
+    let start_url = if let Some(dev_url) = dev_start_url {
+        dev_url
     } else if let Some(ref remote_url) = config.network_policy.remote_url {
         remote_url.clone()
     } else {
@@ -1308,24 +1308,60 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
                     &protocol_window_id,
                 )
             } else {
-                net_policy::handle_protocol_request_with_policy(
-                    request,
-                    &protocol_asset_root,
-                    &protocol_policy,
-                    &protocol_window_id,
-                )
+                #[cfg(feature = "dev-shell")]
+                {
+                    let guard = protocol_live_policy
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner());
+                    net_policy::handle_protocol_request_with_policy(
+                        request,
+                        &protocol_asset_root,
+                        &guard,
+                        &protocol_window_id,
+                    )
+                }
+                #[cfg(not(feature = "dev-shell"))]
+                {
+                    net_policy::handle_protocol_request_with_policy(
+                        request,
+                        &protocol_asset_root,
+                        &protocol_policy,
+                        &protocol_window_id,
+                    )
+                }
             }
         })
         .with_navigation_handler(move |url| {
-            net_policy::handle_navigation_with_policy(&nav_policy, &url, &nav_window_id)
+            #[cfg(feature = "dev-shell")]
+            {
+                let guard = nav_live_policy.read().unwrap_or_else(|e| e.into_inner());
+                net_policy::handle_navigation_with_policy(&guard, &url, &nav_window_id)
+            }
+            #[cfg(not(feature = "dev-shell"))]
+            {
+                net_policy::handle_navigation_with_policy(&nav_policy, &url, &nav_window_id)
+            }
         })
         .with_new_window_req_handler(move |url, _features| {
-            net_policy::handle_new_window_with_policy(
-                &popup_policy,
-                &url,
-                &popup_window_id,
-                &popup_rate_limiter,
-            )
+            #[cfg(feature = "dev-shell")]
+            {
+                let guard = popup_live_policy.read().unwrap_or_else(|e| e.into_inner());
+                net_policy::handle_new_window_with_policy(
+                    &guard,
+                    &url,
+                    &popup_window_id,
+                    &popup_rate_limiter,
+                )
+            }
+            #[cfg(not(feature = "dev-shell"))]
+            {
+                net_policy::handle_new_window_with_policy(
+                    &popup_policy,
+                    &url,
+                    &popup_window_id,
+                    &popup_rate_limiter,
+                )
+            }
         });
 
     if config.network_policy.mode == wavical_netpolicy::NetworkMode::UltraSafe {
@@ -1337,27 +1373,43 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
             let uri = request.uri();
             let body = request.body();
 
-            if ipc_config.network_policy.is_dev_command
-                && let Some(ref recorder) = ipc_config.network_policy.recorder
-                && let Ok(val) = serde_json::from_str::<serde_json::Value>(body)
-                && let Some(rec_obj) = val.get("__wavical_record")
-            {
-                let directive = rec_obj
-                    .get("directive")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let blocked_uri = rec_obj
-                    .get("blockedUri")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                recorder.record_raw(
-                    net_policy::map_csp_directive_to_type(directive),
-                    blocked_uri,
-                );
-                return;
-            }
+            #[cfg(feature = "dev-shell")]
+            let effective_ipc_owned = {
+                let current_policy = ipc_live_policy
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
 
-            match process_ipc_message(uri, body, &ipc_config, &ipc_registry) {
+                if current_policy.is_dev_command
+                    && let Some(ref recorder) = current_policy.recorder
+                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(body)
+                    && let Some(rec_obj) = val.get("__wavical_record")
+                {
+                    let directive = rec_obj
+                        .get("directive")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let blocked_uri = rec_obj
+                        .get("blockedUri")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    recorder.record_raw(
+                        net_policy::map_csp_directive_to_type(directive),
+                        blocked_uri,
+                    );
+                    return;
+                }
+
+                let mut cloned = ipc_config.clone();
+                cloned.network_policy = current_policy;
+                cloned
+            };
+            #[cfg(feature = "dev-shell")]
+            let effective_ipc_config: &WindowConfig = &effective_ipc_owned;
+            #[cfg(not(feature = "dev-shell"))]
+            let effective_ipc_config: &WindowConfig = &ipc_config;
+
+            match process_ipc_message(uri, body, effective_ipc_config, &ipc_registry) {
                 Ok(Some(response)) => match build_delivery_script(&response) {
                     Ok(script) => {
                         if let Err(err) = ipc_proxy.send_event(UserEvent::ExecuteScript(script)) {
@@ -1441,6 +1493,15 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
             );
         }
     }
+
+    #[cfg(feature = "dev-shell")]
+    if let Some(session) = dev_session {
+        session.activate(proxy.clone());
+    }
+
+    #[cfg(feature = "dev-shell")]
+    let mut dev_restart_policy =
+        wavical_protocol::backend_restart_policy::BackendRestartPolicy::new();
 
     // 6. Run tao closure event loop
     tracing::info!("Entering event loop");
@@ -1575,52 +1636,85 @@ pub fn run_with_config(asset_root: PathBuf, mut config: WindowConfig) {
                     }
                 }
             }
-            Event::UserEvent(UserEvent::Reload) => {
-                tracing::info!("Reload requested via dev server control");
-                if let Err(err) = webview.evaluate_script("location.reload();") {
-                    tracing::error!("Failed to reload webview: {err}");
+            #[cfg(feature = "dev-shell")]
+            Event::UserEvent(UserEvent::DevCommand(req)) => match req.action {
+                dev_channel::DevLoopAction::Reload => {
+                    tracing::info!("Reload requested via dev server control");
+                    let res = webview
+                        .evaluate_script("location.reload();")
+                        .map_err(|err| format!("Failed to reload webview: {err}"));
+                    let _ = req.ack_tx.send(res);
                 }
-            }
-            Event::UserEvent(UserEvent::RestartBackend) => {
-                #[cfg(debug_assertions)]
-                {
+                dev_channel::DevLoopAction::RestartBackend => {
                     tracing::info!("Backend restart requested via dev server control");
-                    if let Some(svc) = config
+                    let res = if let Some(svc) = config
                         .backend_service
                         .as_ref()
                         .cloned()
                         .or_else(backend::global_backend_service)
-                        && let Err(err) = svc.restart()
                     {
-                        tracing::error!("Failed to restart backend: {err}");
-                    }
+                        svc.restart().map_err(|err| err.to_string())
+                    } else if config.backend_config.as_ref().is_some_and(|b| b.enabled) {
+                        dev_restart_policy
+                            .record_crash_and_check(std::time::Instant::now())
+                            .map(|_| ())
+                            .map_err(|err| format!("backend crash limit exceeded: {err}"))
+                    } else {
+                        Err("backend is not enabled in wavical.config.js".to_string())
+                    };
+                    let _ = req.ack_tx.send(res);
                 }
-            }
-            Event::UserEvent(UserEvent::UpdateCapabilities(new_caps)) => {
-                #[cfg(debug_assertions)]
-                {
+                dev_channel::DevLoopAction::ReloadConfig {
+                    capabilities,
+                    network_mode: _network_mode,
+                    remote_url,
+                    dev_url,
+                } => {
                     tracing::info!(
-                        "Updating capabilities via dev server control: {:?}",
-                        new_caps
+                        "Reloading config via dev server control: capabilities={:?}",
+                        capabilities
                     );
                     if let Ok(mut lock) = dyn_caps.write() {
                         let mut updated = wavical_ipc::Capabilities::new();
-                        for cap in new_caps {
-                            updated.grant(cap);
+                        for cap in &capabilities {
+                            updated.grant(cap.clone());
                         }
                         *lock = updated;
                     }
-                }
-                #[cfg(not(debug_assertions))]
-                {
-                    tracing::warn!(
-                        "Dynamic capability update ignored in release mode: {:?}",
-                        new_caps
+                    let (current_mode, old_recorder, old_dev_url) = {
+                        let guard = live_policy.read().unwrap_or_else(|e| e.into_inner());
+                        (
+                            guard.mode,
+                            guard.recorder.clone(),
+                            guard.dev_url_origin.as_ref().map(|o| o.as_canonical()),
+                        )
+                    };
+                    let effective_dev_url = dev_url.or(old_dev_url);
+                    let mut updated_policy = net_policy::resolve_shell_network_policy_with_remote(
+                        &asset_root,
+                        config.project_root.as_deref(),
+                        true,
+                        Some(net_policy::mode_label(current_mode)),
+                        effective_dev_url.as_deref(),
+                        remote_url.as_deref(),
+                        capabilities,
                     );
+                    updated_policy.recorder = old_recorder;
+                    if let Ok(mut policy_lock) = live_policy.write() {
+                        *policy_lock = updated_policy;
+                    }
+                    let _ = req.ack_tx.send(Ok(()));
                 }
-            }
+                dev_channel::DevLoopAction::Exit => {
+                    tracing::info!("Exit requested via dev server control");
+                    let _ = req.ack_tx.send(Ok(()));
+                    save_window_state_helper(&window, &loop_window_id, persist_state);
+                    loop_native_service.clear_window(&loop_window_id);
+                    *control_flow = ControlFlow::Exit;
+                }
+            },
             Event::UserEvent(UserEvent::Exit) => {
-                tracing::info!("Exit requested via dev server control");
+                tracing::info!("Exit requested");
                 save_window_state_helper(&window, &loop_window_id, persist_state);
                 loop_native_service.clear_window(&loop_window_id);
                 *control_flow = ControlFlow::Exit;
@@ -2182,15 +2276,15 @@ mod tests {
 
     #[test]
     fn test_stdin_capability_reload_strictly_disabled_in_release() {
-        if !cfg!(debug_assertions) {
+        if !cfg!(feature = "dev-shell") {
             assert!(
                 !is_stdin_capability_reload_enabled(),
-                "Stdin capability reload must be strictly disabled in release builds"
+                "Stdin capability reload must be strictly disabled in production wavical-shell builds"
             );
         } else {
             assert!(
                 is_stdin_capability_reload_enabled(),
-                "Stdin capability reload enabled in debug builds"
+                "Stdin capability reload enabled when dev-shell feature is active"
             );
         }
     }

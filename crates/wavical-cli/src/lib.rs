@@ -15,11 +15,12 @@ pub use windows_registry;
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::{IsTerminal, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitCode, Stdio};
+use std::process::{Child, ChildStdout, Command, ExitCode, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -1273,6 +1274,229 @@ pub fn find_wavical_shell() -> Result<PathBuf, CliError> {
     Ok(PathBuf::from(exe_name))
 }
 
+/// Environment variable passing the parent-generated dev session token to `wavical-shell-dev`.
+pub const DEV_SESSION_TOKEN_ENV: &str = "WAVICAL_DEV_SESSION_TOKEN";
+
+/// Timeout waiting for `wavical-shell-dev` to acknowledge a dev command.
+pub const DEV_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Reply frame sent by `wavical-shell-dev` over stdout as line-delimited JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DevShellReply {
+    pub id: u64,
+    pub ok: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+}
+
+/// Locate the `wavical-shell-dev` executable next to `wavical` (or via `WAVICAL_DEV_SHELL_BIN`).
+/// Returns a clear error if missing and never falls back to the production `wavical-shell`.
+pub fn find_wavical_dev_shell() -> Result<PathBuf, CliError> {
+    if let Ok(env_bin) = std::env::var("WAVICAL_DEV_SHELL_BIN") {
+        let p = PathBuf::from(&env_bin);
+        if p.is_file() {
+            return Ok(p);
+        }
+        return Err(CliError::ShellNotFound(format!(
+            "WAVICAL_DEV_SHELL_BIN points to '{}', which does not exist",
+            p.display()
+        )));
+    }
+
+    let exe_name = if cfg!(windows) {
+        "wavical-shell-dev.exe"
+    } else {
+        "wavical-shell-dev"
+    };
+
+    let current_exe = std::env::current_exe().ok();
+    if let Some(ref cur) = current_exe
+        && let Some(parent) = cur.parent()
+    {
+        let candidate = parent.join(exe_name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        if let Some(grandparent) = parent.parent() {
+            let candidate2 = grandparent.join(exe_name);
+            if candidate2.is_file() {
+                return Ok(candidate2);
+            }
+        }
+    }
+
+    for rel_dir in &[
+        "target/dev-shell/debug",
+        "../target/dev-shell/debug",
+        "../../target/dev-shell/debug",
+        "target/dev-shell/release",
+        "../target/dev-shell/release",
+        "../../target/dev-shell/release",
+    ] {
+        let candidate = PathBuf::from(rel_dir).join(exe_name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    let near = current_exe
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<wavical-bin-dir>".to_string());
+    Err(CliError::ShellNotFound(format!(
+        "could not find '{exe_name}' next to wavical executable (searched '{near}'). Reinstall wavical or build the dev shell with: cargo build -p wavical-shell --bin wavical-shell-dev --features dev-shell --target-dir target/dev-shell"
+    )))
+}
+
+/// Generate a fresh random 128-bit hex session token for authenticating the dev command pipe.
+pub fn generate_dev_session_token() -> Result<String, CliError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|e| CliError::ShellError(format!("failed to generate dev session token: {e}")))?;
+    Ok(hex::encode(bytes))
+}
+
+/// Spawn a background reader decoding line-delimited [`DevShellReply`] messages from child stdout.
+pub fn spawn_dev_reply_reader(
+    stdout: ChildStdout,
+) -> mpsc::Receiver<Result<DevShellReply, String>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            match line {
+                Ok(raw) => {
+                    let trimmed = raw.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let parsed = serde_json::from_str::<DevShellReply>(trimmed)
+                        .map_err(|e| format!("invalid reply from dev shell: {e}"));
+                    if tx.send(parsed).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("failed reading dev shell stdout: {e}")));
+                    break;
+                }
+            }
+        }
+    });
+    rx
+}
+
+/// Send a JSON dev command line to the shell and block until the matching `id` reply
+/// arrives or `timeout` expires.
+pub fn send_dev_command_and_wait(
+    stdin: &mut impl Write,
+    reply_rx: &mpsc::Receiver<Result<DevShellReply, String>>,
+    expected_id: u64,
+    payload: &serde_json::Value,
+    timeout: Duration,
+) -> Result<DevShellReply, String> {
+    let line = serde_json::to_string(payload)
+        .map_err(|e| format!("failed to serialize dev command: {e}"))?;
+    writeln!(stdin, "{line}").map_err(|e| format!("failed writing dev command to shell: {e}"))?;
+    stdin
+        .flush()
+        .map_err(|e| format!("failed flushing dev command pipe: {e}"))?;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Err(format!(
+                "dev shell did not acknowledge command within {}s",
+                timeout.as_secs()
+            ));
+        };
+        match reply_rx.recv_timeout(remaining) {
+            Ok(Ok(reply)) => {
+                if reply.id != expected_id {
+                    continue;
+                }
+                if reply.ok {
+                    return Ok(reply);
+                }
+                return Err(reply
+                    .error
+                    .unwrap_or_else(|| "dev shell returned failure without message".to_string()));
+            }
+            Ok(Err(parse_err)) => return Err(parse_err),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(format!(
+                    "dev shell did not acknowledge command within {}s",
+                    timeout.as_secs()
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("dev shell command channel closed before acknowledgement".to_string());
+            }
+        }
+    }
+}
+
+/// Format a human-readable summary of what changed across a `wavical.config.js` or allowlist reload.
+pub fn summarize_config_changes(
+    old_cfg: &wavical_config::AppConfig,
+    new_cfg: &wavical_config::AppConfig,
+    allowlist_changed: bool,
+    mode: &str,
+) -> String {
+    let mut parts = Vec::new();
+    let old_caps: std::collections::BTreeSet<String> =
+        old_cfg.granted_capabilities().into_iter().collect();
+    let new_caps: std::collections::BTreeSet<String> =
+        new_cfg.granted_capabilities().into_iter().collect();
+
+    let added: Vec<String> = new_caps.difference(&old_caps).cloned().collect();
+    let removed: Vec<String> = old_caps.difference(&new_caps).cloned().collect();
+    if !added.is_empty() {
+        parts.push(format!("added capabilities: {}", added.join(", ")));
+    }
+    if !removed.is_empty() {
+        parts.push(format!("removed capabilities: {}", removed.join(", ")));
+    }
+    if old_caps == new_caps && !allowlist_changed {
+        parts.push("capabilities unchanged".to_string());
+    }
+
+    let old_remote = old_cfg
+        .window
+        .as_ref()
+        .and_then(|w| w.remote_url.as_deref());
+    let new_remote = new_cfg
+        .window
+        .as_ref()
+        .and_then(|w| w.remote_url.as_deref());
+    if old_remote != new_remote {
+        if mode == "ultra-safe" {
+            parts.push("remoteUrl changed (ignored in ultra-safe mode)".to_string());
+        } else {
+            parts.push("remoteUrl updated".to_string());
+        }
+    }
+
+    if old_cfg.dev_url() != new_cfg.dev_url() {
+        parts.push("dev.url updated for next page load".to_string());
+    }
+
+    if allowlist_changed {
+        if mode == "ultra-safe" {
+            parts.push("allowlist edited; CSP unchanged (ultra-safe mode)".to_string());
+        } else {
+            parts.push("allowlist/CSP updated for next page load".to_string());
+        }
+    } else if mode != "ultra-safe" && old_remote != new_remote {
+        parts.push("CSP/policy updated for next page load".to_string());
+    }
+
+    parts.join("; ")
+}
+
 /// Launch development server with file watching and live shell reload.
 pub fn run_dev(dir: &Path) -> Result<(), CliError> {
     run_dev_with_mode(dir, "open", false)
@@ -1335,15 +1559,17 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         }
     }
 
-    // 4. Locate wavical-shell
-    let shell_bin = find_wavical_shell()?;
+    // 4. Locate wavical-shell-dev (never fall back to production wavical-shell)
+    let shell_bin = find_wavical_dev_shell()?;
+    let session_token = generate_dev_session_token()?;
 
-    // 4. Spawn wavical-shell with initial configuration
+    // 5. Spawn wavical-shell-dev with initial configuration and parent session token
     let caps_json =
         serde_json::to_string(&config.granted_capabilities()).unwrap_or_else(|_| "[]".to_string());
 
     let mut cmd = Command::new(&shell_bin);
-    cmd.arg("--app-id")
+    cmd.env(DEV_SESSION_TOKEN_ENV, &session_token)
+        .arg("--app-id")
         .arg(&config.app_id)
         .arg("--window-title")
         .arg(config.window_title())
@@ -1383,6 +1609,9 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
     {
         cmd.arg("--backend-config").arg(backend_json);
     }
+    if let Some(dev_url) = config.dev_url() {
+        cmd.arg("--dev-url").arg(dev_url);
+    }
     if let Some(ref remote_url) = config.window.as_ref().and_then(|w| w.remote_url.clone()) {
         eprintln!(
             "WARNING: window.remoteUrl ('{remote_url}') in open mode grants native app capabilities to that remote site!"
@@ -1399,25 +1628,53 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
 
     let mut child = cmd
         .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
+        .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(CliError::LaunchShellFailed)?;
+
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| CliError::ShellError("dev shell stdin pipe unavailable".to_string()))?;
+    let child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| CliError::ShellError("dev shell stdout pipe unavailable".to_string()))?;
+    let reply_rx = spawn_dev_reply_reader(child_stdout);
+
+    // Authenticate command channel before advertising dev server ready
+    let auth_payload = serde_json::json!({
+        "cmd": "auth",
+        "id": 0,
+        "token": session_token,
+    });
+    if let Err(err) = send_dev_command_and_wait(
+        &mut child_stdin,
+        &reply_rx,
+        0,
+        &auth_payload,
+        DEV_COMMAND_TIMEOUT,
+    ) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(CliError::ShellError(format!(
+            "dev shell session authentication failed: {err}"
+        )));
+    }
 
     let pid = child.id();
     println!("Dev server running (PID: {pid}). Press Ctrl+C to stop.");
     let _ = std::io::stdout().flush();
 
-    let mut child_stdin = child.stdin.take();
-
-    // 5. Ctrl+C handler
+    // 6. Ctrl+C handler
     let running = Arc::new(AtomicBool::new(true));
     let r_ctrlc = running.clone();
     let _ = ctrlc::set_handler(move || {
         r_ctrlc.store(false, Ordering::SeqCst);
     });
 
-    // 6. Setup filesystem watching on src/, wavical.config.js, and backend/ (when enabled)
+    // 7. Setup filesystem watching on src/, wavical.config.js, wavical.allowlist.json, and backend/
     let backend_enabled = config.backend.as_ref().is_some_and(|b| b.enabled);
     let backend_dir = project_root.join("backend");
     let (watch_tx, watch_rx) = std::sync::mpsc::channel();
@@ -1429,7 +1686,7 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         Ok(mut w) => {
             use notify::Watcher;
             let _ = w.watch(&src_dir, notify::RecursiveMode::Recursive);
-            let _ = w.watch(&config_file, notify::RecursiveMode::NonRecursive);
+            let _ = w.watch(&project_root, notify::RecursiveMode::NonRecursive);
             if backend_enabled && backend_dir.is_dir() {
                 let _ = w.watch(&backend_dir, notify::RecursiveMode::Recursive);
             }
@@ -1441,9 +1698,11 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         }
     };
 
+    let mut current_config = config;
     let mut last_asset_reload = Instant::now();
     let mut last_config_reload = Instant::now();
     let mut last_backend_restart = Instant::now();
+    let mut next_cmd_id: u64 = 1;
 
     while running.load(Ordering::SeqCst) {
         // Check if child shell has terminated
@@ -1461,12 +1720,16 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         // Wait for file changes with 100ms timeout
         if let Ok(Ok(event)) = watch_rx.recv_timeout(Duration::from_millis(100)) {
             let mut config_changed = false;
+            let mut allowlist_changed = false;
             let mut asset_changed = false;
             let mut backend_changed = false;
 
             for path in &event.paths {
-                if path.file_name().and_then(|n| n.to_str()) == Some("wavical.config.js") {
+                let fname = path.file_name().and_then(|n| n.to_str());
+                if fname == Some("wavical.config.js") {
                     config_changed = true;
+                } else if fname == Some("wavical.allowlist.json") {
+                    allowlist_changed = true;
                 } else if path.starts_with(&src_dir) {
                     asset_changed = true;
                 } else if backend_enabled && path.starts_with(&backend_dir) {
@@ -1480,24 +1743,61 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
                 }
             }
 
-            // Handle config file change
-            if config_changed && last_config_reload.elapsed() > Duration::from_millis(150) {
+            // Handle config / allowlist change
+            if (config_changed || allowlist_changed)
+                && last_config_reload.elapsed() > Duration::from_millis(150)
+            {
                 last_config_reload = Instant::now();
                 println!("warning: config changed, reloading...");
                 let _ = std::io::stdout().flush();
                 match wavical_config::validate_config(&project_root) {
                     Ok(new_config) => {
                         let caps = new_config.granted_capabilities();
-                        if let Some(ref mut stdin) = child_stdin {
-                            let payload = serde_json::json!({
-                                "action": "update_capabilities",
-                                "capabilities": caps,
-                            });
-                            let _ = writeln!(stdin, "{}", payload);
-                            let _ = stdin.flush();
+                        let remote_url = new_config
+                            .window
+                            .as_ref()
+                            .and_then(|w| w.remote_url.clone());
+                        let dev_url = new_config.dev_url().map(str::to_string);
+                        let cmd_id = next_cmd_id;
+                        next_cmd_id = next_cmd_id.saturating_add(1);
+                        let payload = serde_json::json!({
+                            "cmd": "reload-config",
+                            "id": cmd_id,
+                            "token": session_token,
+                            "capabilities": caps,
+                            "networkMode": mode,
+                            "remoteUrl": remote_url,
+                            "devUrl": dev_url,
+                        });
+                        match send_dev_command_and_wait(
+                            &mut child_stdin,
+                            &reply_rx,
+                            cmd_id,
+                            &payload,
+                            DEV_COMMAND_TIMEOUT,
+                        ) {
+                            Ok(_reply) => {
+                                let summary = summarize_config_changes(
+                                    &current_config,
+                                    &new_config,
+                                    allowlist_changed,
+                                    mode,
+                                );
+                                current_config = new_config;
+                                if summary.is_empty() {
+                                    println!("✓ Config reloaded. Capability set updated.");
+                                } else {
+                                    println!(
+                                        "✓ Config reloaded. Capability set updated. ({summary})"
+                                    );
+                                }
+                                let _ = std::io::stdout().flush();
+                            }
+                            Err(err) => {
+                                eprintln!("error: config reload failed: {err}");
+                                let _ = std::io::stderr().flush();
+                            }
                         }
-                        println!("✓ Config reloaded. Capability set updated.");
-                        let _ = std::io::stdout().flush();
                     }
                     Err(err) => {
                         println!("warning: invalid config: {err}\nkeeping current config running.");
@@ -1512,39 +1812,85 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
                 last_asset_reload = Instant::now();
                 println!("info: asset changed, reloading...");
                 let _ = std::io::stdout().flush();
-                if let Some(ref mut stdin) = child_stdin {
-                    let payload = serde_json::json!({ "action": "reload" });
-                    let _ = writeln!(stdin, "{}", payload);
-                    let _ = stdin.flush();
+                let cmd_id = next_cmd_id;
+                next_cmd_id = next_cmd_id.saturating_add(1);
+                let payload = serde_json::json!({
+                    "cmd": "reload",
+                    "id": cmd_id,
+                    "token": session_token,
+                });
+                match send_dev_command_and_wait(
+                    &mut child_stdin,
+                    &reply_rx,
+                    cmd_id,
+                    &payload,
+                    DEV_COMMAND_TIMEOUT,
+                ) {
+                    Ok(_reply) => {
+                        println!("✓ Reloaded in {}ms", start.elapsed().as_millis().max(1));
+                        let _ = std::io::stdout().flush();
+                    }
+                    Err(err) => {
+                        eprintln!("error: reload failed: {err}");
+                        let _ = std::io::stderr().flush();
+                    }
                 }
-                println!("✓ Reloaded in {}ms", start.elapsed().as_millis());
-                let _ = std::io::stdout().flush();
             }
 
             // Handle backend file change (debounced)
             if backend_changed && last_backend_restart.elapsed() > Duration::from_millis(250) {
+                let start = Instant::now();
                 last_backend_restart = Instant::now();
                 println!("info: backend changed, restarting...");
                 let _ = std::io::stdout().flush();
-                if let Some(ref mut stdin) = child_stdin {
-                    let payload = serde_json::json!({ "action": "restart_backend" });
-                    let _ = writeln!(stdin, "{}", payload);
-                    let _ = stdin.flush();
+                let cmd_id = next_cmd_id;
+                next_cmd_id = next_cmd_id.saturating_add(1);
+                let payload = serde_json::json!({
+                    "cmd": "restart-backend",
+                    "id": cmd_id,
+                    "token": session_token,
+                });
+                match send_dev_command_and_wait(
+                    &mut child_stdin,
+                    &reply_rx,
+                    cmd_id,
+                    &payload,
+                    DEV_COMMAND_TIMEOUT,
+                ) {
+                    Ok(_reply) => {
+                        println!(
+                            "✓ Backend restarted in {}ms",
+                            start.elapsed().as_millis().max(1)
+                        );
+                        let _ = std::io::stdout().flush();
+                    }
+                    Err(err) => {
+                        eprintln!("error: backend restart failed: {err}");
+                        let _ = std::io::stderr().flush();
+                    }
                 }
             }
         }
     }
 
     // Clean child shutdown
-    terminate_child(&mut child, child_stdin.as_mut());
+    terminate_child(&mut child, &mut child_stdin, &session_token, next_cmd_id);
     Ok(())
 }
 
-fn terminate_child(child: &mut Child, child_stdin: Option<&mut std::process::ChildStdin>) {
-    if let Some(stdin) = child_stdin {
-        let _ = writeln!(stdin, "{{\"action\":\"exit\"}}");
-        let _ = stdin.flush();
-    }
+fn terminate_child(
+    child: &mut Child,
+    child_stdin: &mut std::process::ChildStdin,
+    session_token: &str,
+    cmd_id: u64,
+) {
+    let payload = serde_json::json!({
+        "cmd": "exit",
+        "id": cmd_id,
+        "token": session_token,
+    });
+    let _ = writeln!(child_stdin, "{payload}");
+    let _ = child_stdin.flush();
     let _ = child.kill();
     let _ = child.wait();
 }

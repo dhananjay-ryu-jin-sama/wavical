@@ -52,10 +52,107 @@ function getGitShortCommit(rootDir) {
   return res.stdout.trim();
 }
 
+/**
+ * Return the separate cargo build invocations required so Cargo feature unification
+ * never leaks `dev-shell` into the production `wavical-shell` binary.
+ */
+function getPrepackBuildInvocations() {
+  return [
+    {
+      label: "CLI (wavical)",
+      cmd: "cargo",
+      args: ["build", "--release", "--locked", "-p", "wavical-cli", "--bin", "wavical"],
+      srcRelDir: path.join("target", "release"),
+      binBase: "wavical",
+    },
+    {
+      label: "Production shell (wavical-shell)",
+      cmd: "cargo",
+      args: ["build", "--release", "--locked", "-p", "wavical-shell", "--bin", "wavical-shell"],
+      srcRelDir: path.join("target", "release"),
+      binBase: "wavical-shell",
+    },
+    {
+      label: "Dev shell (wavical-shell-dev)",
+      cmd: "cargo",
+      args: [
+        "build",
+        "--release",
+        "--locked",
+        "-p",
+        "wavical-shell",
+        "--bin",
+        "wavical-shell-dev",
+        "--features",
+        "dev-shell",
+        "--target-dir",
+        "target/dev-shell",
+      ],
+      srcRelDir: path.join("target", "dev-shell", "release"),
+      binBase: "wavical-shell-dev",
+    },
+  ];
+}
+
+/**
+ * Guard verifying that production and dev shells are never built in the same cargo invocation,
+ * that production does not enable `dev-shell`, and that dev shell uses `--target-dir target/dev-shell`.
+ */
+function validatePrepackBuildInvocations(invocations) {
+  let sawProdShell = false;
+  let sawDevShell = false;
+
+  for (const inv of invocations) {
+    const args = inv.args || [];
+    const hasProd = args.some((a, i) => a === "--bin" && args[i + 1] === "wavical-shell");
+    const hasDev = args.some((a, i) => a === "--bin" && args[i + 1] === "wavical-shell-dev");
+    const hasDevFeature = args.some(
+      (a, i) => a === "--features" && typeof args[i + 1] === "string" && args[i + 1].split(",").includes("dev-shell")
+    );
+    const targetDirIdx = args.indexOf("--target-dir");
+    const targetDir = targetDirIdx >= 0 ? args[targetDirIdx + 1] : null;
+
+    if (hasProd && hasDev) {
+      throw new Error(
+        "Invalid build plan: wavical-shell and wavical-shell-dev must not be built in one cargo invocation (would unify dev-shell feature)"
+      );
+    }
+    if (hasProd) {
+      if (hasDevFeature) {
+        throw new Error(
+          "Invalid build plan: production wavical-shell must not enable dev-shell feature"
+        );
+      }
+      sawProdShell = true;
+    }
+    if (hasDev) {
+      if (!hasDevFeature) {
+        throw new Error(
+          "Invalid build plan: wavical-shell-dev must enable --features dev-shell"
+        );
+      }
+      if (!targetDir || targetDir.replace(/\\/g, "/") !== "target/dev-shell") {
+        throw new Error(
+          `Invalid build plan: wavical-shell-dev must use --target-dir target/dev-shell (got ${targetDir})`
+        );
+      }
+      sawDevShell = true;
+    }
+  }
+
+  if (!sawProdShell || !sawDevShell) {
+    throw new Error(
+      "Invalid build plan: must include separate builds for wavical-shell and wavical-shell-dev"
+    );
+  }
+}
+
 function prepack({
   rootDir = path.resolve(__dirname, ".."),
   strict = false,
   allowDirty = process.env.WAVICAL_ALLOW_DIRTY === "1",
+  runCheckedFn = runChecked,
+  verifyPackageFn = verifyPackageDir,
 } = {}) {
   if (strict && allowDirty) {
     throw new Error(
@@ -85,50 +182,29 @@ function prepack({
 
   const commit = getGitShortCommit(rootDir);
 
-  // b. Build release binaries with locked Cargo.lock
-  const buildArgs = [
-    "build",
-    "--release",
-    "--locked",
-    "--bin",
-    "wavical",
-    "--bin",
-    "wavical-shell",
-  ];
+  // b. Build release binaries in separate cargo invocations with separate target dirs
+  const invocations = getPrepackBuildInvocations();
+  validatePrepackBuildInvocations(invocations);
 
-  // Include wavical-dev-shell if/when F2 adds it
-  const shellCargoToml = fs.readFileSync(
-    path.join(rootDir, "crates", "wavical-shell", "Cargo.toml"),
-    "utf8"
-  );
-  const hasDevShell = /name\s*=\s*"wavical-dev-shell"/.test(shellCargoToml);
-  if (hasDevShell) {
-    buildArgs.push("--bin", "wavical-dev-shell");
+  for (const inv of invocations) {
+    console.log(`Building ${inv.label} (commit ${commit}, dirty=${isDirty})...`);
+    runCheckedFn(inv.cmd, inv.args, {
+      cwd: rootDir,
+      env: {
+        ...process.env,
+        WAVICAL_GIT_COMMIT: commit,
+        WAVICAL_GIT_DIRTY: isDirty ? "true" : "false",
+      },
+    });
   }
 
-  console.log(`Building release binaries (commit ${commit}, dirty=${isDirty})...`);
-  runChecked("cargo", buildArgs, {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      WAVICAL_GIT_COMMIT: commit,
-      WAVICAL_GIT_DIRTY: isDirty ? "true" : "false",
-    },
-  });
-
   // c. Copy fresh outputs into bin/
-  const releaseDir = path.join(rootDir, "target", "release");
   const binDir = path.join(rootDir, "bin");
   fs.mkdirSync(binDir, { recursive: true });
 
-  const binaries = ["wavical", "wavical-shell"];
-  if (hasDevShell) {
-    binaries.push("wavical-dev-shell");
-  }
-
-  for (const base of binaries) {
-    const filename = binaryFilename(base);
-    const src = path.join(releaseDir, filename);
+  for (const inv of invocations) {
+    const filename = binaryFilename(inv.binBase);
+    const src = path.join(rootDir, inv.srcRelDir, filename);
     const dst = path.join(binDir, filename);
     if (!fs.existsSync(src)) {
       throw new Error(`Expected freshly built release binary missing: ${src}`);
@@ -138,7 +214,7 @@ function prepack({
   }
 
   // d. Run full package verification against bin/
-  verifyPackageDir({
+  verifyPackageFn({
     packageDir: rootDir,
     expectedCommit: commit,
     allowDirty: allowDirty && !strict,
@@ -163,5 +239,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  getPrepackBuildInvocations,
   prepack,
+  validatePrepackBuildInvocations,
 };

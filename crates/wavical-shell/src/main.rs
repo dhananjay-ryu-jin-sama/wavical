@@ -37,11 +37,6 @@ pub struct ShellCli {
     #[arg(long, env = "WAVICAL_ASSET_ROOT")]
     pub asset_root: Option<PathBuf>,
 
-    /// Listen on stdin for dynamic dev commands (reload, update_capabilities, exit)
-    #[cfg(debug_assertions)]
-    #[arg(long)]
-    pub listen_stdin: bool,
-
     /// Persist window size, position, and maximized state across sessions
     #[arg(long, env = "WAVICAL_PERSIST_STATE")]
     pub persist_state: Option<bool>,
@@ -70,25 +65,13 @@ pub struct ShellCli {
     #[arg(long, env = "WAVICAL_PROJECT_ROOT")]
     pub project_root: Option<PathBuf>,
 
-    /// Run in development server mode
-    #[arg(long)]
-    pub dev: bool,
-
-    /// Network mode for dev commands (open, safe, ultra-safe). Ignored for built apps.
+    /// Network mode override (ignored for built apps; read strictly from manifest).
     #[arg(long)]
     pub network_mode: Option<String>,
 
-    /// Dev server URL (localhost/127.0.0.1 with port) for dev commands only.
-    #[arg(long)]
-    pub dev_url: Option<String>,
-
-    /// Remote UI URL from window.remoteUrl (dev commands only; built apps use manifest).
+    /// Remote UI URL from window.remoteUrl (built apps use manifest).
     #[arg(long)]
     pub remote_url: Option<String>,
-
-    /// Record blocked events to .wavical/recorded-blocks.json (dev-safe / dev-ultra-safe only).
-    #[arg(long)]
-    pub record: bool,
 }
 
 fn main() {
@@ -126,15 +109,12 @@ fn main() {
                 }
             }
         }
-    } else if !args.dev {
+    } else {
         // Phase 0 backward compatibility: grant core.ping for bare execution
         granted_caps.push("core.ping".to_string());
         capabilities.grant("core.ping");
     }
 
-    #[cfg(debug_assertions)]
-    let listen_stdin = args.listen_stdin || args.dev;
-    #[cfg(not(debug_assertions))]
     let listen_stdin = false;
     let dyn_caps = Arc::new(RwLock::new(capabilities.clone()));
     let title = args
@@ -187,26 +167,15 @@ fn main() {
         .as_deref()
         .and_then(|raw| serde_json::from_str::<wavical_config::BackendConfig>(raw).ok());
 
-    let mut network_policy = wavical_shell::net_policy::resolve_shell_network_policy_with_remote(
+    let network_policy = wavical_shell::net_policy::resolve_shell_network_policy_with_remote(
         &asset_root,
         args.project_root.as_deref(),
-        args.dev,
+        false,
         args.network_mode.as_deref(),
-        args.dev_url.as_deref(),
+        None,
         args.remote_url.as_deref(),
         granted_caps,
     );
-    if args.dev && args.record {
-        let rec_path = args
-            .project_root
-            .as_deref()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join(".wavical")
-            .join("recorded-blocks.json");
-        network_policy.recorder = Some(std::sync::Arc::new(
-            wavical_shell::net_policy::BlockRecorder::new(Some(rec_path)),
-        ));
-    }
 
     let config = WindowConfig {
         window_id: args.app_id,

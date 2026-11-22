@@ -16,12 +16,29 @@ const REQUIRED_CLI_COMMANDS = [
   "allowlist",
 ];
 
-const REQUIRED_SHELL_FLAGS = [
+const REQUIRED_PROD_SHELL_FLAGS = [
   "--network-mode",
-  "--dev-url",
   "--remote-url",
-  "--record",
+];
+
+const FORBIDDEN_PROD_SHELL_FLAGS = [
   "--dev",
+  "--dev-url",
+  "--record",
+  "--listen-stdin",
+];
+
+const REQUIRED_DEV_SHELL_FLAGS = [
+  "--dev",
+  "--dev-url",
+  "--record",
+  "--network-mode",
+  "--remote-url",
+];
+
+const DEV_BINARY_MARKERS = [
+  "WAVICAL_DEV_SHELL_CHANNEL_V1_MARKER",
+  "WAVICAL_DEV_SESSION_TOKEN",
 ];
 
 function binaryFilename(base) {
@@ -413,6 +430,7 @@ function verifyPackageDir({
   previousVersion = null,
   skipPreviousCheck = false,
   skipDocsCheck = false,
+  skipDevMarkerCheck = false,
 }) {
   const pkgJsonPath = path.join(packageDir, "package.json");
   if (!fs.existsSync(pkgJsonPath)) {
@@ -437,10 +455,12 @@ function verifyPackageDir({
 
   const cliBinName = binaryFilename("wavical");
   const shellBinName = binaryFilename("wavical-shell");
+  const devShellBinName = binaryFilename("wavical-shell-dev");
   const cliBin = path.join(binDir, cliBinName);
   const shellBin = path.join(binDir, shellBinName);
+  const devShellBin = path.join(binDir, devShellBinName);
 
-  for (const binPath of [cliBin, shellBin]) {
+  for (const binPath of [cliBin, shellBin, devShellBin]) {
     if (!fs.existsSync(binPath)) {
       throw new Error(`Missing required binary: ${binPath}`);
     }
@@ -451,7 +471,7 @@ function verifyPackageDir({
       ? expectedCommit
       : process.env.WAVICAL_GIT_COMMIT || getCurrentGitCommit(packageDir);
 
-  // 1. Check --version on both binaries
+  // 1. Check --version on all three binaries
   const cliVerRes = runCommand(cliBin, ["--version"]);
   if (cliVerRes.status !== 0) {
     throw new Error(
@@ -468,9 +488,18 @@ function verifyPackageDir({
   }
   const shellVerOut = (shellVerRes.stdout || "").trim();
 
+  const devShellVerRes = runCommand(devShellBin, ["--version"]);
+  if (devShellVerRes.status !== 0) {
+    throw new Error(
+      `${devShellBinName} --version failed: ${(devShellVerRes.stderr || devShellVerRes.stdout || "").trim()}`
+    );
+  }
+  const devShellVerOut = (devShellVerRes.stdout || "").trim();
+
   for (const [label, out] of [
     [cliBinName, cliVerOut],
     [shellBinName, shellVerOut],
+    [devShellBinName, devShellVerOut],
   ]) {
     if (!out.includes(expectedVersion)) {
       throw new Error(
@@ -487,15 +516,16 @@ function verifyPackageDir({
     }
   }
 
-  // Ensure CLI and shell report identical version+commit suffixes
+  // Ensure CLI and both shells report identical version+commit suffixes
   const cliVerTail = cliVerOut.replace(/^\S+\s+/, "");
   const shellVerTail = shellVerOut.replace(/^\S+\s+/, "");
-  if (cliVerTail !== shellVerTail) {
+  const devShellVerTail = devShellVerOut.replace(/^\S+\s+/, "");
+  if (cliVerTail !== shellVerTail || cliVerTail !== devShellVerTail) {
     throw new Error(
-      `CLI and shell versions differ: "${cliVerOut}" vs "${shellVerOut}"`
+      `CLI and shell versions differ: "${cliVerOut}" vs "${shellVerOut}" vs "${devShellVerOut}"`
     );
   }
-  console.log(`Version check OK: ${cliVerOut} / ${shellVerOut}`);
+  console.log(`Version check OK: ${cliVerOut} / ${shellVerOut} / ${devShellVerOut}`);
 
   // 2. Check wavical.exe --help commands and wrapper execution
   const cliHelpRes = runCommand(cliBin, ["--help"]);
@@ -519,20 +549,59 @@ function verifyPackageDir({
     );
   }
 
-  // 3. Check wavical-shell.exe --help network-mode options
+  // 3. Check wavical-shell.exe --help: positive prod flags + NEGATIVE dev flags check
   const shellHelpRes = runCommand(shellBin, ["--help"]);
   if (shellHelpRes.status !== 0) {
     throw new Error(`${shellBinName} --help failed`);
   }
   const shellFlags = parseHelpFlags(shellHelpRes.stdout || "");
-  for (const requiredFlag of REQUIRED_SHELL_FLAGS) {
+  for (const requiredFlag of REQUIRED_PROD_SHELL_FLAGS) {
     if (!shellFlags.has(requiredFlag)) {
       throw new Error(
-        `${shellBinName} --help is missing required network-mode option "${requiredFlag}"`
+        `${shellBinName} --help is missing required production option "${requiredFlag}"`
       );
     }
   }
-  console.log("Help & option checks OK.");
+  for (const forbiddenFlag of FORBIDDEN_PROD_SHELL_FLAGS) {
+    if (shellFlags.has(forbiddenFlag)) {
+      throw new Error(
+        `Security error: production ${shellBinName} --help must NOT expose dev-only option "${forbiddenFlag}"`
+      );
+    }
+  }
+
+  // 3b. Check wavical-shell-dev.exe --help: positive dev flags check
+  const devShellHelpRes = runCommand(devShellBin, ["--help"]);
+  if (devShellHelpRes.status !== 0) {
+    throw new Error(`${devShellBinName} --help failed`);
+  }
+  const devShellFlags = parseHelpFlags(devShellHelpRes.stdout || "");
+  for (const requiredFlag of REQUIRED_DEV_SHELL_FLAGS) {
+    if (!devShellFlags.has(requiredFlag)) {
+      throw new Error(
+        `${devShellBinName} --help is missing required dev option "${requiredFlag}"`
+      );
+    }
+  }
+
+  // 3c. Negative binary string scan on production wavical-shell.exe
+  const prodShellBytes = fs.readFileSync(shellBin);
+  for (const marker of DEV_BINARY_MARKERS) {
+    if (prodShellBytes.includes(Buffer.from(marker, "utf8"))) {
+      throw new Error(
+        `Security error: production ${shellBinName} contains dev command-channel marker "${marker}"`
+      );
+    }
+  }
+  if (!skipDevMarkerCheck) {
+    const devShellBytes = fs.readFileSync(devShellBin);
+    if (!devShellBytes.includes(Buffer.from(DEV_BINARY_MARKERS[0], "utf8"))) {
+      throw new Error(
+        `${devShellBinName} is missing expected dev marker "${DEV_BINARY_MARKERS[0]}"`
+      );
+    }
+  }
+  console.log("Help, option, and dev-marker isolation checks OK.");
 
   // 4. Check docs parity (README.md & CHANGELOG.md)
   if (!skipDocsCheck) {
@@ -541,9 +610,10 @@ function verifyPackageDir({
   }
 
   // 5. Write or verify bin/checksums.txt
+  const binaryNames = [cliBinName, shellBinName, devShellBinName];
   const hashes = writeOrVerifyChecksums({
     binDir,
-    binaryNames: [cliBinName, shellBinName],
+    binaryNames,
     writeChecksums,
   });
 
@@ -552,7 +622,7 @@ function verifyPackageDir({
     packageName: pkg.name || "wavical",
     currentVersion: expectedVersion,
     currentHashes: hashes,
-    binaryNames: [cliBinName, shellBinName],
+    binaryNames,
     previousTarball,
     previousVersion,
     skipPreviousCheck,
@@ -562,6 +632,7 @@ function verifyPackageDir({
     version: expectedVersion,
     cliVersion: cliVerOut,
     shellVersion: shellVerOut,
+    devShellVersion: devShellVerOut,
     hashes,
   };
 }
@@ -670,8 +741,11 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEV_BINARY_MARKERS,
+  FORBIDDEN_PROD_SHELL_FLAGS,
   REQUIRED_CLI_COMMANDS,
-  REQUIRED_SHELL_FLAGS,
+  REQUIRED_DEV_SHELL_FLAGS,
+  REQUIRED_PROD_SHELL_FLAGS,
   extractDocCliReferences,
   parseHelpCommands,
   parseHelpFlags,

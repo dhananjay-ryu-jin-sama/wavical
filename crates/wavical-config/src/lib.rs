@@ -97,12 +97,18 @@ impl Default for WindowConfig {
 pub struct DevConfig {
     #[serde(default = "default_dev_port")]
     pub port: u16,
+
+    /// Optional external dev server URL (e.g. `http://localhost:5173` for Vite/React).
+    /// Must use `http` or `https`, host `localhost` or `127.0.0.1`, and an explicit port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 impl Default for DevConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_DEV_PORT,
+            url: None,
         }
     }
 }
@@ -554,6 +560,11 @@ impl AppConfig {
             .unwrap_or(DEFAULT_DEV_PORT)
     }
 
+    /// Configured dev server URL (`dev.url`), if specified.
+    pub fn dev_url(&self) -> Option<&str> {
+        self.dev.as_ref().and_then(|d| d.url.as_deref())
+    }
+
     /// Check if a specific capability has been explicitly granted (`true`).
     pub fn is_capability_granted(&self, capability: &str) -> bool {
         self.capabilities
@@ -721,6 +732,9 @@ pub enum ValidationError {
     #[error("Updater configuration error: {0}")]
     InvalidUpdaterConfig(String),
 
+    #[error("Dev configuration error: {0}")]
+    InvalidDevConfig(String),
+
     #[error(
         "in 'capabilities.{0}': capability '{0}' requires 'updater.enabled: true'; set 'updater: {{ enabled: true }}' in wavical.config.js to enable updater capabilities"
     )]
@@ -854,6 +868,10 @@ pub fn parse_config_json(json_str: &str) -> Result<AppConfig, ValidationError> {
 
     if let Some(ref updater) = config.updater {
         validate_updater_config(updater)?;
+    }
+
+    if let Some(ref dev) = config.dev {
+        validate_dev_config(dev)?;
     }
 
     // Phase 3 rule: any ai.* capability requires ai.enabled: true
@@ -1412,6 +1430,77 @@ pub fn validate_public_key_format(key: &str) -> bool {
         .unwrap_or_else(|| key.trim());
 
     is_valid_base64_of_length(clean, 32) || is_valid_base64_of_length(clean, 42)
+}
+
+/// Validate the `dev` section of `wavical.config.js` (including `dev.url` per Phase 4.5 Plan 1.12).
+pub fn validate_dev_config(dev: &DevConfig) -> Result<(), ValidationError> {
+    if let Some(ref raw_url) = dev.url {
+        validate_dev_url_value(raw_url)?;
+    }
+    Ok(())
+}
+
+/// Validate `dev.url`: must use `http` or `https`, host `localhost` or `127.0.0.1` only,
+/// require an explicit port (`1..=65535`), and disallow userinfo, paths, queries, or fragments.
+pub fn validate_dev_url_value(raw_url: &str) -> Result<(), ValidationError> {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() {
+        return Err(ValidationError::InvalidDevConfig(
+            "in 'dev.url': URL cannot be empty".to_string(),
+        ));
+    }
+    let Some((scheme_raw, rest)) = trimmed.split_once("://") else {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': invalid URL '{raw_url}'; expected http://localhost:<port> or https://localhost:<port>"
+        )));
+    };
+    let scheme = scheme_raw.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': scheme '{scheme_raw}' is not allowed; only http and https are permitted"
+        )));
+    }
+    if rest.contains('@') {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': userinfo is not allowed in '{raw_url}'"
+        )));
+    }
+    if rest.contains('/')
+        || rest.contains('?')
+        || rest.contains('#')
+        || rest.chars().any(char::is_whitespace)
+    {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': must be an origin without path, query, fragment, or whitespace: '{raw_url}'"
+        )));
+    }
+    let Some((host_raw, port_str)) = rest.rsplit_once(':') else {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': an explicit port is required (e.g. 'http://localhost:5173'): '{raw_url}'"
+        )));
+    };
+    let host = host_raw.to_ascii_lowercase();
+    if host != "localhost" && host != "127.0.0.1" {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': host '{host_raw}' is not allowed; only 'localhost' or '127.0.0.1' is permitted"
+        )));
+    }
+    if port_str.is_empty() || !port_str.chars().all(|c| c.is_ascii_digit()) {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': invalid port in '{raw_url}'"
+        )));
+    }
+    let port: u16 = port_str.parse().map_err(|_| {
+        ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': port out of range (1..=65535) in '{raw_url}'"
+        ))
+    })?;
+    if port == 0 {
+        return Err(ValidationError::InvalidDevConfig(format!(
+            "in 'dev.url': port 0 is not allowed in '{raw_url}'"
+        )));
+    }
+    Ok(())
 }
 
 /// Validate the `updater` section of `wavical.config.js`.
@@ -2089,8 +2178,9 @@ mod tests {
             0..=2,
         ));
 
-        let dev_strat =
-            proptest::option::of((1024u16..65535u16).prop_map(|port| DevConfig { port }));
+        let dev_strat = proptest::option::of(
+            (1024u16..65535u16).prop_map(|port| DevConfig { port, url: None }),
+        );
         let version_strat = proptest::option::of("[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}");
         let single_instance_strat = proptest::option::of(proptest::bool::ANY);
 
@@ -3386,6 +3476,41 @@ mod tests {
             "validate_config should load ESM config even under CommonJS parent package.json",
         );
         assert_eq!(conf.app_id, "nested-esm-app");
+    }
+
+    #[test]
+    fn test_dev_url_validation_rules() {
+        for valid in [
+            "http://localhost:5173",
+            "https://localhost:5173",
+            "http://127.0.0.1:3000",
+            "https://127.0.0.1:8443",
+        ] {
+            let json = format!(r#"{{"appId":"app","dev":{{"url":"{valid}"}}}}"#);
+            let cfg = parse_config_json(&json).unwrap_or_else(|e| panic!("{valid} failed: {e}"));
+            assert_eq!(cfg.dev_url(), Some(valid));
+        }
+
+        for invalid in [
+            "",
+            "http://localhost",
+            "http://localhost:0",
+            "http://localhost:70000",
+            "http://example.com:5173",
+            "ws://localhost:5173",
+            "wss://localhost:5173",
+            "file://localhost:5173",
+            "http://localhost:5173/app",
+            "http://localhost:5173?foo=bar",
+            "http://user@localhost:5173",
+            "http://[::1]:5173",
+        ] {
+            let json = format!(r#"{{"appId":"app","dev":{{"url":"{invalid}"}}}}"#);
+            assert!(
+                parse_config_json(&json).is_err(),
+                "invalid dev.url '{invalid}' must be rejected"
+            );
+        }
     }
 
     proptest! {

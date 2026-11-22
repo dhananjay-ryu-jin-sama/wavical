@@ -652,29 +652,111 @@ fn test_shell_webview2_user_data_directory_isolated() {
     );
 }
 
-/// FINDING-S4: Dynamic capability reload and --listen-stdin must be gated behind debug_assertions
+/// FINDING-S4: Production shell binary has no dev/stdin flags, ignores stdin commands,
+/// and does not contain dev command-channel code/markers in any build profile.
 #[test]
 fn test_shell_stdin_dynamic_capability_reload_gated_in_release() {
-    let main_src = include_str!("../../../crates/wavical-shell/src/main.rs");
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+    use std::time::Duration;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+
+    let exe_name = if cfg!(windows) {
+        "wavical-shell.exe"
+    } else {
+        "wavical-shell"
+    };
+    let prod_bin = workspace_root.join("target").join("debug").join(exe_name);
+    if !prod_bin.is_file() {
+        let build_out = Command::new("cargo")
+            .args(["build", "-p", "wavical-shell", "--bin", "wavical-shell"])
+            .current_dir(workspace_root)
+            .output()
+            .expect("build production wavical-shell");
+        assert!(
+            build_out.status.success(),
+            "failed to build production wavical-shell: {}",
+            String::from_utf8_lossy(&build_out.stderr)
+        );
+    }
     assert!(
-        main_src.contains("#[cfg(debug_assertions)]\n    #[arg(long)]\n    pub listen_stdin: bool")
-            || main_src.contains(
-                "#[cfg(debug_assertions)]\r\n    #[arg(long)]\r\n    pub listen_stdin: bool"
-            ),
-        "crates/wavical-shell/src/main.rs must gate listen_stdin CLI flag behind #[cfg(debug_assertions)] (FINDING-S4)"
+        prod_bin.is_file(),
+        "production wavical-shell binary missing at {}",
+        prod_bin.display()
     );
 
-    let lib_src = include_str!("../../../crates/wavical-shell/src/lib.rs");
+    // (a) Production shell rejects --listen-stdin and --dev (and --dev-url / --record)
+    for bad_flag in ["--listen-stdin", "--dev", "--dev-url", "--record"] {
+        let out = Command::new(&prod_bin)
+            .arg(bad_flag)
+            .output()
+            .expect("execute production wavical-shell with dev flag");
+        assert!(
+            !out.status.success(),
+            "production wavical-shell must reject dev-only flag {bad_flag}"
+        );
+    }
+
+    // (b) Production shell ignores reload/exit commands sent over stdin
+    let tmp = tempdir().expect("tempdir");
+    fs::write(
+        tmp.path().join("index.html"),
+        b"<html><body>prod</body></html>",
+    )
+    .unwrap();
+    let mut child = Command::new(&prod_bin)
+        .arg("--app-id")
+        .arg("audit-prod-stdin-ignore")
+        .arg("--asset-root")
+        .arg(tmp.path())
+        .arg("--single-instance")
+        .arg("false")
+        .env("WAVICAL_HEADLESS_TEST", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn production wavical-shell");
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = writeln!(stdin, r#"{{"cmd":"reload","id":1,"token":"x"}}"#);
+        let _ = writeln!(stdin, r#"{{"action":"reload"}}"#);
+        let _ = writeln!(stdin, r#"{{"cmd":"exit","id":2,"token":"x"}}"#);
+        let _ = writeln!(stdin, r#"{{"action":"exit"}}"#);
+        let _ = stdin.flush();
+    }
+
+    std::thread::sleep(Duration::from_millis(600));
+    let exited_early = child.try_wait().expect("try_wait").is_some();
+    let _ = child.kill();
+    let output = child.wait_with_output().expect("wait_with_output");
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
     assert!(
-        lib_src.contains("#[cfg(debug_assertions)]\n    if config.listen_stdin")
-            || lib_src.contains("#[cfg(debug_assertions)]\r\n    if config.listen_stdin"),
-        "crates/wavical-shell/src/lib.rs must gate stdin listener thread behind #[cfg(debug_assertions)] (FINDING-S4)"
+        !exited_early,
+        "production wavical-shell must ignore stdin 'exit' command"
     );
     assert!(
-        lib_src.contains("#[cfg(debug_assertions)]\n            Event::UserEvent(UserEvent::UpdateCapabilities")
-            || lib_src.contains("#[cfg(debug_assertions)]\r\n            Event::UserEvent(UserEvent::UpdateCapabilities")
-            || lib_src.contains("#[cfg(debug_assertions)]\n                {\n                    tracing::info!(\n                        \"Updating capabilities via dev server control")
-            || lib_src.contains("#[cfg(debug_assertions)]\r\n                {\r\n                    tracing::info!(\r\n                        \"Updating capabilities via dev server control"),
-        "crates/wavical-shell/src/lib.rs must gate UpdateCapabilities event handler behind #[cfg(debug_assertions)] (FINDING-S4)"
+        !stdout_str.contains(r#""id":"#) && !stdout_str.contains(r#""ok":"#),
+        "production wavical-shell must emit zero dev-channel replies on stdout, got: {stdout_str}"
     );
+
+    // (c) Dev command-channel marker strings are completely absent from production binary
+    let bin_bytes = fs::read(&prod_bin).expect("read production wavical-shell binary");
+    for marker in [
+        "WAVICAL_DEV_SHELL_CHANNEL_V1_MARKER",
+        "WAVICAL_DEV_SESSION_TOKEN",
+    ] {
+        assert!(
+            !bin_bytes
+                .windows(marker.len())
+                .any(|w| w == marker.as_bytes()),
+            "production wavical-shell binary must not contain dev marker '{marker}'"
+        );
+    }
 }
