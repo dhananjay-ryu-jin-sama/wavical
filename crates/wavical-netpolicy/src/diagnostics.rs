@@ -289,8 +289,11 @@ pub fn format_diagnostic_hint(mode: NetworkMode, event: &DevDiagnosticEvent) -> 
             }
         }
         DevDiagnosticEvent::BlockedNavigation { rule, .. } => {
-            if rule == "baseline_blocked_scheme" {
-                "scheme is blocked by baseline security policy in all modes".to_string()
+            if rule == "baseline_blocked_scheme" || rule == "open_external_control_chars" {
+                "scheme or control sequence is blocked by baseline security policy in all modes"
+                    .to_string()
+            } else if rule == "open_external_scheme_not_allowlisted" {
+                "add \"mailto\" or \"tel\" to openExternalSchemes in wavical.allowlist.json, or run \"wavical dev\"".to_string()
             } else if rule.contains("local_exception") || rule.contains("plain_http") {
                 match mode {
                     NetworkMode::UltraSafe => {
@@ -313,8 +316,11 @@ pub fn format_diagnostic_hint(mode: NetworkMode, event: &DevDiagnosticEvent) -> 
             }
         }
         DevDiagnosticEvent::BlockedNewWindow { rule, .. } => {
-            if rule == "baseline_blocked_scheme" {
-                "scheme is blocked by baseline security policy in all modes".to_string()
+            if rule == "baseline_blocked_scheme" || rule == "open_external_control_chars" {
+                "scheme or control sequence is blocked by baseline security policy in all modes"
+                    .to_string()
+            } else if rule == "open_external_scheme_not_allowlisted" {
+                "add \"mailto\" or \"tel\" to openExternalSchemes in wavical.allowlist.json, or run \"wavical dev\"".to_string()
             } else if rule == "rate_limit_exceeded" {
                 "external link rate limit (5 per 10s) exceeded; reduce window.open calls"
                     .to_string()

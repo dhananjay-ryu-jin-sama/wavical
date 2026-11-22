@@ -27,3 +27,12 @@ pub enum NetworkMode {
     Safe,
     UltraSafe,
 }
+
+/// Policy for user-initiated external top-level link clicks (`window.externalLinks`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExternalLinksMode {
+    #[default]
+    Browser,
+    InApp,
+}

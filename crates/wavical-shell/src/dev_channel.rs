@@ -50,6 +50,8 @@ pub enum DevCommand {
         remote_url: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dev_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        external_links: Option<String>,
     },
     /// Restart the Node.js backend process using the Phase 4 restart limiter.
     RestartBackend { id: u64, token: String },
@@ -358,6 +360,7 @@ pub enum DevLoopAction {
         network_mode: Option<String>,
         remote_url: Option<String>,
         dev_url: Option<String>,
+        external_links: Option<String>,
     },
     RestartBackend,
     Exit,
@@ -518,6 +521,7 @@ pub fn start_dev_stdin_session(expected_token: String) -> Result<DevSessionHandl
                                 network_mode,
                                 remote_url,
                                 dev_url,
+                                external_links,
                                 ..
                             } => {
                                 dispatch_and_reply(
@@ -528,6 +532,7 @@ pub fn start_dev_stdin_session(expected_token: String) -> Result<DevSessionHandl
                                         network_mode,
                                         remote_url,
                                         dev_url,
+                                        external_links,
                                     },
                                     cmd_start,
                                 );
@@ -665,6 +670,7 @@ mod tests {
                 network_mode: Some("safe".to_string()),
                 remote_url: Some("https://app.example.com".to_string()),
                 dev_url: Some("http://localhost:5173".to_string()),
+                external_links: None,
             }
         );
         assert_eq!(

@@ -34,6 +34,8 @@ pub enum AllowlistError {
         #[source]
         source: OriginError,
     },
+    #[error("invalid entry '{0}' in 'openExternalSchemes'; only 'mailto' and 'tel' are allowed")]
+    InvalidExternalScheme(String),
     #[error("remoteUi.bridge capability '{0}' is not granted in wavical.config.js")]
     BridgeCapabilityNotGranted(String),
 }
@@ -60,6 +62,8 @@ struct RawAllowlist {
     navigate: Vec<String>,
     #[serde(default)]
     open_external: Vec<String>,
+    #[serde(default)]
+    open_external_schemes: Vec<String>,
     #[serde(default)]
     inline_styles: bool,
     #[serde(default)]
@@ -112,6 +116,7 @@ pub struct Allowlist {
     pub frames: Vec<AllowlistPattern>,
     pub navigate: Vec<AllowlistPattern>,
     pub open_external: Vec<AllowlistPattern>,
+    pub open_external_schemes: Vec<String>,
     pub inline_styles: bool,
     pub data_images: bool,
     pub remote_ui: Option<RemoteUiAllowlist>,
@@ -141,6 +146,7 @@ impl Allowlist {
         let navigate = parse_pattern_list("navigate", &raw.navigate, SchemePolicy::HttpsOnly)?;
         let open_external =
             parse_pattern_list("openExternal", &raw.open_external, SchemePolicy::HttpsOnly)?;
+        let open_external_schemes = parse_external_schemes(&raw.open_external_schemes)?;
 
         let remote_ui = match raw.remote_ui {
             Some(rui) => {
@@ -201,6 +207,7 @@ impl Allowlist {
             frames,
             navigate,
             open_external,
+            open_external_schemes,
             inline_styles: raw.inline_styles,
             data_images: raw.data_images,
             remote_ui,
@@ -230,6 +237,38 @@ impl Allowlist {
     pub fn has_local_exception(&self, origin: &ParsedOrigin) -> bool {
         self.local_exceptions.iter().any(|e| &e.origin == origin)
     }
+
+    /// Returns true if `scheme` (`"mailto"` or `"tel"`) is explicitly listed in `openExternalSchemes`.
+    #[must_use]
+    pub fn allows_external_scheme(&self, scheme: &str) -> bool {
+        self.open_external_schemes
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(scheme))
+    }
+}
+
+fn parse_external_schemes(entries: &[String]) -> Result<Vec<String>, AllowlistError> {
+    if entries.len() > MAX_ENTRIES_PER_LIST {
+        return Err(AllowlistError::ListTooLong {
+            list: "openExternalSchemes",
+        });
+    }
+    let mut seen = HashSet::with_capacity(entries.len());
+    let mut out = Vec::with_capacity(entries.len());
+    for raw in entries {
+        let normalized = raw.trim().to_ascii_lowercase();
+        if normalized != "mailto" && normalized != "tel" {
+            return Err(AllowlistError::InvalidExternalScheme(raw.clone()));
+        }
+        if !seen.insert(normalized.clone()) {
+            return Err(AllowlistError::DuplicateEntry {
+                list: "openExternalSchemes",
+                entry: normalized,
+            });
+        }
+        out.push(normalized);
+    }
+    Ok(out)
 }
 
 fn parse_pattern_list(

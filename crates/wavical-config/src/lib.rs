@@ -25,6 +25,25 @@ fn default_dev_port() -> u16 {
     DEFAULT_DEV_PORT
 }
 
+/// Handling of user-initiated external top-level link clicks (`window.externalLinks`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExternalLinksMode {
+    #[default]
+    Browser,
+    InApp,
+}
+
+impl ExternalLinksMode {
+    /// Return canonical kebab-case string representation (`"browser"` or `"in-app"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Browser => "browser",
+            Self::InApp => "in-app",
+        }
+    }
+}
+
 /// Window configuration options.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -55,6 +74,15 @@ pub struct WindowConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub remote_url: Option<String>,
+
+    /// How user-initiated top-level external link clicks are handled (`"browser"` or `"in-app"`, default: `"browser"`).
+    #[serde(
+        default,
+        rename = "externalLinks",
+        alias = "external_links",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub external_links: Option<ExternalLinksMode>,
 }
 
 impl WindowConfig {
@@ -77,6 +105,11 @@ impl WindowConfig {
     pub fn persist_state_or_default(&self) -> bool {
         self.persist_state.unwrap_or(true)
     }
+
+    /// Return how external link clicks should be handled (default: `"browser"`).
+    pub fn external_links_or_default(&self) -> ExternalLinksMode {
+        self.external_links.unwrap_or_default()
+    }
 }
 
 impl Default for WindowConfig {
@@ -87,6 +120,7 @@ impl Default for WindowConfig {
             title: None,
             persist_state: None,
             remote_url: None,
+            external_links: None,
         }
     }
 }
@@ -510,6 +544,14 @@ impl AppConfig {
             .as_ref()
             .map(|w| w.persist_state_or_default())
             .unwrap_or(true)
+    }
+
+    /// Return external link click handling mode (default: `ExternalLinksMode::Browser`).
+    pub fn external_links(&self) -> ExternalLinksMode {
+        self.window
+            .as_ref()
+            .map(|w| w.external_links_or_default())
+            .unwrap_or_default()
     }
 
     /// Effective application version string (default: "0.1.0").
@@ -2193,13 +2235,18 @@ mod tests {
                 proptest::option::of(100u32..4000u32),
                 proptest::option::of("[a-zA-Z0-9 _-]{1,50}"),
                 proptest::option::of(proptest::bool::ANY),
+                proptest::option::of(proptest::sample::select(vec![
+                    ExternalLinksMode::Browser,
+                    ExternalLinksMode::InApp,
+                ])),
             )
-                .prop_map(|(w, h, t, p)| WindowConfig {
+                .prop_map(|(w, h, t, p, e)| WindowConfig {
                     width: w,
                     height: h,
                     title: t,
                     persist_state: p,
                     remote_url: None,
+                    external_links: e,
                 }),
         );
 
@@ -3568,6 +3615,28 @@ mod tests {
         }
         let too_long = "a".repeat(MAX_APP_ID_LEN + 1);
         assert!(app_log_file_path(base, &too_long).is_none());
+    }
+
+    #[test]
+    fn test_window_external_links_config_validation() {
+        let def_cfg = parse_config_json(r#"{"appId":"app"}"#).unwrap();
+        assert_eq!(def_cfg.external_links(), ExternalLinksMode::Browser);
+
+        let browser_cfg =
+            parse_config_json(r#"{"appId":"app","window":{"externalLinks":"browser"}}"#).unwrap();
+        assert_eq!(browser_cfg.external_links(), ExternalLinksMode::Browser);
+
+        let in_app_cfg =
+            parse_config_json(r#"{"appId":"app","window":{"externalLinks":"in-app"}}"#).unwrap();
+        assert_eq!(in_app_cfg.external_links(), ExternalLinksMode::InApp);
+
+        for invalid in ["popup", "tab", "in_app", "BROWSER", ""] {
+            let json = format!(r#"{{"appId":"app","window":{{"externalLinks":"{invalid}"}}}}"#);
+            assert!(
+                parse_config_json(&json).is_err(),
+                "invalid window.externalLinks '{invalid}' must be rejected"
+            );
+        }
     }
 
     proptest! {

@@ -3,15 +3,24 @@
 use thiserror::Error;
 use url::Url;
 
-use crate::NetworkMode;
 use crate::allowlist::Allowlist;
 use crate::limits::MAX_OPEN_EXTERNAL_URL_LEN;
 use crate::origin::{OriginHost, ParsedOrigin, SchemePolicy, extract_origin, parse_exact_origin};
+use crate::{ExternalLinksMode, NetworkMode};
 
 /// Decision outcome for policy checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyDecision {
     Allow,
+    Deny(&'static str),
+}
+
+/// Decision outcome for top-level navigation requests distinguishing in-app navigation
+/// from external system-browser / OS-handler opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NavigationDecision {
+    AllowInApp,
+    OpenExternal,
     Deny(&'static str),
 }
 
@@ -72,41 +81,79 @@ pub fn validate_dev_url(raw_url: &str) -> Result<ParsedOrigin, DevUrlError> {
 #[must_use]
 pub fn is_baseline_blocked_scheme(raw_url: &str) -> bool {
     let trimmed = raw_url.trim();
+    if trimmed.chars().any(char::is_control) {
+        return true;
+    }
     let Ok(parsed) = Url::parse(trimmed) else {
         return true;
     };
     !matches!(parsed.scheme(), "http" | "https" | "ws" | "wss" | "wavical")
 }
 
-/// Decides whether a top-level navigation to `target_url` is allowed.
+/// Decides whether a top-level navigation to `target_url` is allowed in-app (non-user-initiated / redirect check).
 #[must_use]
 pub fn decide_navigation(ctx: &PolicyContext<'_>, target_url: &str) -> PolicyDecision {
-    if is_baseline_blocked_scheme(target_url) {
-        return PolicyDecision::Deny("baseline_blocked_scheme");
+    match decide_top_level_navigation(ctx, target_url, false, ExternalLinksMode::Browser) {
+        NavigationDecision::AllowInApp => PolicyDecision::Allow,
+        NavigationDecision::OpenExternal => PolicyDecision::Deny("baseline_blocked_scheme"),
+        NavigationDecision::Deny(rule) => PolicyDecision::Deny(rule),
     }
-    let Ok(origin) = extract_origin(target_url) else {
-        return PolicyDecision::Deny("invalid_origin");
+}
+
+/// Decides how a top-level navigation to `target_url` should be handled, taking into account
+/// whether it was user-initiated (`<a href>` click) and the configured `window.externalLinks` policy.
+#[must_use]
+pub fn decide_top_level_navigation(
+    ctx: &PolicyContext<'_>,
+    target_url: &str,
+    is_user_initiated: bool,
+    external_links: ExternalLinksMode,
+) -> NavigationDecision {
+    let trimmed = target_url.trim();
+    if trimmed.chars().any(char::is_control) {
+        return NavigationDecision::Deny("baseline_blocked_scheme");
+    }
+    if let Ok(parsed) = Url::parse(trimmed)
+        && matches!(parsed.scheme(), "mailto" | "tel")
+    {
+        return match decide_open_external(ctx, trimmed) {
+            PolicyDecision::Allow => NavigationDecision::OpenExternal,
+            PolicyDecision::Deny(rule) => NavigationDecision::Deny(rule),
+        };
+    }
+
+    if is_baseline_blocked_scheme(trimmed) {
+        return NavigationDecision::Deny("baseline_blocked_scheme");
+    }
+    let Ok(origin) = extract_origin(trimmed) else {
+        return NavigationDecision::Deny("invalid_origin");
     };
 
     if &origin == ctx.app_origin {
-        return PolicyDecision::Allow;
+        return NavigationDecision::AllowInApp;
     }
     if ctx.is_dev_command
         && let Some(dev) = ctx.dev_url_origin
         && &origin == dev
     {
-        return PolicyDecision::Allow;
+        return NavigationDecision::AllowInApp;
     }
 
     match ctx.mode {
-        NetworkMode::UltraSafe => PolicyDecision::Deny("ultra_safe_blocks_external_navigation"),
+        NetworkMode::UltraSafe => NavigationDecision::Deny("ultra_safe_blocks_external_navigation"),
         NetworkMode::Open => {
-            if origin.scheme == "https"
-                || (origin.scheme == "http" && is_local_exception(ctx.allowlist, &origin))
-            {
-                PolicyDecision::Allow
+            if origin.scheme == "http" {
+                if is_local_exception(ctx.allowlist, &origin) {
+                    NavigationDecision::AllowInApp
+                } else {
+                    NavigationDecision::Deny("http_requires_local_exception")
+                }
+            } else if ctx.remote_url_origin.is_some_and(|r| &origin == r) {
+                NavigationDecision::AllowInApp
+            } else if is_user_initiated && external_links == ExternalLinksMode::Browser {
+                NavigationDecision::OpenExternal
             } else {
-                PolicyDecision::Deny("http_requires_local_exception")
+                NavigationDecision::AllowInApp
             }
         }
         NetworkMode::Safe => {
@@ -114,17 +161,23 @@ pub fn decide_navigation(ctx: &PolicyContext<'_>, target_url: &str) -> PolicyDec
                 && &origin == remote
                 && is_remote_ui_listed(ctx.allowlist, remote)
             {
-                return PolicyDecision::Allow;
+                return NavigationDecision::AllowInApp;
             }
             if let Some(al) = ctx.allowlist {
                 if al.navigate.iter().any(|p| p.matches(&origin)) {
-                    return PolicyDecision::Allow;
+                    return NavigationDecision::AllowInApp;
                 }
                 if al.has_local_exception(&origin) {
-                    return PolicyDecision::Allow;
+                    return NavigationDecision::AllowInApp;
                 }
             }
-            PolicyDecision::Deny("navigation_not_allowlisted")
+            if is_user_initiated
+                && external_links == ExternalLinksMode::Browser
+                && let PolicyDecision::Allow = decide_open_external(ctx, trimmed)
+            {
+                return NavigationDecision::OpenExternal;
+            }
+            NavigationDecision::Deny("navigation_not_allowlisted")
         }
     }
 }
@@ -136,13 +189,40 @@ pub fn decide_new_window(ctx: &PolicyContext<'_>, target_url: &str) -> PolicyDec
     decide_open_external(ctx, target_url)
 }
 
-/// Decides whether opening `target_url` in the system browser is allowed (Plan 1.2, 1.3, 1.9).
+/// Decides whether opening `target_url` in the system browser or OS scheme handler is allowed
+/// (Plan 1.2, 1.3, 1.9, F5).
 #[must_use]
 pub fn decide_open_external(ctx: &PolicyContext<'_>, target_url: &str) -> PolicyDecision {
     let trimmed = target_url.trim();
     if trimmed.len() > MAX_OPEN_EXTERNAL_URL_LEN {
         return PolicyDecision::Deny("open_external_url_too_long");
     }
+    if trimmed.chars().any(char::is_control) {
+        return PolicyDecision::Deny("open_external_control_chars");
+    }
+    let Ok(parsed) = Url::parse(trimmed) else {
+        return PolicyDecision::Deny("baseline_blocked_scheme");
+    };
+    let scheme = parsed.scheme();
+    if matches!(scheme, "mailto" | "tel") {
+        if let Err(rule) = validate_mailto_or_tel_url(trimmed, &parsed) {
+            return PolicyDecision::Deny(rule);
+        }
+        return match ctx.mode {
+            NetworkMode::UltraSafe => PolicyDecision::Deny("ultra_safe_blocks_open_external"),
+            NetworkMode::Open => PolicyDecision::Allow,
+            NetworkMode::Safe => {
+                if let Some(al) = ctx.allowlist
+                    && al.allows_external_scheme(scheme)
+                {
+                    PolicyDecision::Allow
+                } else {
+                    PolicyDecision::Deny("open_external_scheme_not_allowlisted")
+                }
+            }
+        };
+    }
+
     if is_baseline_blocked_scheme(trimmed) {
         return PolicyDecision::Deny("baseline_blocked_scheme");
     }
@@ -164,6 +244,82 @@ pub fn decide_open_external(ctx: &PolicyContext<'_>, target_url: &str) -> Policy
             }
             PolicyDecision::Deny("open_external_not_allowlisted")
         }
+    }
+}
+
+/// Validates a `mailto:` or `tel:` URI for safe single-argument OS dispatch.
+/// Rejects authority (`//`), userinfo, empty targets, control chars, and encoded CR/LF/NUL/control bytes.
+pub fn validate_mailto_or_tel_url(raw_trimmed: &str, parsed: &Url) -> Result<(), &'static str> {
+    let scheme = parsed.scheme();
+    if scheme != "mailto" && scheme != "tel" {
+        return Err("baseline_blocked_scheme");
+    }
+    if raw_trimmed.chars().any(char::is_control) {
+        return Err("open_external_control_chars");
+    }
+    if parsed.has_host()
+        || !parsed.cannot_be_a_base()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err("open_external_invalid_uri");
+    }
+    if contains_encoded_control_bytes(raw_trimmed) {
+        return Err("open_external_control_chars");
+    }
+    let path_non_empty = !parsed.path().trim().is_empty();
+    let has_valid_target = if scheme == "mailto" {
+        path_non_empty || parsed.query().is_some_and(|q| !q.trim().is_empty())
+    } else {
+        path_non_empty
+    };
+    if !has_valid_target {
+        return Err("open_external_invalid_uri");
+    }
+    Ok(())
+}
+
+fn contains_encoded_control_bytes(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Some(mut val) = decode_hex_pair(bytes[i + 1], bytes[i + 2])
+        {
+            // Unwrap up to 4 layers of %25-encoded percent signs (e.g. %250d, %25250a).
+            let mut j = i + 3;
+            let mut depth = 0;
+            while val == b'%' && depth < 4 && j + 1 < bytes.len() {
+                if let Some(next_val) = decode_hex_pair(bytes[j], bytes[j + 1]) {
+                    val = next_val;
+                    j += 2;
+                    depth += 1;
+                } else {
+                    break;
+                }
+            }
+            if val <= 0x1F || val == 0x7F {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+fn decode_hex_pair(hi: u8, lo: u8) -> Option<u8> {
+    let h = hex_nibble(hi)?;
+    let l = hex_nibble(lo)?;
+    Some((h << 4) | l)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 

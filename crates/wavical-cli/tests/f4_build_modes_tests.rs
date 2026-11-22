@@ -556,3 +556,75 @@ fn signed_update_payload_built_from_safe_dist_contains_manifest_and_allowlist() 
     );
     assert!(parsed_manifest["inlineScriptHashes"]["index.html"].is_array());
 }
+
+#[test]
+fn f5_build_manifest_records_external_links_and_allowlist_suggest_preserves_schemes() {
+    use std::io::Cursor;
+    use wavical_cli::allowlist_suggest::run_allowlist_suggest_with_io;
+
+    let temp = tempdir().unwrap();
+    let wavical_bin = env!("CARGO_BIN_EXE_wavical");
+
+    let proj = create_my_app_fixture(temp.path(), "f5-inapp-app");
+    fs::write(
+        proj.join("wavical.config.js"),
+        r#"export default {
+  appId: 'f5-inapp-app',
+  version: '1.0.0',
+  window: { width: 1200, height: 800, title: 'F5 App', externalLinks: 'in-app' },
+  capabilities: { 'core.ping': true }
+};
+"#,
+    )
+    .unwrap();
+
+    let out = Command::new(wavical_bin)
+        .args(["build", "--allow-open"])
+        .arg(&proj)
+        .output()
+        .expect("build --allow-open");
+    assert!(
+        out.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let dist = proj.join("dist");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dist.join("wavical-manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["externalLinks"], "in-app");
+
+    // allowlist suggest preserves openExternalSchemes and does not auto-propose mailto:/tel:
+    let suggest_proj = temp.path().join("f5-suggest");
+    fs::create_dir_all(suggest_proj.join(".wavical")).unwrap();
+    fs::write(
+        suggest_proj.join("wavical.allowlist.json"),
+        r#"{"version":1,"openExternalSchemes":["mailto"]}"#,
+    )
+    .unwrap();
+    fs::write(
+        suggest_proj.join(".wavical").join("recorded-blocks.json"),
+        r#"{"version":1,"totalEvents":2,"entries":[{"type":"scripts","origin":"https://cdn.example.com","count":1},{"type":"openExternal","origin":"tel:","count":1}]}"#,
+    )
+    .unwrap();
+
+    let mut input = Cursor::new(b"a\n");
+    let mut output = Vec::new();
+    run_allowlist_suggest_with_io(&suggest_proj, &mut input, &mut output).unwrap();
+    let output_str = String::from_utf8_lossy(&output);
+    assert!(output_str.contains("openExternalSchemes"));
+
+    let updated_al: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(suggest_proj.join("wavical.allowlist.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        updated_al["openExternalSchemes"],
+        serde_json::json!(["mailto"])
+    );
+    assert_eq!(
+        updated_al["scripts"],
+        serde_json::json!(["https://cdn.example.com"])
+    );
+}

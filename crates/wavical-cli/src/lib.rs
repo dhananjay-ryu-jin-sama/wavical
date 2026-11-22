@@ -1565,6 +1565,13 @@ pub fn summarize_config_changes(
         parts.push("dev.url updated for next page load".to_string());
     }
 
+    if old_cfg.external_links() != new_cfg.external_links() {
+        parts.push(format!(
+            "externalLinks updated to '{}'",
+            new_cfg.external_links().as_str()
+        ));
+    }
+
     if allowlist_changed {
         if mode == "ultra-safe" {
             parts.push("allowlist edited; CSP unchanged (ultra-safe mode)".to_string());
@@ -1702,7 +1709,9 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
     cmd.arg("--project-root")
         .arg(&project_root)
         .arg("--network-mode")
-        .arg(mode);
+        .arg(mode)
+        .arg("--external-links")
+        .arg(config.external_links().as_str());
     if record {
         cmd.arg("--record");
     }
@@ -1931,6 +1940,7 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
                             .as_ref()
                             .and_then(|w| w.remote_url.clone());
                         let dev_url = new_config.dev_url().map(str::to_string);
+                        let external_links = new_config.external_links().as_str();
                         let cmd_id = next_cmd_id;
                         next_cmd_id = next_cmd_id.saturating_add(1);
                         let payload = serde_json::json!({
@@ -1941,6 +1951,7 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
                             "networkMode": mode,
                             "remoteUrl": remote_url,
                             "devUrl": dev_url,
+                            "externalLinks": external_links,
                         });
                         match send_dev_command_and_wait(
                             &mut child_stdin,
@@ -2096,6 +2107,12 @@ pub struct WavicalManifest {
     pub runtime: Option<backend_build::RuntimeBuildManifest>,
     #[serde(rename = "remoteUrl", skip_serializing_if = "Option::is_none", default)]
     pub remote_url: Option<String>,
+    #[serde(
+        rename = "externalLinks",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub external_links: Option<String>,
 }
 
 fn has_javascript_files(dir: &Path) -> bool {
@@ -2670,6 +2687,7 @@ pub fn run_build_with_mode(
         backend: backend_manifest,
         runtime: runtime_manifest,
         remote_url,
+        external_links: Some(config.external_links().as_str().to_string()),
     };
 
     write_wavical_manifest(&out_dir, &manifest)?;

@@ -403,3 +403,393 @@ fn recorder_caps_at_10000_and_strips_queries_and_paths() {
     let capped = rec.snapshot();
     assert_eq!(capped.total_events, MAX_RECORDED_EVENTS_PER_SESSION);
 }
+
+#[test]
+fn f5_mailto_tel_and_external_links_and_foreign_bridge_isolation() {
+    use std::sync::Mutex;
+    use wavical_netpolicy::ExternalLinksMode;
+    use wavical_shell::net_policy::{
+        BridgeReportOutcome, ExternalLinkClickOutcome, build_init_script,
+        handle_external_link_click, handle_navigation_with_policy_and_opener,
+        process_bridge_report_message_with_opener, resolve_shell_network_policy_with_options,
+    };
+    use wavical_shell::{WindowConfig, process_ipc_message};
+
+    // 1. Open mode: mailto: and tel: allowed by default; other schemes, overlong, and encoded header injections rejected
+    let open_policy = ShellNetworkPolicy {
+        mode: NetworkMode::Open,
+        ..Default::default()
+    };
+    let rl = OpenExternalRateLimiter::default();
+    let captured_urls = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    for valid_uri in [
+        "mailto:hello@example.com",
+        "mailto:hello@example.com?subject=Hello%20World",
+        "tel:+1-555-0100",
+    ] {
+        let cap = captured_urls.clone();
+        let res = open_external_validated(&open_policy, valid_uri, "win1", &rl, move |u| {
+            cap.lock().unwrap().push(u.to_string());
+            Ok(())
+        });
+        assert!(res.is_ok(), "expected '{valid_uri}' to succeed: {res:?}");
+    }
+    {
+        let urls = captured_urls.lock().unwrap();
+        assert_eq!(urls.len(), 3);
+        assert_eq!(urls[0], "mailto:hello@example.com");
+        assert_eq!(urls[1], "mailto:hello@example.com?subject=Hello%20World");
+        assert_eq!(urls[2], "tel:+1-555-0100");
+    }
+
+    let overlong_mailto = format!(
+        "mailto:user@example.com?body={}",
+        "a".repeat(MAX_OPEN_EXTERNAL_URL_LEN)
+    );
+    for rejected_uri in [
+        "sms:+15550100",
+        "whatsapp://send?text=hi",
+        "skype:echo123?call",
+        "ms-settings:display",
+        "file:///C:/Windows/win.ini",
+        "http://example.com",
+        "mailto:",
+        "tel:",
+        "mailto://evil.com/a@b.com",
+        "tel://evil.com/+123",
+        "mailto:hello@example.com\r\nBcc:evil@evil.com",
+        "mail\nto:hello@example.com",
+        "mailto:hello@example.com?subject=Hi%0d%0aBcc:evil@evil.com",
+        "mailto:hello@example.com?subject=Hi%0ABcc:evil@evil.com",
+        "mailto:hello@example.com?subject=Hi%00",
+        "mailto:hello@example.com?subject=Hi%250d%250aBcc:evil@evil.com",
+        "tel:+1555%0a0100",
+        overlong_mailto.as_str(),
+    ] {
+        let rl_bad = OpenExternalRateLimiter::default();
+        let err = open_external_validated(&open_policy, rejected_uri, "win1", &rl_bad, |_| {
+            panic!("opener must never be called for rejected URI '{rejected_uri}'")
+        });
+        assert!(
+            matches!(err, Err(OpenExternalError::PolicyDenied(_))),
+            "expected PolicyDenied for '{rejected_uri}', got {err:?}"
+        );
+    }
+
+    // 2. Safe mode: requires explicit openExternalSchemes; ultra-safe never allows
+    let safe_none = resolve_shell_network_policy_with_options(
+        TempDir::new().unwrap().path(),
+        None,
+        true,
+        Some("safe"),
+        None,
+        None,
+        None,
+        vec![],
+    );
+    let rl_safe = OpenExternalRateLimiter::default();
+    assert!(matches!(
+        open_external_validated(
+            &safe_none,
+            "mailto:hello@example.com",
+            "win1",
+            &rl_safe,
+            |_| Ok(())
+        ),
+        Err(OpenExternalError::PolicyDenied(_))
+    ));
+
+    let safe_tmp = TempDir::new().unwrap();
+    fs::write(
+        safe_tmp.path().join("wavical.allowlist.json"),
+        br#"{"version":1,"openExternal":["https://docs.company.com"],"navigate":["https://login.company.com"],"openExternalSchemes":["mailto"]}"#,
+    )
+    .unwrap();
+    let safe_mailto_only = resolve_shell_network_policy_with_options(
+        safe_tmp.path(),
+        Some(safe_tmp.path()),
+        true,
+        Some("safe"),
+        None,
+        None,
+        None,
+        vec![],
+    );
+    assert!(
+        open_external_validated(
+            &safe_mailto_only,
+            "mailto:hello@example.com",
+            "win1",
+            &rl_safe,
+            |_| Ok(())
+        )
+        .is_ok()
+    );
+    assert!(matches!(
+        open_external_validated(
+            &safe_mailto_only,
+            "tel:+15550100",
+            "win1",
+            &rl_safe,
+            |_| Ok(())
+        ),
+        Err(OpenExternalError::PolicyDenied(_))
+    ));
+
+    let ultra_policy = ShellNetworkPolicy::default();
+    assert!(matches!(
+        open_external_validated(
+            &ultra_policy,
+            "mailto:hello@example.com",
+            "win1",
+            &rl_safe,
+            |_| Ok(())
+        ),
+        Err(OpenExternalError::PolicyDenied(_))
+    ));
+    assert!(matches!(
+        open_external_validated(&ultra_policy, "tel:+15550100", "win1", &rl_safe, |_| Ok(())),
+        Err(OpenExternalError::PolicyDenied(_))
+    ));
+
+    // 3. External top-level link click in open mode (default "browser") opens browser & app stays put;
+    //    redirect / app-initiated navigation still navigates in-app;
+    //    externalLinks: "in-app" restores old behaviour; bridge never available on foreign origin.
+    let rl_click = OpenExternalRateLimiter::default();
+    let opened_clicks = Arc::new(Mutex::new(Vec::<String>::new()));
+    let oc = opened_clicks.clone();
+    assert_eq!(
+        handle_external_link_click(
+            &open_policy,
+            "https://example.com/about",
+            "win1",
+            &rl_click,
+            move |u| {
+                oc.lock().unwrap().push(u.to_string());
+                Ok(())
+            }
+        ),
+        ExternalLinkClickOutcome::OpenedExternal
+    );
+    assert_eq!(
+        opened_clicks.lock().unwrap().as_slice(),
+        &["https://example.com/about".to_string()]
+    );
+    // Same-origin link stays in-app
+    assert_eq!(
+        handle_external_link_click(
+            &open_policy,
+            "http://wavical.localhost/page2.html",
+            "win1",
+            &rl_click,
+            |_| panic!("same-origin link must not open external browser")
+        ),
+        ExternalLinkClickOutcome::NavigateInApp
+    );
+    // mailto: via navigation handler opens OS handler and returns false (app URL unchanged)
+    let nav_mail_opened = Arc::new(Mutex::new(Vec::<String>::new()));
+    let nmo = nav_mail_opened.clone();
+    assert!(!handle_navigation_with_policy_and_opener(
+        &open_policy,
+        "mailto:hello@example.com",
+        "win1",
+        &rl_click,
+        move |u| {
+            nmo.lock().unwrap().push(u.to_string());
+            Ok(())
+        }
+    ));
+    assert_eq!(
+        nav_mail_opened.lock().unwrap().as_slice(),
+        &["mailto:hello@example.com".to_string()]
+    );
+    // Redirect-based login flow (non-click navigation in open mode) navigates in-app
+    assert!(handle_navigation_with_policy_and_opener(
+        &open_policy,
+        "https://idp.example.com/oauth/authorize",
+        "win1",
+        &rl_click,
+        |_| Ok(())
+    ));
+    // Safe mode navigate allowlist origin stays in-app on click too
+    assert_eq!(
+        handle_external_link_click(
+            &safe_mailto_only,
+            "https://login.company.com/sso",
+            "win1",
+            &rl_click,
+            |_| panic!("navigate-allowlisted origin must stay in-app")
+        ),
+        ExternalLinkClickOutcome::NavigateInApp
+    );
+    // Safe mode openExternal origin opens in browser on click
+    assert_eq!(
+        handle_external_link_click(
+            &safe_mailto_only,
+            "https://docs.company.com/guide",
+            "win1",
+            &rl_click,
+            |_| Ok(())
+        ),
+        ExternalLinkClickOutcome::OpenedExternal
+    );
+
+    // externalLinks: "in-app" in build manifest is loaded strictly by shell policy
+    let inapp_dist = TempDir::new().unwrap();
+    fs::write(inapp_dist.path().join("index.html"), b"<h1>in-app</h1>").unwrap();
+    fs::write(
+        inapp_dist.path().join("wavical-manifest.json"),
+        r#"{"appId":"a","version":"0.1.0","mode":"open","externalLinks":"in-app","assets":{}}"#,
+    )
+    .unwrap();
+    let p_inapp_manifest =
+        resolve_shell_network_policy(inapp_dist.path(), None, false, None, None, vec![]);
+    assert_eq!(p_inapp_manifest.external_links, ExternalLinksMode::InApp);
+
+    // externalLinks: "in-app" restores old behaviour (cross-origin link navigates in-app)
+    let in_app_policy = ShellNetworkPolicy {
+        mode: NetworkMode::Open,
+        external_links: ExternalLinksMode::InApp,
+        ..Default::default()
+    };
+    assert_eq!(
+        handle_external_link_click(
+            &in_app_policy,
+            "https://example.com/docs",
+            "win1",
+            &rl_click,
+            |_| panic!("in-app externalLinks must not open system browser for https link")
+        ),
+        ExternalLinkClickOutcome::NavigateInApp
+    );
+    // mailto: still opens OS handler even when externalLinks == "in-app"
+    assert_eq!(
+        handle_external_link_click(
+            &in_app_policy,
+            "mailto:hello@example.com",
+            "win1",
+            &rl_click,
+            |_| Ok(())
+        ),
+        ExternalLinkClickOutcome::OpenedExternal
+    );
+
+    // Bridge is NEVER available on a foreign origin (neither JS init script nor Rust IPC)
+    let init_js = build_init_script(&in_app_policy);
+    assert!(!init_js.contains("https://example.com"));
+    assert!(init_js.contains("internal.openExternal"));
+    let foreign_uri: Uri = "https://example.com/docs".parse().unwrap();
+    assert!(authorize_bridge_request(&in_app_policy, &foreign_uri, true, "win1").is_err());
+    let win_cfg = WindowConfig {
+        network_policy: in_app_policy.clone(),
+        ..Default::default()
+    };
+    let reg = wavical_ipc::HandlerRegistry::with_core_handlers();
+    assert!(
+        process_ipc_message(
+            &foreign_uri,
+            r#"{"id":1,"method":"core.ping","params":{}}"#,
+            &win_cfg,
+            &reg
+        )
+        .is_err()
+    );
+    // Foreign origin cannot invoke internal.openExternal either
+    assert!(
+        process_bridge_report_message_with_opener(
+            &foreign_uri,
+            true,
+            r#"{"id":0,"method":"internal.openExternal","params":{"url":"https://evil.com","topFrame":true}}"#,
+            &win_cfg,
+            &rl_click,
+            |_| Ok(())
+        )
+        .is_err()
+    );
+    // App origin internal.openExternal click message opens external browser in default browser mode
+    let app_uri: Uri = "http://wavical.localhost/index.html".parse().unwrap();
+    let app_cfg = WindowConfig {
+        network_policy: open_policy,
+        ..Default::default()
+    };
+    let bridged_open = Arc::new(Mutex::new(Vec::<String>::new()));
+    let bo = bridged_open.clone();
+    let outcome = process_bridge_report_message_with_opener(
+        &app_uri,
+        true,
+        r#"{"id":0,"method":"internal.openExternal","params":{"url":"https://example.com/","topFrame":true}}"#,
+        &app_cfg,
+        &rl_click,
+        move |u| {
+            bo.lock().unwrap().push(u.to_string());
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(outcome, BridgeReportOutcome::Handled(None));
+    assert_eq!(
+        bridged_open.lock().unwrap().as_slice(),
+        &["https://example.com/".to_string()]
+    );
+}
+
+#[test]
+fn f5_open_external_logs_scheme_only_never_address() {
+    use std::io::Write;
+    use std::sync::Mutex;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct BufWriter(Arc<Mutex<Vec<u8>>>);
+    struct Guard(Arc<Mutex<Vec<u8>>>);
+    impl Write for Guard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> MakeWriter<'a> for BufWriter {
+        type Writer = Guard;
+        fn make_writer(&'a self) -> Self::Writer {
+            Guard(self.0.clone())
+        }
+    }
+
+    let logs = BufWriter::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(logs.clone())
+        .finish();
+
+    let policy = ShellNetworkPolicy {
+        mode: NetworkMode::Open,
+        ..Default::default()
+    };
+    let rl = OpenExternalRateLimiter::default();
+
+    tracing::subscriber::with_default(subscriber, || {
+        open_external_validated(
+            &policy,
+            "mailto:SECRET_ALICE@corp.example?subject=CONFIDENTIAL_SUBJ",
+            "win-log",
+            &rl,
+            |_| Ok(()),
+        )
+        .unwrap();
+        open_external_validated(&policy, "tel:+1-555-867-5309", "win-log", &rl, |_| Ok(()))
+            .unwrap();
+    });
+
+    let captured = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(captured.contains("open_external_allowed"));
+    assert!(captured.contains("scheme=mailto"));
+    assert!(captured.contains("scheme=tel"));
+    assert!(!captured.contains("SECRET_ALICE"));
+    assert!(!captured.contains("corp.example"));
+    assert!(!captured.contains("CONFIDENTIAL_SUBJ"));
+    assert!(!captured.contains("867-5309"));
+}

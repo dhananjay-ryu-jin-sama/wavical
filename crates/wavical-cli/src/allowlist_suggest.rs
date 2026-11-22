@@ -48,6 +48,8 @@ struct EditableAllowlist {
     navigate: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     open_external: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    open_external_schemes: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     inline_styles: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -75,6 +77,7 @@ impl Default for EditableAllowlist {
             frames: Vec::new(),
             navigate: Vec::new(),
             open_external: Vec::new(),
+            open_external_schemes: Vec::new(),
             inline_styles: false,
             data_images: false,
             remote_ui: None,
@@ -189,6 +192,14 @@ pub fn run_allowlist_suggest_with_io<R: BufRead, W: Write>(
         if orig == "data:" && bt == "images" {
             needs_decision.push(format!(
                 "data: images were blocked {} time(s); set \"dataImages\": true in wavical.allowlist.json if needed",
+                entry.count
+            ));
+            continue;
+        }
+        if orig == "mailto:" || orig == "tel:" {
+            let scheme = orig.trim_end_matches(':');
+            needs_decision.push(format!(
+                "{orig} links were blocked {} time(s); add \"{scheme}\" to \"openExternalSchemes\" in wavical.allowlist.json if trusted",
                 entry.count
             ));
             continue;

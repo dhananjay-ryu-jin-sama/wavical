@@ -115,14 +115,114 @@ F4 fixes the build-to-shell network-mode pipeline by:
 
 ---
 
-<!-- Future patches: copy this section structure for Patch F5, F6, ... -->
-<!--
 ## Patch F5
+
+**Status:** Implemented and verified in working tree (uncommitted per user instruction; manual GUI checks on `my-app` remaining)  
+**Baseline Commit:** `45fee8d` (`1.1.4 - Network mode patch F4 report`)  
+
+### 1. Introduction (What F5 Is)
+
+After F4 fixed build modes and manifest integrity, two real-app usability/security behaviors remained: `mailto:` and `tel:` links were rejected by the system opener, and clicking a cross-origin `<a href="https://...">` link in `open` mode navigated the entire app window away from the app instead of opening the system browser.
+
+F5 fixes both and documents WebView/browser differences:
+- **Validated `mailto:` and `tel:` system opener:** Extends the single validated external opener so `mailto:` and `tel:` launch in the OS handler (mail app, phone/Teams) — allowed by default in `open`, allowed in `safe` only via validated `"openExternalSchemes": ["mailto", "tel"]` in `wavical.allowlist.json`, never allowed in `ultra-safe`, capped by URL length and control-character/multi-encoding rejection, logged by scheme only (never the address), while keeping all other schemes (`sms:`, `whatsapp:`, `skype:`, `ms-*`, `file:`, etc.) blocked.
+- **Default external top-level link handling (`window.externalLinks`):** Defaults user-initiated top-level cross-origin link clicks (`<a href>`) to open in the system browser while keeping the app on its page, preserving redirect-based login flows and `navigate` allowlist destinations in-app, and adding `window.externalLinks: "browser" | "in-app"` (default `"browser"`) to `wavical.config.js`.
+- **Browser differences documented:** Documents in `docs/NETWORK_MODES.md` under `## Differences from a browser` that plain `http://` stays blocked in `open` mode unless in `localExceptions`, popup-based `window.open` OAuth is not supported yet, and WebView2 tracking prevention can block third-party storage in embeds.
+
+### 2. What Was Done
+
+1. **`openExternalSchemes` Allowlist Validation & Policy Decisions (`crates/wavical-netpolicy`)**
+   - `src/lib.rs`: Added `ExternalLinksMode` (`Browser` [default], `InApp`, `#[serde(rename_all = "kebab-case")]`).
+   - `src/allowlist.rs`: Added `openExternalSchemes` (`open_external_schemes`) to `RawAllowlist` and `Allowlist`, validated by `parse_external_schemes` to accept only `"mailto"` and `"tel"` (lowercased, no duplicates, max `MAX_ENTRIES_PER_LIST`), returning `AllowlistError::InvalidExternalScheme` on invalid entries. Added `Allowlist::allows_external_scheme`.
+   - `src/decisions.rs`: Added `NavigationDecision { AllowInApp, OpenExternal, Deny(&'static str) }`, `decide_top_level_navigation`, `validate_mailto_or_tel_url`, and `contains_encoded_control_bytes` (unwraps up to 4 layers of `%25` hex encoding, rejects C0/DEL control bytes `<= 0x1F`, `0x7F`, and `char::is_control`). Updated `is_baseline_blocked_scheme` and `decide_open_external` to enforce scheme, length, and encoding rules per mode. Preserved existing `decide_navigation` signature by delegating to `decide_top_level_navigation(..., false, ExternalLinksMode::Browser)`.
+   - `src/diagnostics.rs`: Updated `BlockedNavigation` / `BlockedNewWindow` hints in `format_diagnostic_hint` for `open_external_control_chars` and `open_external_scheme_not_allowlisted`.
+   - `tests/policy_tests.rs`: Added `f5_open_external_schemes_allowlist_and_top_level_navigation_decisions`.
+
+2. **Config Schema Support for `window.externalLinks` (`crates/wavical-config/src/lib.rs`)**
+   - Added `ExternalLinksMode`, `WindowConfig.external_links` (`rename = "externalLinks"`, `alias = "external_links"`), `WindowConfig::external_links_or_default()`, and `AppConfig::external_links()`.
+   - Updated `arb_app_config()` proptest generator and added `test_window_external_links_config_validation`.
+
+3. **Shell Opener Logging, Click Interception & IPC Enforcement (`crates/wavical-shell`)**
+   - `src/net_policy.rs`:
+     - Added `external_links` to `ShellBuildManifest` and `ShellNetworkPolicy`, `parse_external_links_mode`, and `resolve_shell_network_policy_with_options` (keeping `resolve_shell_network_policy` and `resolve_shell_network_policy_with_remote` intact; production builds read `manifest.external_links` strictly and default to `Browser`).
+     - Updated `open_external_validated` to log `tracing::info!(security_event = "open_external_allowed", ..., scheme = %parsed.scheme(), ...)` (scheme only, never address/recipient) and pass `parsed.as_str()` once to the opener.
+     - Added `ExternalLinkClickOutcome`, `handle_external_link_click`, `handle_navigation_with_policy_and_opener` (routes `mailto:`/`tel:` to `open_external_validated` and returns `false`), `INTERNAL_OPEN_EXTERNAL_IPC_METHOD` (`"internal.openExternal"`), `InternalOpenExternalParams`, and `process_bridge_report_message_with_opener` (gates on `id == 0`, top frame, and authorized bridge origin).
+     - Extended `build_init_script` via `build_external_link_click_hook_js` to intercept trusted primary clicks on `a[href], area[href]` (excluding `target="_blank"`, `download`, `#...`) for `mailto:`/`tel:` and cross-origin `http:`/`https:` when `externalLinks == "browser"` and target does not match in-app `navigate` allowlist entries.
+   - `src/dev_channel.rs`: Added `external_links: Option<String>` to `DevCommand::ReloadConfig` and `DevLoopAction::ReloadConfig`; updated `test_parse_valid_commands`.
+   - `src/bin/wavical_shell_dev.rs`: Added `--external-links` to `DevShellCli` (not added to production `src/main.rs`).
+   - `src/lib.rs`: Shared `popup_rate_limiter` across new-window, navigation, and internal IPC handlers; wired `with_navigation_handler` to `handle_navigation_with_policy_and_opener`, `with_ipc_handler` to `process_bridge_report_message_with_opener`, and `ReloadConfig` to update `live_policy.external_links`.
+   - `tests/network_modes_tests.rs`: Added `f5_mailto_tel_and_external_links_and_foreign_bridge_isolation` and `f5_open_external_logs_scheme_only_never_address`.
+
+4. **CLI Manifest, Dev Channel & Allowlist Suggestions (`crates/wavical-cli`)**
+   - `src/lib.rs`: Updated `summarize_config_changes`, passed `--external-links` to `wavical-shell-dev` in `run_dev_with_mode`, included `"externalLinks"` in `reload-config` JSON, and added `external_links` to `WavicalManifest` in `run_build_with_mode`.
+   - `src/allowlist_suggest.rs`: Preserved `open_external_schemes` in `EditableAllowlist` and added `needs_decision` hints for `"mailto:"` and `"tel:"`.
+   - `tests/f4_build_modes_tests.rs`: Added `f5_build_manifest_records_external_links_and_allowlist_suggest_preserves_schemes`.
+
+5. **Documentation (`docs/NETWORK_MODES.md`)**
+   - Documented `openExternalSchemes`, `External Links (window.externalLinks, mailto:, tel:)`, and `## Differences from a browser` (plain `http://` blocked in `open` unless in `localExceptions`, `window.open` popup OAuth unsupported, and WebView2 tracking prevention on third-party embed storage). Note: `docs/NETWORK_MODES.md` is ignored by `.gitignore` line 37.
+
+### 3. Decisions Made
+
+- **Click hook + navigation handler split for `wry` `0.57.3`:** `wry::WebViewBuilder::with_navigation_handler` only passes `uri: String` (dropping WebView2 `IsUserInitiated()` / `IsRedirected()` flags), and `wavical-shell` uses `#![forbid(unsafe_code)]`. To avoid affecting redirect-based login flows or app-initiated navigation, user-initiated top-level `<a href>` / `<area href>` clicks (`event.isTrusted`) are intercepted in `build_init_script` and validated server-side via `internal.openExternal`, while redirects and programmatic navigations flow through `with_navigation_handler`.
+- **Preserve existing Phase 0–4.5 struct/API contracts:** Kept `PolicyContext` struct fields unchanged (avoiding breakage across Phase 4.5 struct literals) and kept existing `decide_navigation` / `resolve_shell_network_policy` / `resolve_shell_network_policy_with_remote` signatures intact.
+- **No git commits:** Left all F5 changes uncommitted in the working tree as requested.
+
+### 4. Decisions Needed from You
+
+- **None for F5** unless you want `wry` forked/extended in `wavical-native` later to expose native `IsUserInitiated()`/`IsRedirected()` flags on `NavigationStarting` instead of relying on the trusted JS click hook.
+- **Pre-existing `README.md` audit failures (outside F5 scope):** Same 3 `README.md` checks noted in F4 (`FINDING-C5`, `FINDING-C6` in `part4_cli`; `F-A7-06` in `part8_phase3`) continue to fail on `HEAD` (`45fee8d`).
+
+### 5. Other Info (Files, Verification & Manual Checks)
+
+#### Files Changed (Uncommitted in Working Tree)
+- `crates/wavical-netpolicy/src/lib.rs`
+- `crates/wavical-netpolicy/src/allowlist.rs`
+- `crates/wavical-netpolicy/src/decisions.rs`
+- `crates/wavical-netpolicy/src/diagnostics.rs`
+- `crates/wavical-netpolicy/tests/policy_tests.rs`
+- `crates/wavical-config/src/lib.rs`
+- `crates/wavical-shell/src/net_policy.rs`
+- `crates/wavical-shell/src/dev_channel.rs`
+- `crates/wavical-shell/src/bin/wavical_shell_dev.rs`
+- `crates/wavical-shell/src/lib.rs`
+- `crates/wavical-shell/tests/network_modes_tests.rs`
+- `crates/wavical-cli/src/lib.rs`
+- `crates/wavical-cli/src/allowlist_suggest.rs`
+- `crates/wavical-cli/tests/f4_build_modes_tests.rs`
+- `docs/NETWORK_MODES.md` (on disk; ignored by `.gitignore`)
+- `PATCH_REPORT.md` (this report)
+
+#### Real Command Output Summary (after final code edit)
+1. `cargo build --workspace`: **EXIT=0** (`Finished 'dev' profile in 22.00s`)
+2. `cargo build -p wavical-shell --bin wavical-shell-dev --features dev-shell`: **EXIT=0** (`Finished 'dev' profile in 8.23s`)
+3. `cargo clippy --workspace -- -D warnings`: **EXIT=0** (`Finished 'dev' profile in 16.10s`)
+4. `cargo fmt --all --check`: **EXIT=0**
+5. `cargo test --workspace` / `cargo test --workspace --no-fail-fast`: **EXIT=101**
+   - `wavical-audit` pre-existing `README.md` failures: `part4_cli` (`16 passed; 2 failed`: `test_config_execution_trust_model_documented`, `test_setup_documentation_declares_nodejs_prerequisite`) and `part8_phase3` (`20 passed; 1 failed`: `test_audit_f_a7_06_readme_model_license_disclaimer`).
+   - Under parallel `--workspace --no-fail-fast` load, two `wavical-cli` dev-startup timeout tests timed out at 10s (`f2_dev_shell_tests::test_cli_waits_for_shell_ack_reports_error_and_times_out_after_5s` and `f3_diagnostics_tests::dev_startup_line_and_diagnostic_forwarding_dedup_and_rate_limit`). Both passed cleanly when run directly (`cargo test -p wavical-cli --test f2_dev_shell_tests --test f3_diagnostics_tests -- --nocapture`: `5/5` in `27.59s` and `3/3` in `7.39s`; `cargo test -p wavical-cli --test dev_tests -- --nocapture`: `4/4` in `17.90s`).
+   - All other crates and test binaries passed, including `wavical-netpolicy` (`4` unit + `14` `policy_tests`), `wavical-config` (`52` unit), `wavical-shell` (`9/9` `network_modes_tests`, `6` passed / `1` ignored release check, `2/2` `remote_ui_tests`, `3/3` `node_backend_integration_tests`, `3/3` `updater_tests`, `1/1` `wp8_attack_suite`), `wavical-cli` (`9` unit, `10/10` `build_tests`, `5/5` `f4_build_modes_tests`, `1/1` `allowlist_suggest_tests`, etc.), `wavical-ai`, `wavical-ipc` (`107`), `wavical-native` (`41`), `wavical-protocol` (`42`), and `wavical-supply-chain-bench` (`1`).
+6. `cargo test -p wavical-audit --no-fail-fast -- --include-ignored`: **EXIT=101**
+   - Only `part4_cli` (`16 passed; 2 failed`) and `part8_phase3` (`20 passed; 1 failed`) failed on the pre-existing `README.md` checks; `part1_protocol` (`12/12`), `part2_ipc` (`13/13`), `part3_shell` (`18/18`), `part5*`, `part6*`, `part7_redteam` (`20/20`), and `part9_network_modes` (`5/5`) passed.
+
+#### Manual Checks (Not Run)
+- Add `<a href="mailto:hello@example.com">` and `<a href="https://example.com">` to `my-app` and run `wavical dev`: verify clicking `mailto:` opens the OS mail client, clicking `https://example.com` opens the system browser, and `my-app` stays on its page.
+- Verify `<a href="tel:...">`, redirect-based OAuth navigation staying in-app, `window: { externalLinks: 'in-app' }` allowing click navigation in-app in `open` mode while keeping `window.wavical`/IPC disabled on foreign origins, and `wavical dev-safe` gating `mailto:`/`tel:` on `openExternalSchemes`.
+
+#### Security Assumptions
+- Client-side `internal.openExternal` requests undergo identical server-side policy enforcement (`process_bridge_report_message_with_opener` top-frame/origin check + shared `popup_rate_limiter` + `handle_external_link_click` -> `decide_top_level_navigation` -> `open_external_validated`), preventing arbitrary scheme, oversized URL, or CRLF/header-injection abuse from a compromised renderer.
+- Validated URLs are handed to the OS opener as one URL string (never split) and logged by scheme only (`tracing::info!`).
+- When `window.externalLinks` is `"in-app"`, `window.wavical` and Rust IPC handlers remain bound to the configured bridge origin and refuse foreign origins.
+
+---
+
+<!-- Future patches: copy this section structure for Patch F6, ... -->
+<!--
+## Patch F6
 
 **Status:** ...
 **Baseline Commit:** ...
 
-### 1. Introduction (What F5 Is)
+### 1. Introduction (What F6 Is)
 ### 2. What Was Done
 ### 3. Decisions Made
 ### 4. Decisions Needed from You

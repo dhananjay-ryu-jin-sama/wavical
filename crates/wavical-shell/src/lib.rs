@@ -1259,6 +1259,8 @@ fn run_with_config_inner(
     let nav_window_id = config.window_id.clone();
     let popup_window_id = config.window_id.clone();
     let popup_rate_limiter = std::sync::Arc::new(net_policy::OpenExternalRateLimiter::default());
+    let nav_rate_limiter = popup_rate_limiter.clone();
+    let ipc_rate_limiter = popup_rate_limiter.clone();
 
     #[cfg(feature = "dev-shell")]
     let live_policy = std::sync::Arc::new(std::sync::RwLock::new(config.network_policy.clone()));
@@ -1341,11 +1343,23 @@ fn run_with_config_inner(
             #[cfg(feature = "dev-shell")]
             {
                 let guard = nav_live_policy.read().unwrap_or_else(|e| e.into_inner());
-                net_policy::handle_navigation_with_policy(&guard, &url, &nav_window_id)
+                net_policy::handle_navigation_with_policy_and_opener(
+                    &guard,
+                    &url,
+                    &nav_window_id,
+                    &nav_rate_limiter,
+                    net_policy::launch_system_browser_windows,
+                )
             }
             #[cfg(not(feature = "dev-shell"))]
             {
-                net_policy::handle_navigation_with_policy(&nav_policy, &url, &nav_window_id)
+                net_policy::handle_navigation_with_policy_and_opener(
+                    &nav_policy,
+                    &url,
+                    &nav_window_id,
+                    &nav_rate_limiter,
+                    net_policy::launch_system_browser_windows,
+                )
             }
         })
         .with_new_window_req_handler(move |url, _features| {
@@ -1402,11 +1416,13 @@ fn run_with_config_inner(
             let effective_ipc_config: &WindowConfig = &ipc_config;
 
             if net_policy::is_bridge_report_candidate(body) {
-                match net_policy::process_bridge_report_message(
+                match net_policy::process_bridge_report_message_with_opener(
                     uri,
                     true,
                     body,
                     effective_ipc_config,
+                    &ipc_rate_limiter,
+                    net_policy::launch_system_browser_windows,
                 ) {
                     Ok(net_policy::BridgeReportOutcome::Handled(diag_opt)) => {
                         #[cfg(feature = "dev-shell")]
@@ -1698,6 +1714,7 @@ fn run_with_config_inner(
                     network_mode: _network_mode,
                     remote_url,
                     dev_url,
+                    external_links,
                 } => {
                     tracing::info!(
                         "Reloading config via dev server control: capabilities={:?}",
@@ -1710,24 +1727,32 @@ fn run_with_config_inner(
                         }
                         *lock = updated;
                     }
-                    let (current_mode, old_recorder, old_dev_url) = {
+                    let (current_mode, old_recorder, old_dev_url, old_ext_links) = {
                         let guard = live_policy.read().unwrap_or_else(|e| e.into_inner());
                         (
                             guard.mode,
                             guard.recorder.clone(),
                             guard.dev_url_origin.as_ref().map(|o| o.as_canonical()),
+                            guard.external_links,
                         )
                     };
                     let effective_dev_url = dev_url.or(old_dev_url);
-                    let mut updated_policy = net_policy::resolve_shell_network_policy_with_remote(
-                        &asset_root,
-                        config.project_root.as_deref(),
-                        true,
-                        Some(net_policy::mode_label(current_mode)),
-                        effective_dev_url.as_deref(),
-                        remote_url.as_deref(),
-                        capabilities,
-                    );
+                    let old_ext_str = match old_ext_links {
+                        wavical_netpolicy::ExternalLinksMode::Browser => "browser",
+                        wavical_netpolicy::ExternalLinksMode::InApp => "in-app",
+                    };
+                    let effective_ext_links = external_links.as_deref().unwrap_or(old_ext_str);
+                    let mut updated_policy =
+                        net_policy::resolve_shell_network_policy_with_options(
+                            &asset_root,
+                            config.project_root.as_deref(),
+                            true,
+                            Some(net_policy::mode_label(current_mode)),
+                            effective_dev_url.as_deref(),
+                            remote_url.as_deref(),
+                            Some(effective_ext_links),
+                            capabilities,
+                        );
                     updated_policy.recorder = old_recorder;
                     if let Ok(mut policy_lock) = live_policy.write() {
                         *policy_lock = updated_policy;

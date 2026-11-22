@@ -12,12 +12,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use url::Url;
-use wavical_netpolicy::NetworkMode;
 use wavical_netpolicy::allowlist::Allowlist;
 use wavical_netpolicy::csp::{ULTRA_SAFE_CSP, generate_csp};
 use wavical_netpolicy::decisions::{
-    BridgeDecision, PolicyContext, PolicyDecision, decide_bridge_allowed, decide_navigation,
-    decide_open_external, decide_remote_ui, validate_dev_url,
+    BridgeDecision, NavigationDecision, PolicyContext, PolicyDecision, decide_bridge_allowed,
+    decide_navigation, decide_open_external, decide_remote_ui, decide_top_level_navigation,
+    validate_dev_url,
 };
 use wavical_netpolicy::diagnostics::{DevDiagnosticEvent, normalize_csp_directive};
 #[cfg(feature = "dev-shell")]
@@ -30,7 +30,10 @@ use wavical_netpolicy::limits::{
     MAX_RECORDED_EVENTS_PER_SESSION, OPEN_EXTERNAL_RATE_LIMIT_COUNT,
     OPEN_EXTERNAL_RATE_LIMIT_WINDOW_SECS,
 };
-use wavical_netpolicy::origin::{OriginHost, ParsedOrigin, extract_origin};
+use wavical_netpolicy::origin::{
+    AllowlistPattern, OriginHost, ParsedOrigin, default_port_for_scheme, extract_origin,
+};
+use wavical_netpolicy::{ExternalLinksMode, NetworkMode};
 use wavical_protocol::{HEADER_NOSNIFF, resolve_asset_path};
 use wry::NewWindowResponse;
 use wry::http::{Request, Response, StatusCode, Uri};
@@ -195,6 +198,8 @@ pub struct ShellBuildManifest {
     #[serde(default)]
     pub remote_url: Option<String>,
     #[serde(default)]
+    pub external_links: Option<String>,
+    #[serde(default)]
     pub inline_script_hashes: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub assets: BTreeMap<String, String>,
@@ -210,6 +215,7 @@ pub struct ShellNetworkPolicy {
     pub remote_url: Option<String>,
     pub remote_url_origin: Option<ParsedOrigin>,
     pub dev_url_origin: Option<ParsedOrigin>,
+    pub external_links: ExternalLinksMode,
     pub app_capabilities: Vec<String>,
     /// Per-page inline script hashes (keyed by relative path like `"index.html"`).
     pub inline_script_hashes: BTreeMap<String, Vec<CspHash>>,
@@ -233,6 +239,7 @@ impl Default for ShellNetworkPolicy {
             remote_url: None,
             remote_url_origin: None,
             dev_url_origin: None,
+            external_links: ExternalLinksMode::Browser,
             app_capabilities: Vec::new(),
             inline_script_hashes: BTreeMap::new(),
             manifest_assets: None,
@@ -320,6 +327,16 @@ impl OpenExternalRateLimiter {
         }
         guard.push_back(now);
         true
+    }
+}
+
+/// Parses `window.externalLinks` strictly (`"browser"` or `"in-app"`).
+#[must_use]
+pub fn parse_external_links_mode(raw: &str) -> Option<ExternalLinksMode> {
+    match raw.trim() {
+        "browser" => Some(ExternalLinksMode::Browser),
+        "in-app" => Some(ExternalLinksMode::InApp),
+        _ => None,
     }
 }
 
@@ -463,6 +480,31 @@ pub fn resolve_shell_network_policy_with_remote(
     dev_remote_url_raw: Option<&str>,
     app_capabilities: Vec<String>,
 ) -> ShellNetworkPolicy {
+    resolve_shell_network_policy_with_options(
+        asset_root,
+        project_root,
+        is_dev_command,
+        dev_mode_override,
+        dev_url_raw,
+        dev_remote_url_raw,
+        None,
+        app_capabilities,
+    )
+}
+
+/// Full policy resolver supporting `window.remoteUrl` and `window.externalLinks`
+/// (from manifest in built apps, or CLI/dev-channel in dev commands).
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_shell_network_policy_with_options(
+    asset_root: &Path,
+    project_root: Option<&Path>,
+    is_dev_command: bool,
+    dev_mode_override: Option<&str>,
+    dev_url_raw: Option<&str>,
+    dev_remote_url_raw: Option<&str>,
+    dev_external_links_raw: Option<&str>,
+    app_capabilities: Vec<String>,
+) -> ShellNetworkPolicy {
     let mut policy = ShellNetworkPolicy {
         is_dev_command,
         app_capabilities,
@@ -523,6 +565,11 @@ pub fn resolve_shell_network_policy_with_remote(
 
         policy.mode = mode;
         policy.manifest_assets = Some(manifest.assets);
+        policy.external_links = manifest
+            .external_links
+            .as_deref()
+            .and_then(parse_external_links_mode)
+            .unwrap_or(ExternalLinksMode::Browser);
         candidate_remote_url = manifest.remote_url;
 
         for (page, tokens) in manifest.inline_script_hashes {
@@ -587,6 +634,9 @@ pub fn resolve_shell_network_policy_with_remote(
         policy.mode = dev_mode_override
             .and_then(parse_network_mode)
             .unwrap_or(NetworkMode::UltraSafe);
+        policy.external_links = dev_external_links_raw
+            .and_then(parse_external_links_mode)
+            .unwrap_or(ExternalLinksMode::Browser);
         candidate_remote_url = dev_remote_url_raw.map(str::to_string);
 
         if let Some(raw_dev_url) = dev_url_raw {
@@ -766,6 +816,105 @@ fn build_safe_404_with_headers(csp: &str, ultra_safe: bool) -> Response<Cow<'sta
         .unwrap_or_else(|_| Response::new(Cow::Borrowed(not_found_bytes)))
 }
 
+/// Outcome of handling a user-initiated top-level external link click.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExternalLinkClickOutcome {
+    NavigateInApp,
+    OpenedExternal,
+    Blocked(&'static str),
+    RateLimited,
+    LaunchFailed,
+}
+
+/// Top-level navigation guard backed by `wavical-netpolicy` that also routes `mailto:` and `tel:`
+/// navigations through the single validated opener without navigating the webview.
+pub fn handle_navigation_with_policy_and_opener<F>(
+    policy: &ShellNetworkPolicy,
+    url_str: &str,
+    window_id: &str,
+    rate_limiter: &OpenExternalRateLimiter,
+    opener: F,
+) -> bool
+where
+    F: FnOnce(&str) -> Result<(), std::io::Error>,
+{
+    let trimmed = url_str.trim();
+    if let Ok(parsed) = Url::parse(trimmed)
+        && matches!(parsed.scheme(), "mailto" | "tel")
+    {
+        let res = open_external_validated(policy, trimmed, window_id, rate_limiter, opener);
+        #[cfg(feature = "dev-shell")]
+        if policy.is_dev_command {
+            match res {
+                Err(OpenExternalError::PolicyDenied(rule)) => {
+                    crate::dev_channel::emit_dev_diagnostic(
+                        &DevDiagnosticEvent::BlockedNavigation {
+                            origin: safe_log_origin(trimmed),
+                            rule: rule.to_string(),
+                        },
+                    );
+                }
+                Err(OpenExternalError::RateLimited) => {
+                    crate::dev_channel::emit_dev_diagnostic(
+                        &DevDiagnosticEvent::BlockedNavigation {
+                            origin: safe_log_origin(trimmed),
+                            rule: "rate_limit_exceeded".to_string(),
+                        },
+                    );
+                }
+                Ok(()) | Err(OpenExternalError::LaunchFailed) => {}
+            }
+        }
+        let _ = res;
+        return false;
+    }
+
+    handle_navigation_with_policy(policy, url_str, window_id)
+}
+
+/// Handles a user-initiated top-level link click (`<a href>`) according to `window.externalLinks`
+/// (`"browser"` vs `"in-app"`), `mailto:`/`tel:` rules, and mode allowlists.
+pub fn handle_external_link_click<F>(
+    policy: &ShellNetworkPolicy,
+    url_str: &str,
+    window_id: &str,
+    rate_limiter: &OpenExternalRateLimiter,
+    opener: F,
+) -> ExternalLinkClickOutcome
+where
+    F: FnOnce(&str) -> Result<(), std::io::Error>,
+{
+    let ctx = policy.as_context();
+    match decide_top_level_navigation(&ctx, url_str, true, policy.external_links) {
+        NavigationDecision::AllowInApp => ExternalLinkClickOutcome::NavigateInApp,
+        NavigationDecision::OpenExternal => {
+            match open_external_validated(policy, url_str, window_id, rate_limiter, opener) {
+                Ok(()) => ExternalLinkClickOutcome::OpenedExternal,
+                Err(OpenExternalError::PolicyDenied(rule)) => {
+                    ExternalLinkClickOutcome::Blocked(rule)
+                }
+                Err(OpenExternalError::RateLimited) => ExternalLinkClickOutcome::RateLimited,
+                Err(OpenExternalError::LaunchFailed) => ExternalLinkClickOutcome::LaunchFailed,
+            }
+        }
+        NavigationDecision::Deny(rule) => {
+            if let Some(ref rec) = policy.recorder {
+                rec.record_raw("openExternal", url_str);
+            }
+            tracing::warn!(
+                security_event = "open_external_blocked",
+                mode = mode_label(policy.mode),
+                block_type = "openExternal",
+                origin = %safe_log_origin(url_str),
+                window_id = %window_id,
+                rule = rule,
+                "Security check failed: external link blocked"
+            );
+            ExternalLinkClickOutcome::Blocked(rule)
+        }
+    }
+}
+
 /// Top-level navigation guard backed by `wavical-netpolicy`.
 pub fn handle_navigation_with_policy(
     policy: &ShellNetworkPolicy,
@@ -801,8 +950,8 @@ pub fn handle_navigation_with_policy(
     }
 }
 
-/// One validated function for opening an external `https://` link in the system browser
-/// (Plan 1.3, 1.9, WP4 Task 3).
+/// One validated function for opening an external `https://`, `mailto:`, or `tel:` link in the
+/// system browser or OS scheme handler (Plan 1.3, 1.9, WP4 Task 3, F5).
 pub fn open_external_validated<F>(
     policy: &ShellNetworkPolicy,
     url_str: &str,
@@ -844,6 +993,13 @@ where
     }
 
     let parsed = Url::parse(url_str.trim()).map_err(|_| OpenExternalError::LaunchFailed)?;
+    tracing::info!(
+        security_event = "open_external_allowed",
+        mode = mode_label(policy.mode),
+        window_id = %window_id,
+        scheme = %parsed.scheme(),
+        "Opened external link via validated opener"
+    );
     opener(parsed.as_str()).map_err(|_| OpenExternalError::LaunchFailed)
 }
 
@@ -900,6 +1056,18 @@ pub const DEV_REPORT_IPC_METHOD: &str = "dev.report";
 /// Internal IPC method used by built apps to log CSP violations via tracing (origin and type only).
 pub const CSP_TELEMETRY_IPC_METHOD: &str = "telemetry.cspBlock";
 
+/// Internal IPC method used by the init script to route trusted user-initiated external link clicks
+/// through [`handle_external_link_click`].
+pub const INTERNAL_OPEN_EXTERNAL_IPC_METHOD: &str = "internal.openExternal";
+
+/// Strict payload for internal external-link click forwarding (`internal.openExternal`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InternalOpenExternalParams {
+    pub url: String,
+    pub top_frame: bool,
+}
+
 /// Strict payload for built-app CSP violation telemetry (`telemetry.cspBlock`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -941,7 +1109,90 @@ pub enum BridgeReportOutcome {
 /// Fast pre-check before routing an IPC body through [`process_bridge_report_message`].
 #[must_use]
 pub fn is_bridge_report_candidate(body: &str) -> bool {
-    body.contains("\"telemetry.cspBlock\"") || body.contains("\"dev.report\"")
+    body.contains("\"telemetry.cspBlock\"")
+        || body.contains("\"dev.report\"")
+        || body.contains("\"internal.openExternal\"")
+}
+
+/// Validate and process a diagnostic/telemetry report or internal external-link click message
+/// sent over `window.ipc.postMessage`.
+pub fn process_bridge_report_message_with_opener<F>(
+    uri: &Uri,
+    is_top_frame: bool,
+    body: &str,
+    config: &crate::WindowConfig,
+    rate_limiter: &OpenExternalRateLimiter,
+    opener: F,
+) -> Result<BridgeReportOutcome, crate::IpcOriginError>
+where
+    F: FnOnce(&str) -> Result<(), std::io::Error>,
+{
+    if body.contains("\"internal.openExternal\"") {
+        let is_wavical_scheme = uri
+            .scheme_str()
+            .is_some_and(|s| s.eq_ignore_ascii_case("wavical"));
+        let allowed = if !is_top_frame {
+            false
+        } else if is_wavical_scheme {
+            crate::is_origin_allowed(uri, &config.allowed_origins)
+        } else {
+            authorize_bridge_request(&config.network_policy, uri, is_top_frame, &config.window_id)
+                .is_ok()
+                || crate::is_origin_allowed(uri, &config.allowed_origins)
+        };
+        if !allowed {
+            let origin_str = crate::extract_origin(uri).unwrap_or_else(|| uri.to_string());
+            tracing::warn!(
+                security_event = "origin_rejected",
+                window_id = %config.window_id,
+                origin = %origin_str,
+                reason = "External link caller origin or frame is not authorized",
+                "Security check failed: bridge external link origin rejected"
+            );
+            return Err(crate::IpcOriginError::DisallowedOrigin(origin_str));
+        }
+
+        let Ok(request) = wavical_ipc::parse_request(body) else {
+            return Ok(BridgeReportOutcome::Dropped);
+        };
+        if request.method == INTERNAL_OPEN_EXTERNAL_IPC_METHOD {
+            if request.id != 0 {
+                return Ok(BridgeReportOutcome::ForwardToIpc);
+            }
+            let Ok(params) = serde_json::from_value::<InternalOpenExternalParams>(request.params)
+            else {
+                return Ok(BridgeReportOutcome::Dropped);
+            };
+            if !params.top_frame {
+                return Ok(BridgeReportOutcome::Dropped);
+            }
+            return match handle_external_link_click(
+                &config.network_policy,
+                &params.url,
+                &config.window_id,
+                rate_limiter,
+                opener,
+            ) {
+                ExternalLinkClickOutcome::Blocked(rule) => Ok(BridgeReportOutcome::Handled(Some(
+                    DevDiagnosticEvent::BlockedNewWindow {
+                        origin: safe_log_origin(&params.url),
+                        rule: rule.to_string(),
+                    },
+                ))),
+                ExternalLinkClickOutcome::RateLimited => Ok(BridgeReportOutcome::Handled(Some(
+                    DevDiagnosticEvent::BlockedNewWindow {
+                        origin: safe_log_origin(&params.url),
+                        rule: "rate_limit_exceeded".to_string(),
+                    },
+                ))),
+                ExternalLinkClickOutcome::NavigateInApp
+                | ExternalLinkClickOutcome::OpenedExternal
+                | ExternalLinkClickOutcome::LaunchFailed => Ok(BridgeReportOutcome::Handled(None)),
+            };
+        }
+    }
+
+    process_bridge_report_message(uri, is_top_frame, body, config)
 }
 
 /// Validate and process a diagnostic/telemetry report sent over `window.ipc.postMessage`.
@@ -1172,11 +1423,119 @@ pub fn build_init_script(policy: &ShellNetworkPolicy) -> String {
             allowed.push(remote.as_canonical());
         }
     }
+
+    let mut in_app_exact = allowed.clone();
+    let mut in_app_wildcards = Vec::new();
+    if policy.mode != NetworkMode::UltraSafe
+        && let Some(ref al) = policy.allowlist
+    {
+        for exc in &al.local_exceptions {
+            if matches!(exc.origin.scheme.as_str(), "http" | "https") {
+                in_app_exact.push(exc.origin.as_canonical());
+            }
+        }
+        if policy.mode == NetworkMode::Safe {
+            for pat in &al.navigate {
+                match pat {
+                    AllowlistPattern::Exact(o) => in_app_exact.push(o.as_canonical()),
+                    AllowlistPattern::WildcardSubdomain {
+                        scheme,
+                        base_domain,
+                        port,
+                    } => {
+                        in_app_wildcards.push(serde_json::json!({
+                            "scheme": scheme,
+                            "baseDomain": base_domain,
+                            "port": port,
+                            "defaultPort": default_port_for_scheme(scheme),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
     let allowed_json = serde_json::to_string(&allowed).unwrap_or_else(|_| "[]".to_string());
+    let in_app_exact_json =
+        serde_json::to_string(&in_app_exact).unwrap_or_else(|_| "[]".to_string());
+    let in_app_wildcards_json =
+        serde_json::to_string(&in_app_wildcards).unwrap_or_else(|_| "[]".to_string());
+    let external_links_mode = match policy.external_links {
+        ExternalLinksMode::Browser => "browser",
+        ExternalLinksMode::InApp => "in-app",
+    };
     let report_hook = build_report_hook_js(policy.is_dev_command);
+    let link_hook = build_external_link_click_hook_js(
+        external_links_mode,
+        &in_app_exact_json,
+        &in_app_wildcards_json,
+    );
     format!(
-        "(() => {{ if (window.top !== window.self) return; const __allowed = {allowed_json}; if (!__allowed.includes(window.location.origin)) return;\n{}\n{report_hook}\n}})();",
+        "(() => {{ if (window.top !== window.self) return; const __allowed = {allowed_json}; if (!__allowed.includes(window.location.origin)) return;\n{}\n{link_hook}\n{report_hook}\n}})();",
         crate::WAVICAL_INIT_SCRIPT
+    )
+}
+
+fn build_external_link_click_hook_js(
+    external_links_mode: &str,
+    in_app_exact_json: &str,
+    in_app_wildcards_json: &str,
+) -> String {
+    let mode_json =
+        serde_json::to_string(external_links_mode).unwrap_or_else(|_| "\"browser\"".to_string());
+    format!(
+        r#"
+const __externalLinksMode = {mode_json};
+const __inAppExact = {in_app_exact_json};
+const __inAppWildcards = {in_app_wildcards_json};
+const __isInAppUrl = (u) => {{
+  if (u.origin === window.location.origin) return true;
+  if (__inAppExact.includes(u.origin)) return true;
+  const scheme = String(u.protocol || '').replace(/:$/, '').toLowerCase();
+  const host = String(u.hostname || '').toLowerCase().replace(/\.$/, '');
+  for (const w of __inAppWildcards) {{
+    if (w.scheme !== scheme) continue;
+    const effPort = u.port ? Number(u.port) : w.defaultPort;
+    if (effPort !== w.port) continue;
+    if (host.length > w.baseDomain.length + 1 && host.endsWith('.' + w.baseDomain)) return true;
+  }}
+  return false;
+}};
+document.addEventListener('click', (e) => {{
+  try {{
+    if (!e.isTrusted || e.defaultPrevented) return;
+    if (typeof e.button === 'number' && e.button !== 0) return;
+    const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('a[href], area[href]') : null;
+    if (!el) return;
+    const tgt = String(el.getAttribute('target') || '').trim().toLowerCase();
+    if (tgt === '_blank' || el.hasAttribute('download')) return;
+    const rawHref = el.getAttribute('href');
+    if (!rawHref || rawHref.trim().startsWith('#')) return;
+    let resolved;
+    try {{
+      resolved = new URL(el.href || rawHref, window.location.href);
+    }} catch (_) {{
+      return;
+    }}
+    const scheme = String(resolved.protocol || '').toLowerCase();
+    const isMailOrTel = (scheme === 'mailto:' || scheme === 'tel:');
+    const isWeb = (scheme === 'https:' || scheme === 'http:');
+    if (!isMailOrTel && !isWeb) return;
+    if (isWeb) {{
+      if (__externalLinksMode !== 'browser') return;
+      if (__isInAppUrl(resolved)) return;
+    }}
+    e.preventDefault();
+    if (window.ipc && typeof window.ipc.postMessage === 'function') {{
+      window.ipc.postMessage(JSON.stringify({{
+        id: 0,
+        method: 'internal.openExternal',
+        params: {{ url: isMailOrTel ? (el.href || rawHref) : resolved.href, topFrame: true }}
+      }}));
+    }}
+  }} catch (_) {{}}
+}});
+"#
     )
 }
 

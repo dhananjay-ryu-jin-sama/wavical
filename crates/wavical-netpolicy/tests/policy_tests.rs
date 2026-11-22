@@ -1,11 +1,10 @@
 use proptest::prelude::*;
-use wavical_netpolicy::NetworkMode;
 use wavical_netpolicy::allowlist::{Allowlist, AllowlistError};
 use wavical_netpolicy::csp::{CspError, ULTRA_SAFE_CSP, generate_csp};
 use wavical_netpolicy::decisions::{
-    BridgeDecision, PolicyContext, PolicyDecision, decide_bridge_allowed, decide_navigation,
-    decide_new_window, decide_open_external, decide_remote_ui, is_baseline_blocked_scheme,
-    validate_dev_url,
+    BridgeDecision, NavigationDecision, PolicyContext, PolicyDecision, decide_bridge_allowed,
+    decide_navigation, decide_new_window, decide_open_external, decide_remote_ui,
+    decide_top_level_navigation, is_baseline_blocked_scheme, validate_dev_url,
 };
 use wavical_netpolicy::html::{
     ExternalRef, ExternalRefCategory, HtmlScanResult, InlineHandlerFinding, InlineScriptBlock,
@@ -17,6 +16,7 @@ use wavical_netpolicy::origin::{
 };
 use wavical_netpolicy::vendor_lock::{VendorLock, VendorLockError};
 use wavical_netpolicy::version::{VersionPinStatus, detect_url_version_pin};
+use wavical_netpolicy::{ExternalLinksMode, NetworkMode};
 
 fn app_origin() -> ParsedOrigin {
     ParsedOrigin {
@@ -1030,4 +1030,144 @@ proptest! {
             ));
         }
     }
+}
+
+#[test]
+fn f5_open_external_schemes_allowlist_and_top_level_navigation_decisions() {
+    let valid_both = Allowlist::parse_bytes(
+        br#"{"version":1,"openExternalSchemes":["mailto","tel"],"navigate":["https://login.company.com"],"openExternal":["https://docs.company.com"]}"#,
+    )
+    .unwrap();
+    assert!(valid_both.allows_external_scheme("mailto"));
+    assert!(valid_both.allows_external_scheme("tel"));
+
+    for bad in [
+        br#"{"version":1,"openExternalSchemes":["sms"]}"#.as_slice(),
+        br#"{"version":1,"openExternalSchemes":["whatsapp"]}"#,
+        br#"{"version":1,"openExternalSchemes":["skype"]}"#,
+        br#"{"version":1,"openExternalSchemes":["https"]}"#,
+        br#"{"version":1,"openExternalSchemes":["file"]}"#,
+        br#"{"version":1,"openExternalSchemes":["ms-settings"]}"#,
+        br#"{"version":1,"openExternalSchemes":["mailto:"]}"#,
+        br#"{"version":1,"openExternalSchemes":["mailto","mailto"]}"#,
+        br#"{"version":1,"openExternalSchemes":["mailto","MAILTO"]}"#,
+    ] {
+        assert!(
+            Allowlist::parse_bytes(bad).is_err(),
+            "expected invalid openExternalSchemes to be rejected: {}",
+            String::from_utf8_lossy(bad)
+        );
+    }
+
+    let app = app_origin();
+    let open_ctx = PolicyContext {
+        mode: NetworkMode::Open,
+        is_dev_command: false,
+        app_origin: &app,
+        allowlist: None,
+        remote_url_origin: None,
+        dev_url_origin: None,
+        app_capabilities: &[],
+    };
+    assert_eq!(
+        decide_open_external(&open_ctx, "mailto:hello@example.com"),
+        PolicyDecision::Allow
+    );
+    assert_eq!(
+        decide_open_external(&open_ctx, "tel:+15550100"),
+        PolicyDecision::Allow
+    );
+    assert!(matches!(
+        decide_open_external(&open_ctx, "mailto:a@b.com?subject=x%0d%0abcc:evil@x.com"),
+        PolicyDecision::Deny(_)
+    ));
+    assert!(matches!(
+        decide_open_external(&open_ctx, "sms:+15550100"),
+        PolicyDecision::Deny(_)
+    ));
+
+    // User-initiated external click in open mode (browser default vs in-app)
+    assert_eq!(
+        decide_top_level_navigation(
+            &open_ctx,
+            "https://example.com",
+            true,
+            ExternalLinksMode::Browser
+        ),
+        NavigationDecision::OpenExternal
+    );
+    assert_eq!(
+        decide_top_level_navigation(
+            &open_ctx,
+            "https://example.com",
+            false,
+            ExternalLinksMode::Browser
+        ),
+        NavigationDecision::AllowInApp
+    );
+    assert_eq!(
+        decide_top_level_navigation(
+            &open_ctx,
+            "https://example.com",
+            true,
+            ExternalLinksMode::InApp
+        ),
+        NavigationDecision::AllowInApp
+    );
+    assert_eq!(
+        decide_top_level_navigation(
+            &open_ctx,
+            "mailto:hello@example.com",
+            true,
+            ExternalLinksMode::InApp
+        ),
+        NavigationDecision::OpenExternal
+    );
+
+    // Safe mode: navigate list stays in-app, openExternal opens externally on click, mailto/tel obey openExternalSchemes
+    let safe_ctx = PolicyContext {
+        mode: NetworkMode::Safe,
+        is_dev_command: false,
+        app_origin: &app,
+        allowlist: Some(&valid_both),
+        remote_url_origin: None,
+        dev_url_origin: None,
+        app_capabilities: &[],
+    };
+    assert_eq!(
+        decide_top_level_navigation(
+            &safe_ctx,
+            "https://login.company.com/auth",
+            true,
+            ExternalLinksMode::Browser
+        ),
+        NavigationDecision::AllowInApp
+    );
+    assert_eq!(
+        decide_top_level_navigation(
+            &safe_ctx,
+            "https://docs.company.com/",
+            true,
+            ExternalLinksMode::Browser
+        ),
+        NavigationDecision::OpenExternal
+    );
+    assert_eq!(
+        decide_top_level_navigation(
+            &safe_ctx,
+            "mailto:hello@example.com",
+            true,
+            ExternalLinksMode::Browser
+        ),
+        NavigationDecision::OpenExternal
+    );
+    assert!(matches!(
+        decide_top_level_navigation(
+            &safe_ctx,
+            "https://evil.com/",
+            true,
+            ExternalLinksMode::Browser
+        ),
+        NavigationDecision::Deny(_)
+    ));
 }

@@ -86,6 +86,10 @@ pub struct DevShellCli {
     #[arg(long)]
     pub remote_url: Option<String>,
 
+    /// External link handling mode from window.externalLinks (browser | in-app).
+    #[arg(long)]
+    pub external_links: Option<String>,
+
     /// Record blocked events to .wavical/recorded-blocks.json (dev-safe / dev-ultra-safe only).
     #[arg(long)]
     pub record: bool,
@@ -215,13 +219,14 @@ fn main() {
         .as_deref()
         .and_then(|raw| serde_json::from_str::<wavical_config::BackendConfig>(raw).ok());
 
-    let mut network_policy = wavical_shell::net_policy::resolve_shell_network_policy_with_remote(
+    let mut network_policy = wavical_shell::net_policy::resolve_shell_network_policy_with_options(
         &asset_root,
         args.project_root.as_deref(),
         true,
         args.network_mode.as_deref(),
         args.dev_url.as_deref(),
         args.remote_url.as_deref(),
+        args.external_links.as_deref(),
         granted_caps,
     );
     if args.record {
