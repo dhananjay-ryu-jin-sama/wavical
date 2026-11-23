@@ -54,6 +54,32 @@ cd Wavical
 cargo install --path crates/wavical-cli
 ```
 
+### Verify What You Installed
+
+Check that the CLI and shell binaries match the expected release version and git commit:
+
+```powershell
+npx wavical --version
+npx wavical doctor --version-info
+```
+
+- `npx wavical --version` prints the release version and git commit (for example, `1.1.1 (<commit>)`).
+- `npx wavical doctor --version-info` prints the CLI version/commit, resolved shell path, shell version/commit, and `Match: yes` when both binaries come from the same clean build.
+- To inspect a built app's manifest `mode`, effective CSP, log path, and shell provenance, run `npx wavical doctor --app dist`.
+
+### Dev Shell vs. Production Shell
+
+Wavical separates developer conveniences from hardened production execution across two shell binaries:
+
+| Binary | Used By | Capabilities & Hardening |
+|---|---|---|
+| `wavical-shell-dev.exe` (**dev shell**) | `wavical dev`, `wavical dev-safe`, `wavical dev-ultra-safe` | Dev-only conveniences: hot reload, live config reload, backend auto-restart, DevTools, `--record` event capture, `dev.url` support, and terminal blocked-resource diagnostics. Never copied into `dist/` builds. |
+| `wavical-shell.exe` (**production shell**) | Built apps (`wavical build --allow-open`, `wavical build-safe`, `wavical build-ultra-safe`) | Phase 4 production hardening: no DevTools, no remote debugging, no `stdin` command channel, and no `dev.url`. Reads `mode` from `wavical-manifest.json` (verifies `allowlistSha256` before window creation in `safe` mode; falls closed to `ultra-safe` if `mode` is missing) and writes logs to `%LOCALAPPDATA%\Wavical\apps\<appId>\logs\shell.log`. |
+
+### Network Modes & Browser Differences
+
+Even in `open` mode, Wavical keeps baseline security boundaries that differ from a standard web browser (such as blocking plain `http://` unless listed in `localExceptions`, blocking `window.open` popups, and WebView2 tracking prevention for third-party embeds). See [Differences from a browser](docs/NETWORK_MODES.md#differences-from-a-browser) in [`docs/NETWORK_MODES.md`](docs/NETWORK_MODES.md).
+
 ---
 
 ## 🚀 Quick Start
@@ -85,10 +111,14 @@ wavical dev
 Bundles your frontend (and optional backend) into `dist/` with a SHA-256 asset manifest (`wavical-manifest.json`):
 
 ```powershell
-wavical build
+wavical build --allow-open
+
+# Or build with explicit allowlist / strict local-only isolation
+wavical build-safe
+wavical build-ultra-safe
 
 # Bundle the verified Node.js backend runtime into the output directory
-wavical build --bundle-runtime
+wavical build-safe --bundle-runtime
 ```
 
 ---
@@ -107,7 +137,10 @@ Both `wavical` and `wca` accept the same commands:
 | `wavical dev-ultra-safe [DIR] [--record]` | Start dev server in **ultra-safe** mode (strict local-only CSP; extracts inline scripts). |
 | `wavical allowlist suggest [DIR]` | Review `--record` blocked events and selectively add origins to `wavical.allowlist.json`. |
 | `wavical vendor [DIR] [--allow-unpinned <URL>] [--check] [--update]` | Vendor pinned CDN scripts, styles, fonts, and images into `src/vendor/` for offline & `ultra-safe` use. |
-| `wavical build [DIR] [--outdir dist] [--bundle-runtime]` | Build production assets and generate `wavical-manifest.json`. |
+| `wavical build [DIR] --allow-open [--outdir dist] [--bundle-runtime]` | Build production assets in **open** mode (refuses without `--allow-open`) and generate `wavical-manifest.json`. |
+| `wavical build-safe [DIR] [--outdir dist] [--bundle-runtime]` | Build production assets in **safe** mode (`wavical.allowlist.json` + SHA-256 integrity checks). |
+| `wavical build-ultra-safe [DIR] [--outdir dist] [--bundle-runtime]` | Build production assets in **ultra-safe** mode (strict local-only CSP; extracts inline scripts). |
+| `wavical doctor [--version-info] [--app <PATH>]` | Verify CLI/shell version & commit provenance or inspect a built app manifest. |
 | `wavical register-filetypes [DIR]` | Register file extensions from `wavical.config.js` in Windows (`HKCU`). |
 | `wavical unregister-filetypes [DIR]` | Remove registered Windows file associations for the project. |
 
