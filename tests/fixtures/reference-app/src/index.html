@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gaura Nitai Technologies — Product Engineering, IoT, AI & Cyber Security</title>
+<meta name="description" content="Gaura Nitai Technologies — deep-tech engineering studio specializing in Product Engineering, IoT & Cloud Infrastructure, Wireless Communication, AI Applications and Cyber Security.">
+<link rel="icon" href="https://www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<script src="script.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://unpkg.com/lenis@1.1.18/dist/lenis.min.js"></script>
+
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body class="locked font-body">
+
+<div id="noise"></div>
+<div id="scroll-progress"></div>
+<div id="cursor-dot"></div>
+<div id="cursor-ring"></div>
+
+<!-- ================= PRELOADER ================= -->
+<div id="preloader">
+  <div id="pre-flash"></div>
+  <svg id="lotus-svg" viewBox="0 0 400 340" aria-hidden="true">
+    <defs>
+      <radialGradient id="glowGrad">
+        <stop offset="0%" stop-color="#5eead4" stop-opacity=".85"/>
+        <stop offset="45%" stop-color="#38bdf8" stop-opacity=".3"/>
+        <stop offset="100%" stop-color="#38bdf8" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <circle id="lotus-glow" cx="200" cy="215" r="62" fill="url(#glowGrad)"/>
+    <g id="lotus-petals"></g>
+    <g class="swirl" stroke="#2dd4bf" fill="none" stroke-width="2" stroke-linecap="round" opacity=".85">
+      <path d="M166 262 C118 268 82 254 70 228 C65 216 74 205 84 211 C92 216 86 229 76 225"/>
+      <path d="M150 276 C116 284 88 280 72 266"/>
+      <g transform="translate(400,0) scale(-1,1)">
+        <path d="M166 262 C118 268 82 254 70 228 C65 216 74 205 84 211 C92 216 86 229 76 225"/>
+        <path d="M150 276 C116 284 88 280 72 266"/>
+      </g>
+    </g>
+    <g fill="#fbbf24" class="lotus-dots">
+      <circle cx="66" cy="200" r="2.2"/><circle cx="334" cy="200" r="2.2"/>
+      <circle cx="54" cy="252" r="1.8"/><circle cx="346" cy="252" r="1.8"/>
+      <circle cx="200" cy="66" r="2"/>
+    </g>
+  </svg>
+  <div class="badge-anchor">
+    <div id="pre-logo-badge">
+      <div id="ring-burst"></div>
+      <div class="logo-badge">
+        <span class="badge-fallback">GN</span>
+        <img src="https://www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35" alt="Gaura Nitai Technologies logo" data-remove-on-error>
+      </div>
+    </div>
+  </div>
+  <button id="skip-intro">SKIP INTRO</button>
+</div>
+
+<!-- ================= NAV ================= -->
+<header id="site-nav">
+  <div class="max-w-7xl mx-auto flex items-center justify-between px-5 sm:px-8 py-4">
+    <a href="#home" class="flex items-center gap-3">
+      <span class="logo-badge nav-logo">
+        <span class="badge-fallback">GN</span>
+        <img src="https://www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35" alt="GNT logo" data-remove-on-error>
+      </span>
+      <span class="font-display font-bold tracking-wide text-sm sm:text-base">GAURA NITAI <span class="text-gold2">TECHNOLOGIES</span></span>
+    </a>
+    <nav class="hidden md:flex items-center gap-8 font-mono text-[12px] tracking-[0.18em]">
+      <a class="nav-link active" href="#home" data-nav="home">HOME</a>
+      <a class="nav-link" href="#services" data-nav="services">SERVICES</a>
+      <a class="nav-link" href="#about" data-nav="about">ABOUT</a>
+      <a class="nav-link" href="#quote" data-nav="quote">CONTACT</a>
+      <a href="#quote" class="quote-btn">GET QUOTE</a>
+    </nav>
+    <button id="menu-btn" class="md:hidden" aria-label="Menu"><span></span><span></span><span></span></button>
+  </div>
+</header>
+
+<div id="mobile-menu">
+  <div class="absolute inset-0 bg-ink-950/95 backdrop-blur-xl"></div>
+  <div class="relative h-full flex flex-col items-center justify-center gap-9">
+    <a class="mm-link" href="#home">Home</a>
+    <a class="mm-link" href="#services">Services</a>
+    <a class="mm-link" href="#about">About</a>
+    <a class="mm-link" href="#quote">Get Quote</a>
+    <div class="w-16 h-px bg-gradient-to-r from-transparent via-teal2 to-transparent"></div>
+    <p class="font-mono text-[11px] tracking-[0.3em] text-slate-500">GAURA NITAI TECHNOLOGIES</p>
+  </div>
+</div>
+
+<main>
+<!-- ================= HERO ================= -->
+<section id="home">
+  <canvas id="hero-canvas"></canvas>
+  <div class="hero-orb hero-orb-1"></div>
+  <div class="hero-orb hero-orb-2"></div>
+  <div class="hero-orb hero-orb-3"></div>
+  <div class="hero-grid"></div>
+
+  <div id="hero-content">
+    <div class="logo-badge hero-badge" id="hero-badge">
+      <span class="badge-fallback">GN</span>
+      <img src="https://www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35" alt="Gaura Nitai Technologies" data-remove-on-error>
+    </div>
+    <p class="hero-kicker">WELCOME TO THE FUTURE OF ENGINEERING</p>
+    <h1 id="hero-title">GAURA NITAI TECHNOLOGIES</h1>
+    <div id="hero-underline"></div>
+    <p class="tagline"><span id="tagline-text"></span><span class="caret"></span></p>
+    <div class="flex gap-4 mt-8 flex-wrap justify-center">
+      <a href="#services" class="hero-cta btn-primary">Explore Capabilities
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <a href="#quote" class="hero-cta btn-ghost">Get a Quote</a>
+    </div>
+  </div>
+
+  <div id="scroll-hint">
+    <span>SCROLL</span>
+    <div class="line"></div>
+  </div>
+</section>
+
+<!-- ================= MARQUEE ================= -->
+<div class="marquee" aria-hidden="true">
+  <div class="marquee-track" id="marquee-track">
+    <span class="mq-item">Product Engineering</span><span class="mq-sep">◆</span>
+    <span class="mq-item">IoT Platforms</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Cloud Infrastructure</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Wireless &amp; RF</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Edge AI</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Cyber Security</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Embedded Systems</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Computer Vision</span><span class="mq-sep">◆</span>
+    <span class="mq-item">LoRaWAN</span><span class="mq-sep">◆</span>
+    <span class="mq-item">5G / LTE</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Kubernetes</span><span class="mq-sep">◆</span>
+    <span class="mq-item">Zero Trust</span><span class="mq-sep">◆</span>
+  </div>
+</div>
+
+<!-- ================= SERVICES ================= -->
+<section id="services">
+  <div class="svc-bg">
+    <div class="svc-orb svc-orb-1" data-speed="-16"></div>
+    <div class="svc-orb svc-orb-2" data-speed="20"></div>
+    <div class="svc-orb svc-orb-3" data-speed="-24"></div>
+    <div class="svc-grid"></div>
+    <div class="svc-shape sq1" data-speed="14"></div>
+    <div class="svc-shape sq2" data-speed="-18"></div>
+    <div class="svc-shape ci1" data-speed="10"></div>
+  </div>
+
+  <div class="relative max-w-6xl mx-auto px-5 sm:px-8">
+    <div class="text-center mb-14" data-reveal>
+      <p class="kicker">// WHAT WE DO</p>
+      <h2 class="section-title">Capabilities that power<br class="hidden sm:block"> the <span class="grad-text">connected world</span></h2>
+      <p class="section-sub">Five deep-tech disciplines, one integrated engineering partner. Follow the energy line — each node is a capability we have mastered end to end.</p>
+    </div>
+
+    <div id="services-track">
+      <svg id="connector-svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#2dd4bf"/>
+            <stop offset="55%" stop-color="#38bdf8"/>
+            <stop offset="100%" stop-color="#fbbf24"/>
+          </linearGradient>
+        </defs>
+        <path id="connector-dim" d=""/>
+        <path id="connector-glow" d=""/>
+      </svg>
+      <div id="traveler"></div>
+      <div id="comet"><div class="comet-tail"></div><div class="comet-dot"></div></div>
+
+      <!-- 01 -->
+      <div class="service-row" data-side="left">
+        <div class="sc-card-wrap">
+          <article class="service-card">
+            <span class="sc-num">01</span>
+            <div class="sc-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><rect x="10.4" y="10.4" width="3.2" height="3.2" rx=".6"/><path d="M10 2v3M14 2v3M10 19v3M14 19v3M2 10h3M2 14h3M19 10h3M19 14h3"/></svg>
+            </div>
+            <h3>Product Engineering</h3>
+            <p>From concept to production — embedded firmware, hardware-software co-design, rapid prototyping and design-for-manufacture. We turn ambitious ideas into market-ready products.</p>
+            <div class="sc-tags"><span>Embedded C/C++</span><span>RTOS</span><span>Hardware Design</span><span>DFM</span></div>
+            <button class="sc-link" data-service-quote="Product Engineering">DISCUSS THIS SERVICE
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+        </div>
+        <div class="node-cell"><div class="service-node"><span class="node-ring"></span><span class="node-core"></span></div></div>
+      </div>
+
+      <!-- 02 -->
+      <div class="service-row" data-side="right">
+        <div class="sc-card-wrap">
+          <article class="service-card">
+            <span class="sc-num">02</span>
+            <div class="sc-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17a4 4 0 1 1 .6-7.96A5.5 5.5 0 0 1 18.3 11 3.25 3.25 0 0 1 17.5 17Z"/><path d="M9 20.5h.01M12 21.5h.01M15 20.5h.01"/></svg>
+            </div>
+            <h3>IoT &amp; Cloud Infrastructure</h3>
+            <p>Edge-to-cloud architectures that scale effortlessly. Device provisioning, telemetry pipelines, digital twins and resilient cloud-native platforms built for millions of endpoints.</p>
+            <div class="sc-tags"><span>AWS / Azure</span><span>Kubernetes</span><span>MQTT</span><span>Edge Computing</span></div>
+            <button class="sc-link" data-service-quote="IoT & Cloud Infrastructure">DISCUSS THIS SERVICE
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+        </div>
+        <div class="node-cell"><div class="service-node"><span class="node-ring"></span><span class="node-core"></span></div></div>
+      </div>
+
+      <!-- 03 -->
+      <div class="service-row" data-side="left">
+        <div class="sc-card-wrap">
+          <article class="service-card">
+            <span class="sc-num">03</span>
+            <div class="sc-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10.5" r="1.2"/><path d="M9.2 7.7a4 4 0 0 1 5.6 0M6.6 5.1a7.6 7.6 0 0 1 10.8 0"/><path d="M12 12v8M8.5 20h7"/></svg>
+            </div>
+            <h3>Wireless Communication</h3>
+            <p>RF system design and deep protocol expertise across BLE, LoRaWAN, Wi-Fi 6, 4G/5G and custom sub-GHz links. Reliable connectivity engineered for the real world.</p>
+            <div class="sc-tags"><span>BLE</span><span>LoRaWAN</span><span>5G / LTE</span><span>RF Design</span></div>
+            <button class="sc-link" data-service-quote="Wireless Communication">DISCUSS THIS SERVICE
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+        </div>
+        <div class="node-cell"><div class="service-node"><span class="node-ring"></span><span class="node-core"></span></div></div>
+      </div>
+
+      <!-- 04 -->
+      <div class="service-row" data-side="right">
+        <div class="sc-card-wrap">
+          <article class="service-card">
+            <span class="sc-num">04</span>
+            <div class="sc-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.7 4.4L18 9.1l-4.3 1.7L12 15.2l-1.7-4.4L6 9.1l4.3-1.7Z"/><circle cx="5" cy="17.5" r="1.4"/><circle cx="19" cy="17.5" r="1.4"/><path d="M6.4 17.5h3.6l1.6-2.2M17.6 17.5h-3.6l-1.6-2.2"/></svg>
+            </div>
+            <h3>AI Applications</h3>
+            <p>Applied machine intelligence — computer vision, predictive analytics, NLP and on-device inference. We embed intelligence where it matters: inside your product.</p>
+            <div class="sc-tags"><span>Computer Vision</span><span>TinyML</span><span>NLP</span><span>MLOps</span></div>
+            <button class="sc-link" data-service-quote="AI Applications">DISCUSS THIS SERVICE
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+        </div>
+        <div class="node-cell"><div class="service-node"><span class="node-ring"></span><span class="node-core"></span></div></div>
+      </div>
+
+      <!-- 05 -->
+      <div class="service-row" data-side="left">
+        <div class="sc-card-wrap">
+          <article class="service-card">
+            <span class="sc-num">05</span>
+            <div class="sc-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 2.8v5.4c0 4.4-3 7.4-7 8.8-4-1.4-7-4.4-7-8.8V5.8Z"/><circle cx="12" cy="9.8" r="1.4"/><path d="M12 11.2v3"/></svg>
+            </div>
+            <h3>Cyber Security</h3>
+            <p>Security by design — threat modeling, penetration testing, secure boot, cryptography and compliance. Hardening connected systems against the threats of tomorrow.</p>
+            <div class="sc-tags"><span>Pen Testing</span><span>Zero Trust</span><span>Secure Boot</span><span>Compliance</span></div>
+            <button class="sc-link" data-service-quote="Cyber Security">DISCUSS THIS SERVICE
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </article>
+        </div>
+        <div class="node-cell"><div class="service-node"><span class="node-ring"></span><span class="node-core"></span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ABOUT ================= -->
+<section id="about">
+  <div class="about-orb" data-speed="-14"></div>
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 grid lg:grid-cols-2 gap-16 items-center">
+    <div data-reveal>
+      <p class="kicker">// WHO WE ARE</p>
+      <h2 class="section-title">Engineered with devotion.<br><span class="grad-text">Built for scale.</span></h2>
+      <p class="text-slate-400 mt-6 leading-relaxed font-light">Gaura Nitai Technologies is a deep-tech engineering studio building the products of the connected age. From silicon to cloud, we design, engineer and secure intelligent systems for startups and enterprises alike.</p>
+      <p class="text-slate-400 mt-4 leading-relaxed font-light">Our multidisciplinary teams span embedded hardware, wireless protocols, cloud-native platforms and applied AI — delivering true end-to-end ownership from the first sketch to global deployment.</p>
+      <div class="grid sm:grid-cols-2 gap-3 mt-8">
+        <div class="value-item"><span class="vi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span><div><p class="font-semibold text-sm">End-to-end ownership</p><p class="text-xs text-slate-500 mt-1">One team, concept to launch</p></div></div>
+        <div class="value-item"><span class="vi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span><div><p class="font-semibold text-sm">Security-first mindset</p><p class="text-xs text-slate-500 mt-1">Hardened by design, not patch</p></div></div>
+        <div class="value-item"><span class="vi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span><div><p class="font-semibold text-sm">Agile &amp; transparent</p><p class="text-xs text-slate-500 mt-1">Weekly demos, clear roadmaps</p></div></div>
+        <div class="value-item"><span class="vi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span><div><p class="font-semibold text-sm">Deep domain expertise</p><p class="text-xs text-slate-500 mt-1">Engineers, not generalists</p></div></div>
+      </div>
+    </div>
+    <div data-reveal>
+      <div class="orbit-wrap">
+        <div class="orbit-glow"></div>
+        <div class="orbit-ring ring-1"></div>
+        <div class="orbit-ring ring-2"></div>
+        <div class="orbit-ring ring-3"></div>
+        <div class="logo-badge orbit-badge">
+          <span class="badge-fallback">GN</span>
+          <img src="https://www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35" alt="Gaura Nitai Technologies" data-remove-on-error>
+        </div>
+        <span class="orbit-chip chip-1">IoT</span>
+        <span class="orbit-chip chip-2">EDGE AI</span>
+        <span class="orbit-chip chip-3">CLOUD</span>
+        <span class="orbit-chip chip-4">SECURITY</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 mt-24">
+    <div class="stats-grid" data-reveal>
+      <div class="stat-card"><div class="stat-num" data-count="50" data-suffix="+">0</div><div class="stat-label">Products Delivered</div></div>
+      <div class="stat-card"><div class="stat-num" data-count="30" data-suffix="+">0</div><div class="stat-label">Global Clients</div></div>
+      <div class="stat-card"><div class="stat-num" data-count="99.9" data-suffix="%">0</div><div class="stat-label">Cloud Uptime</div></div>
+      <div class="stat-card"><div class="stat-num" data-count="24" data-suffix="/7">0</div><div class="stat-label">Engineering Support</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= GET QUOTE ================= -->
+<section id="quote">
+  <div class="quote-orb"></div>
+  <div class="quote-orb2"></div>
+  <div class="max-w-6xl mx-auto px-5 sm:px-8">
+    <div class="text-center" data-reveal>
+      <p class="kicker">// GET A QUOTE</p>
+      <h2 class="section-title">Let's build something <span class="grad-text">extraordinary</span></h2>
+      <p class="section-sub">Tell us about your product, platform or security challenge. Our engineers will respond with a tailored proposal.</p>
+    </div>
+
+    <div class="grid lg:grid-cols-[1fr_1.25fr] gap-10 mt-16 items-start">
+      <div class="space-y-4" data-reveal>
+        <div class="contact-row">
+          <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.5 7l8.5 6 8.5-6"/></svg></span>
+          <div><p class="font-mono text-[10px] tracking-[0.25em] text-slate-500">EMAIL US</p><p class="font-semibold mt-0.5">hello@gauranitai.tech</p></div>
+        </div>
+        <div class="contact-row">
+          <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2.5 1.5a12 12 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/></svg></span>
+          <div><p class="font-mono text-[10px] tracking-[0.25em] text-slate-500">CALL US</p><p class="font-semibold mt-0.5">+91 98765 43210</p></div>
+        </div>
+        <div class="contact-row">
+          <span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-5.4 7-11a7 7 0 1 0-14 0c0 5.6 7 11 7 11Z"/><circle cx="12" cy="10" r="2.6"/></svg></span>
+          <div><p class="font-mono text-[10px] tracking-[0.25em] text-slate-500">VISIT US</p><p class="font-semibold mt-0.5">Bengaluru, Karnataka, India</p></div>
+        </div>
+        <div class="contact-row response-time">
+          <span class="pulse-dot response-time-dot"></span>
+          <div><p class="font-semibold text-teal2">Average response time</p><p class="text-xs text-slate-500 mt-0.5">Under 24 hours, guaranteed</p></div>
+        </div>
+        <div class="pt-4 hidden lg:block">
+          <p class="font-mono text-[10px] tracking-[0.3em] text-slate-600 leading-loose">TRUSTED BY INNOVATORS IN<br>INDUSTRIAL IOT · MEDTECH · SMART CITIES · AUTOMOTIVE</p>
+        </div>
+      </div>
+
+      <div class="glow-border" data-reveal>
+        <div class="bg-ink-800/90 backdrop-blur-xl rounded-[1.6rem] p-7 sm:p-10 relative overflow-hidden">
+          <form id="quote-form" novalidate>
+            <div class="grid sm:grid-cols-2 gap-x-5">
+              <div class="field">
+                <input type="text" id="q-name" placeholder=" " autocomplete="name">
+                <label for="q-name">Full Name *</label>
+                <span class="err">Please enter your name</span>
+              </div>
+              <div class="field">
+                <input type="email" id="q-email" placeholder=" " autocomplete="email">
+                <label for="q-email">Email Address *</label>
+                <span class="err">Please enter a valid email</span>
+              </div>
+            </div>
+            <div class="grid sm:grid-cols-2 gap-x-5">
+              <div class="field">
+                <input type="text" id="q-company" placeholder=" " autocomplete="organization">
+                <label for="q-company">Company Name *</label>
+                <span class="err">Please enter your company</span>
+              </div>
+              <div class="field">
+                <select id="q-service" required>
+                  <option value="" disabled selected>Select a service...</option>
+                  <option>Product Engineering</option>
+                  <option>IoT &amp; Cloud Infrastructure</option>
+                  <option>Wireless Communication</option>
+                  <option>AI Applications</option>
+                  <option>Cyber Security</option>
+                  <option>Other / Not sure yet</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <textarea id="q-desc" placeholder=" " rows="4"></textarea>
+              <label for="q-desc">Requirement Description *</label>
+              <span class="err">Please describe your requirement (min 10 characters)</span>
+            </div>
+            <button type="submit" class="submit-btn" id="q-submit">
+              <span class="spinner"></span>
+              <span class="btn-label">Send Request</span>
+              <svg class="btn-arrow" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+            <p class="text-center font-mono text-[10px] tracking-[0.2em] text-slate-600 mt-4">YOUR DATA IS ENCRYPTED &amp; NEVER SHARED</p>
+          </form>
+
+          <div id="quote-success" class="hidden text-center py-10 relative">
+            <div id="burst-zone" class="relative inline-block">
+              <svg class="check-svg" viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="M15 27l7.5 7.5L37 19"/></svg>
+            </div>
+            <h3 class="font-display font-bold text-2xl mt-6">Request Received</h3>
+            <p class="text-slate-400 mt-3 max-w-sm mx-auto font-light">Thank you for reaching out. Our engineering team will review your requirement and respond within 24 hours.</p>
+            <button id="q-again" class="btn-ghost mt-8 quote-again">Send Another Request</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ================= FOOTER ================= -->
+<footer class="pt-16 pb-8">
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 grid md:grid-cols-2 lg:grid-cols-[1.6fr_1fr_1fr_1.2fr] gap-10">
+    <div>
+      <div class="flex items-center gap-3">
+        <span class="logo-badge nav-logo"><span class="badge-fallback">GN</span><img src="https://www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35" alt="GNT" data-remove-on-error></span>
+        <span class="font-display font-bold">GAURA NITAI <span class="text-gold2">TECHNOLOGIES</span></span>
+      </div>
+      <p class="text-slate-500 text-sm mt-5 leading-relaxed font-light max-w-xs">A deep-tech engineering studio crafting intelligent, connected and secure products — from the first spark of an idea to global scale.</p>
+      <div class="flex gap-3 mt-6">
+        <a href="#" class="social-btn" aria-label="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5C4.98 4.88 3.87 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5zM.5 8h4V24h-4V8zm7.5 0h3.8v2.2h.05c.53-1 1.83-2.2 3.77-2.2 4.03 0 4.78 2.65 4.78 6.1V24h-4v-8.5c0-2.03-.04-4.64-2.83-4.64-2.83 0-3.27 2.2-3.27 4.48V24h-4V8z"/></svg></a>
+        <a href="#" class="social-btn" aria-label="X"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.9 2H22l-6.8 7.8L23.3 22h-6.3l-4.9-6.4L6.4 22H3.3l7.3-8.3L1 2h6.5l4.4 5.9L18.9 2zm-1.1 18h1.7L7.6 3.8H5.8L17.8 20z"/></svg></a>
+        <a href="#" class="social-btn" aria-label="GitHub"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .4.2.7.8.6A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5z"/></svg></a>
+        <a href="#" class="social-btn" aria-label="Instagram"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="2.5" width="19" height="19" rx="5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.4" cy="6.6" r="1.1" fill="currentColor" stroke="none"/></svg></a>
+      </div>
+    </div>
+    <div>
+      <p class="font-mono text-[11px] tracking-[0.3em] text-slate-500 mb-5">NAVIGATE</p>
+      <div class="flex flex-col gap-3">
+        <a href="#home" class="f-link">Home</a>
+        <a href="#services" class="f-link">Services</a>
+        <a href="#about" class="f-link">About Us</a>
+        <a href="#quote" class="f-link">Get a Quote</a>
+      </div>
+    </div>
+    <div>
+      <p class="font-mono text-[11px] tracking-[0.3em] text-slate-500 mb-5">SERVICES</p>
+      <div class="flex flex-col gap-3">
+        <a href="#services" class="f-link">Product Engineering</a>
+        <a href="#services" class="f-link">IoT &amp; Cloud</a>
+        <a href="#services" class="f-link">Wireless Communication</a>
+        <a href="#services" class="f-link">AI Applications</a>
+        <a href="#services" class="f-link">Cyber Security</a>
+      </div>
+    </div>
+    <div>
+      <p class="font-mono text-[11px] tracking-[0.3em] text-slate-500 mb-5">CONTACT</p>
+      <p class="text-slate-400 text-sm">hello@gauranitai.tech</p>
+      <p class="text-slate-400 text-sm mt-2">+91 98765 43210</p>
+      <p class="text-slate-500 text-sm mt-2 font-light">Bengaluru, Karnataka, India</p>
+    </div>
+  </div>
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 mt-14 pt-7 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4">
+    <p class="font-mono text-[11px] tracking-[0.15em] text-slate-600">© 2025 GAURA NITAI TECHNOLOGIES. ALL RIGHTS RESERVED.</p>
+    <p class="font-mono text-[11px] tracking-[0.15em] text-slate-600">CRAFTED WITH DEVOTION &amp; PRECISION</p>
+  </div>
+</footer>
+
+<button id="back-top" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+</button>
+
+
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "scripts": [
+    "https://cdn.tailwindcss.com",
+    "https://cdnjs.cloudflare.com",
+    "https://unpkg.com"
+  ],
+  "styles": [
+    "https://fonts.googleapis.com"
+  ],
+  "fonts": [
+    "https://fonts.gstatic.com"
+  ],
+  "images": [
+    "https://www.designarena.ai",
+    "https://dvxrhkgloakisnvqoxgl.supabase.co"
+  ],
+  "inlineStyles": true,
+  "dataImages": true
+}

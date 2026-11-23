@@ -118,13 +118,16 @@ jobs:
           "tag=v$canaryVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "dry_run=$($isDryRun.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Build release binaries
+      - name: Build release binaries and test-only built-app probe
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           cargo build --release --locked -p wavical-cli -p wavical-shell
+          if ($LASTEXITCODE -ne 0) { throw "release build failed" }
+          cargo build --release --locked -p wavical-shell --bin wavical-shell-test-probe --features test-probe --target-dir target/test-probe
+          if ($LASTEXITCODE -ne 0) { throw "test-probe build failed" }
 
-      - name: Pack npm tarball, verify tarball, and smoke-install into temp project
+      - name: Pack npm tarball, verify tarball (offline + real-network E2E), and smoke-install into temp project
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -133,7 +136,9 @@ jobs:
           npm pack
           if ($LASTEXITCODE -ne 0) { throw "npm pack failed" }
           node scripts/verify-package.js --tarball $tgzName
-          if ($LASTEXITCODE -ne 0) { throw "verify-package.js failed on $tgzName" }
+          if ($LASTEXITCODE -ne 0) { throw "verify-package.js (offline E2E) failed on $tgzName" }
+          node scripts/e2e-reference-app.js --tarball $tgzName --online
+          if ($LASTEXITCODE -ne 0) { throw "e2e-reference-app.js (real-network E2E) failed on $tgzName" }
 
           $smokeDir = Join-Path $env:RUNNER_TEMP "wavical-npm-smoke"
           if (Test-Path $smokeDir) { Remove-Item -Recurse -Force $smokeDir }

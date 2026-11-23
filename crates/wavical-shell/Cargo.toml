@@ -8,6 +8,7 @@ publish = false
 [features]
 default = []
 dev-shell = []
+test-probe = []
 
 [[bin]]
 name = "wavical-shell"
@@ -17,6 +18,11 @@ path = "src/main.rs"
 name = "wavical-shell-dev"
 path = "src/bin/wavical_shell_dev.rs"
 required-features = ["dev-shell"]
+
+[[bin]]
+name = "wavical-shell-test-probe"
+path = "src/bin/wavical_shell_test_probe.rs"
+required-features = ["test-probe"]
 
 [dependencies]
 tao = "0.37.1"

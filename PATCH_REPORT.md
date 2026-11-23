@@ -215,7 +215,102 @@ F5 fixes both and documents WebView/browser differences:
 
 ---
 
-<!-- Future patches: copy this section structure for Patch F6, ... -->
+## Patch F6
+
+**Status:** Implemented and verified in working tree (uncommitted; manual GUI visual inspection and clean-tree `npm pack` without `WAVICAL_ALLOW_DIRTY=1` remaining)  
+**Baseline Commit:** `0c81ab7` (`1.1.5 - Network mode patch F5`) on `main` (`Cargo.toml` / `package.json` at `1.1.1`)  
+
+### 1. Introduction (What F6 Is)
+
+`wavical@1.1.0` passed repository-level unit/integration tests and still shipped broken on npm. F6 closes that gap by testing what users actually install from the packed `.tgz` tarball across all six network-mode commands (`dev`, `dev-safe`, `dev-ultra-safe`, `build --allow-open`, `build-safe`, `build-ultra-safe`) against the real-world reference app:
+
+- **Reference-app fixture (`tests/fixtures/reference-app/`):** Preserves `test_app/my-app` (`wavical.config.js`, `src/index.html`, `src/style.css`, `src/script.js`) verbatim and adds `wavical.allowlist.json` for `safe` mode.
+- **Offline multi-origin test server (`scripts/reference-app-mock-server.js`):** Serves stand-in assets for all six external origins (`cdn.tailwindcss.com`, `cdnjs.cloudflare.com`, `unpkg.com`, `fonts.googleapis.com`, `fonts.gstatic.com`, `www.designarena.ai`) on six distinct local `127.0.0.1:0` HTTPS servers behind a loopback HTTP `CONNECT` proxy (`127.0.0.1:0`) with an ephemeral multi-SAN cert and SPKI pin (zero hosts-file edits).
+- **Dev-shell CDP + test-only built-app probe (`crates/wavical-shell`):** Adds validated loopback CDP (`WAVICAL_DEV_REMOTE_DEBUGGING_PORT`) and offline proxy/SPKI pinning to `wavical-shell-dev` (`dev-shell` feature only), and adds a separate `wavical-shell-test-probe` binary (`test-probe` feature, built into `target/test-probe`, never compiled into or shipped with production `wavical-shell.exe`) for probing built `dist/` outputs.
+- **Packed-tarball E2E harness & release gating (`scripts/e2e-reference-app.js`, `scripts/verify-package.js`, `.github/workflows/release-canary.yml`):** Installs the packed `.tgz` into a temp copy of the fixture, probes live DOM/Tailwind/GSAP/Lenis/stats/quote-form/hot-reload/F3-diagnostics/0-external-requests across all 6 modes (offline by default in `verify-package.js --tarball`, plus `--online` against real CDNs that fails loudly if unreachable in `release-canary.yml`), and is verified to pass on `wavical-1.1.1.tgz` while failing 7/7 checks on `wavical@1.1.0`.
+
+### 2. What Was Done
+
+1. **Reference App Fixture (`tests/fixtures/reference-app/`)**
+   - Copied `wavical.config.js`, `src/index.html`, `src/style.css`, and `src/script.js` verbatim from `test_app/my-app/`.
+   - Added `wavical.allowlist.json` (`scripts`: `cdn.tailwindcss.com`, `cdnjs.cloudflare.com`, `unpkg.com`; `styles`: `fonts.googleapis.com`; `fonts`: `fonts.gstatic.com`; `images`: `www.designarena.ai`, `dvxrhkgloakisnvqoxgl.supabase.co` [the observed `302` redirect target of `www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35`]; `inlineStyles: true`; `dataImages: true`).
+
+2. **Dev-Shell CDP & Test-Only Built-App Probe (`crates/wavical-shell`)**
+   - `Cargo.toml`: Added `test-probe = []` feature (off by default) and `[[bin]] name = "wavical-shell-test-probe"` (`required-features = ["test-probe"]`).
+   - `src/lib.rs`: Added `validate_test_proxy_url` (`http://127.0.0.1:<port>` loopback only), `validate_test_spki_pin` (44-char base64 SHA-256 SPKI pin), `build_effective_browser_args` (preserving `ULTRA_SAFE_BROWSER_ARGS` in `ultra-safe` mode), `WindowConfig` test/dev browser-arg fields, `UserEvent::EvalProbe`, and `run_test_probe_with_config`, all strictly gated under `#[cfg(any(feature = "dev-shell", feature = "test-probe"))]` / `#[cfg(feature = "test-probe")]` so production `wavical-shell.exe` is unchanged.
+   - `src/bin/wavical_shell_dev.rs`: Added `--remote-debugging-port` (`WAVICAL_DEV_REMOTE_DEBUGGING_PORT`), `--test-proxy` (`WAVICAL_DEV_TEST_PROXY`), and `--test-spki` (`WAVICAL_DEV_TEST_SPKI`).
+   - `src/test_probe.rs` & `src/bin/wavical_shell_test_probe.rs` (new): Mirrors production `main.rs` startup (`verify_safe_mode_startup_integrity`, `init_production_file_logging`, `resolve_shell_network_policy_with_remote`, `listen_stdin = false`, `effective_devtools = false` in release) and exposes loopback `GET /health` + `POST /eval` via `webview.evaluate_script_with_callback` with binary marker `WAVICAL_TEST_PROBE_V1_MARKER`.
+
+3. **Offline Multi-Origin Mock Server & Tarball E2E Harness (`scripts/`)**
+   - `scripts/reference-app-mock-server.js` (new): Zero-dependency Node.js ASN.1 DER X.509 v3 cert generator + 6 per-origin HTTPS servers (`127.0.0.1:0`) + loopback `CONNECT` proxy (`127.0.0.1:0`) tracking per-origin request counts. Stand-in payloads set `window.__stub_tailwind`, `window.__stub_gsap`, `window.__stub_scrolltrigger`, `window.__stub_lenis`, `--stub-google-fonts: 1` (with minimal valid WOFF font + `Access-Control-Allow-Origin: *`), and a 1x1 PNG.
+   - `scripts/e2e-reference-app.js` (new): Zero-dependency RFC 6455 WebSocket CDP client + HTTP `/eval` probe client running all 7 checks against `npm install <tgz>`:
+     - `cli`: `npx --no-install wavical --version` matches tarball `package.json` version.
+     - `dev` (`open`) + hot reload: all 6 origins load, `#site-nav nav` `display === 'flex'`, GSAP/ScrollTrigger/Lenis present, 5 logo images loaded, stats counters reach `["50+", "30+", "99.9%", "24/7"]` after scroll, quote form submits `#quote-success` without reload, and editing `src/index.html` logs real `Reloaded in <N>ms` (`N >= 1`) and updates the DOM.
+     - `dev-safe`, `build --allow-open`, `build-safe`: same full-page DOM/stats/form checks (plus `dist/` shell exclusion and manifest checks).
+     - `dev-ultra-safe`, `build-ultra-safe`: `gsap`/`Lenis` undefined, `hardReveal` fallback active, 0 external HTTP hits in offline mode, and F3 blocked-origin diagnostics with hints on `dev-ultra-safe` stderr.
+     - `--online`: preflights live CDN reachability (fails loudly if offline) and executes all 7 checks against real CDNs.
+
+4. **Package Verification & Release Workflow (`scripts/verify-package.js`, `scripts/scripts.test.js`, `.github/workflows/release-canary.yml`)**
+   - Added `--remote-debugging-port`, `--probe-port-file`, `--test-proxy`, `--test-spki` to `FORBIDDEN_PROD_SHELL_FLAGS` and added `TEST_PROBE_BINARY_MARKERS` (`WAVICAL_TEST_PROBE_V1_MARKER`, `WAVICAL_TEST_PROBE_PORT_FILE`) checked negatively against both `wavical-shell.exe` and `wavical-shell-dev.exe`.
+   - Made `verifyTarball` in `scripts/verify-package.js` run `runReferenceAppE2E` as a required step (with `--online` / `--skip-e2e` / `--test-probe-bin` CLI options).
+   - Added unit tests in `scripts/scripts.test.js` proving `verifyPackageDir` rejects `--remote-debugging-port` and `WAVICAL_TEST_PROBE_V1_MARKER` in production `wavical-shell.exe`.
+   - Updated `.github/workflows/release-canary.yml` to build `wavical-shell-test-probe` (`--target-dir target/test-probe --features test-probe`) and run both `verify-package.js --tarball $tgzName` (offline E2E) and `e2e-reference-app.js --tarball $tgzName --online` (real-network E2E).
+
+### 3. Decisions Made
+
+- **Separate `test-probe` binary + `--target-dir target/test-probe`:** Built `wavical-shell-test-probe` in its own target directory with `--features test-probe` (mirroring F2's `target/dev-shell` isolation) so Cargo feature unification can never leak probe endpoints or test browser flags into production `wavical-shell.exe`.
+- **Loopback `CONNECT` proxy + SPKI pin for offline `https://` testing:** Used an ephemeral `127.0.0.1:0` HTTP `CONNECT` proxy routing to 6 per-origin `https` listeners paired with `--ignore-certificate-errors-spki-list=<44-char-base64-sha256>` (validated in Rust, dev/test-probe only, never `--ignore-certificate-errors`) instead of binding privileged port `443`, editing the system `hosts` file, or modifying the Windows cert store.
+- **Included `dvxrhkgloakisnvqoxgl.supabase.co` in fixture allowlist:** Online testing caught that `https://www.designarena.ai/u/c1aecdca-7fe3-4bb3-a796-046c584cbb35` returns `302` to `https://dvxrhkgloakisnvqoxgl.supabase.co/...`, which Chromium CSP checks on redirect in `safe` mode.
+
+### 4. Decisions Needed from You
+
+- **None for F6.** (Pre-existing 3 `README.md` audit failures noted in F4/F5 remain untouched outside F6 scope.)
+
+### 5. Other Info (Files, Verification & Manual Checks)
+
+#### Files Changed / Added
+- `tests/fixtures/reference-app/wavical.config.js` (new)
+- `tests/fixtures/reference-app/wavical.allowlist.json` (new)
+- `tests/fixtures/reference-app/src/index.html` (new)
+- `tests/fixtures/reference-app/src/style.css` (new)
+- `tests/fixtures/reference-app/src/script.js` (new)
+- `crates/wavical-shell/Cargo.toml`
+- `crates/wavical-shell/src/lib.rs`
+- `crates/wavical-shell/src/bin/wavical_shell_dev.rs`
+- `crates/wavical-shell/src/test_probe.rs` (new)
+- `crates/wavical-shell/src/bin/wavical_shell_test_probe.rs` (new)
+- `scripts/reference-app-mock-server.js` (new)
+- `scripts/e2e-reference-app.js` (new)
+- `scripts/verify-package.js`
+- `scripts/scripts.test.js`
+- `.github/workflows/release-canary.yml`
+- `PATCH_REPORT.md` (this report)
+
+#### Real Command Output Summary
+1. `cargo fmt --all --check`: **EXIT=0**
+2. `cargo clippy --workspace -- -D warnings` (+ `--bin wavical-shell-dev --features dev-shell` + `--bin wavical-shell-test-probe --features test-probe`): **EXIT=0**
+3. `cargo build --workspace`: **EXIT=0**
+4. `cargo test --workspace --no-fail-fast`: **EXIT=101** — all workspace crates passed except the 3 pre-existing `README.md` audit failures (`part4_cli`: 2, `part8_phase3`: 1) and `wavical-cli` `dev_tests::test_dev_auto_creates_missing_src_dir` under parallel `target/dev-shell` contention; standalone `cargo test -p wavical-cli --test dev_tests` passed **4/4** (`EXIT=0`).
+5. `cargo test -p wavical-audit --no-fail-fast -- --include-ignored`: **EXIT=101** — `part1_protocol` (12/12), `part2_ipc` (13/13), `part3_shell` (18/18), `part5_native_core` (20/20), `part6_native_rest` (20/20), `part7_redteam` (20/20), `part9_network_modes` (5/5) passed; only pre-existing `README.md` checks failed (`part4_cli` 16/18, `part8_phase3` 20/21).
+6. `node --test scripts/scripts.test.js`: **EXIT=0** (**8/8** passed).
+7. New tarball (`wavical-1.1.1.tgz`, dry-run pack with `WAVICAL_ALLOW_DIRTY=1`):
+   - `node scripts/verify-package.js --tarball wavical-1.1.1.tgz` (offline E2E): **EXIT=0** (**7/7** E2E checks passed + version/help/markers/docs/checksums/vs-`1.1.0` checks passed).
+   - `node scripts/e2e-reference-app.js --tarball wavical-1.1.1.tgz --online` (real-network E2E): **EXIT=0** (**7/7** E2E checks passed against live CDNs).
+8. Broken `wavical@1.1.0` (`npm pack wavical@1.1.0`):
+   - `node scripts/verify-package.js --tarball wavical-1.1.0.tgz`: **EXIT=1** (`Missing required binary: ... wavical-shell-dev.exe`).
+   - `node scripts/e2e-reference-app.js --tarball wavical-1.1.0.tgz`: **EXIT=1** (**7/7** steps failed: `wavical 0.1.0` version mismatch, `dev` startup timeout, `dev-safe`/`dev-ultra-safe`/`build-safe`/`build-ultra-safe` unrecognized subcommands, `build --allow-open` unexpected argument).
+
+#### Manual Checks (Not Run)
+- Visually inspect the rendered WebView2 GUI window of `tests/fixtures/reference-app` in `open`/`safe` vs `ultra-safe` (fonts, lotus intro animation, particle constellation, scroll parallax, logo rendering).
+- Commit F6 changes and run a clean-tree `npm pack` + `node scripts/verify-package.js --tarball wavical-1.1.1.tgz` without `WAVICAL_ALLOW_DIRTY=1`.
+
+#### Security Assumptions
+- Production `wavical-shell.exe` never compiles `dev-shell` or `test-probe` features, and `verify-package.js` enforces negative marker and CLI flag scans on `wavical-shell.exe`.
+- `WAVICAL_DEV_TEST_PROXY` / `WAVICAL_TEST_PROBE_PROXY` accept only `http://127.0.0.1:<port>`, and `WAVICAL_DEV_TEST_SPKI` / `WAVICAL_TEST_PROBE_SPKI` accept only a 44-character base64 SHA-256 SPKI pin (never `--ignore-certificate-errors`).
+
+---
+
+<!-- Future patches: copy this section structure for Patch F7, ... -->
 <!--
 ## Patch F6
 

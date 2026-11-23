@@ -9,7 +9,10 @@ use wavical_shell::dev_channel::{
     DEV_SESSION_TOKEN_ENV, DEV_SHELL_BINARY_MARKER, start_dev_stdin_session,
     validate_dev_startup_requirements,
 };
-use wavical_shell::{WindowConfig, get_asset_root, hardening, run_dev_with_config};
+use wavical_shell::{
+    WindowConfig, get_asset_root, hardening, run_dev_with_config, validate_test_proxy_url,
+    validate_test_spki_pin,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -93,6 +96,18 @@ pub struct DevShellCli {
     /// Record blocked events to .wavical/recorded-blocks.json (dev-safe / dev-ultra-safe only).
     #[arg(long)]
     pub record: bool,
+
+    /// Enable WebView2 Chrome DevTools Protocol (CDP) on a loopback port (dev shell only).
+    #[arg(long, env = "WAVICAL_DEV_REMOTE_DEBUGGING_PORT")]
+    pub remote_debugging_port: Option<u16>,
+
+    /// Loopback HTTP CONNECT proxy (`http://127.0.0.1:<port>`) for offline multi-origin tests.
+    #[arg(long, env = "WAVICAL_DEV_TEST_PROXY")]
+    pub test_proxy: Option<String>,
+
+    /// Base64 SHA-256 SPKI pin for the offline test proxy certificate.
+    #[arg(long, env = "WAVICAL_DEV_TEST_SPKI")]
+    pub test_spki: Option<String>,
 }
 
 fn main() {
@@ -108,6 +123,30 @@ fn main() {
     hardening::neutralize_release_debug_env_or_relaunch();
 
     let args = DevShellCli::parse();
+    if args.remote_debugging_port == Some(0) {
+        eprintln!("error: --remote-debugging-port must be between 1 and 65535");
+        process::exit(1);
+    }
+    let test_proxy = match args.test_proxy.as_deref() {
+        Some(raw) => match validate_test_proxy_url(raw) {
+            Ok(p) => Some(p),
+            Err(err) => {
+                eprintln!("error: invalid --test-proxy: {err}");
+                process::exit(1);
+            }
+        },
+        None => None,
+    };
+    let test_spki = match args.test_spki.as_deref() {
+        Some(raw) => match validate_test_spki_pin(raw) {
+            Ok(s) => Some(s),
+            Err(err) => {
+                eprintln!("error: invalid --test-spki: {err}");
+                process::exit(1);
+            }
+        },
+        None => None,
+    };
     let asset_root = args.asset_root.unwrap_or_else(get_asset_root);
 
     let env_token = std::env::var(DEV_SESSION_TOKEN_ENV).ok();
@@ -265,6 +304,9 @@ fn main() {
         backend_service: None,
         asset_root: None,
         network_policy,
+        remote_debugging_port: args.remote_debugging_port,
+        test_proxy,
+        test_spki,
         ..Default::default()
     };
 

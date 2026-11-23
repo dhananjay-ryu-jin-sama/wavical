@@ -5,6 +5,8 @@ pub mod backend;
 pub mod dev_channel;
 pub mod hardening;
 pub mod net_policy;
+#[cfg(feature = "test-probe")]
+pub mod test_probe;
 pub mod updater;
 
 use std::borrow::Cow;
@@ -130,6 +132,12 @@ pub enum UserEvent {
     /// Development command with one-shot acknowledgement channel (dev shell only).
     #[cfg(feature = "dev-shell")]
     DevCommand(dev_channel::DevLoopRequest),
+    /// Test-only probe script evaluation on UI thread (test-probe feature only).
+    #[cfg(feature = "test-probe")]
+    EvalProbe {
+        script: String,
+        reply_tx: test_probe::ProbeReplyTx,
+    },
     /// Focus existing application window upon second instance launch.
     FocusWindow,
     /// WebView2 renderer process failure / crash event with reason code.
@@ -210,6 +218,15 @@ pub struct WindowConfig {
     pub updater_download_options: Option<wavical_ai::downloader::DownloadOptions>,
     /// Phase 4.5 network mode policy (default: UltraSafe).
     pub network_policy: net_policy::ShellNetworkPolicy,
+    /// Optional loopback CDP port (dev-shell / test-probe only; never compiled in production).
+    #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+    pub remote_debugging_port: Option<u16>,
+    /// Optional loopback HTTP CONNECT proxy (`http://127.0.0.1:<port>`) for offline tests.
+    #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+    pub test_proxy: Option<String>,
+    /// Optional base64 SHA-256 SPKI pin for the offline test proxy certificate.
+    #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+    pub test_spki: Option<String>,
 }
 
 impl Default for WindowConfig {
@@ -246,6 +263,12 @@ impl Default for WindowConfig {
             updater_dir: None,
             updater_download_options: None,
             network_policy: net_policy::ShellNetworkPolicy::default(),
+            #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+            remote_debugging_port: None,
+            #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+            test_proxy: None,
+            #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+            test_spki: None,
         }
     }
 }
@@ -995,12 +1018,87 @@ pub fn is_devtools_enabled() -> bool {
     hardening::DEVTOOLS_COMPILED_ENABLED
 }
 
+/// Validates a loopback-only HTTP test proxy URL (`http://127.0.0.1:<port>`).
+#[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+pub fn validate_test_proxy_url(raw: &str) -> Result<String, String> {
+    let parsed = url::Url::parse(raw.trim()).map_err(|e| format!("malformed proxy URL: {e}"))?;
+    if parsed.scheme() != "http" {
+        return Err("test proxy scheme must be http".to_string());
+    }
+    if parsed.host_str() != Some("127.0.0.1") {
+        return Err("test proxy host must be 127.0.0.1".to_string());
+    }
+    let Some(port) = parsed.port() else {
+        return Err("test proxy URL must include an explicit port".to_string());
+    };
+    if port == 0 {
+        return Err("test proxy port must be non-zero".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("test proxy URL must not include userinfo".to_string());
+    }
+    if (!parsed.path().is_empty() && parsed.path() != "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("test proxy URL must not include path, query, or fragment".to_string());
+    }
+    Ok(format!("http://127.0.0.1:{port}"))
+}
+
+/// Validates a base64 SHA-256 SPKI pin (44 chars `[A-Za-z0-9+/]{43}=`).
+#[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+pub fn validate_test_spki_pin(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() != 44
+        || bytes[43] != b'='
+        || !bytes[..43]
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/')
+    {
+        return Err("test SPKI pin must be a 44-character base64 SHA-256 digest".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+#[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+fn build_effective_browser_args(config: &WindowConfig) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if config.network_policy.mode == wavical_netpolicy::NetworkMode::UltraSafe {
+        parts.push(net_policy::ULTRA_SAFE_BROWSER_ARGS.to_string());
+    }
+    if let Some(port) = config.remote_debugging_port
+        && port > 0
+    {
+        parts.push(format!("--remote-debugging-port={port}"));
+    }
+    if let Some(ref proxy_raw) = config.test_proxy
+        && let Ok(proxy) = validate_test_proxy_url(proxy_raw)
+    {
+        parts.push(format!("--proxy-server={proxy}"));
+        parts.push("--proxy-bypass-list=<-loopback>;wavical.localhost".to_string());
+    }
+    if let Some(ref spki_raw) = config.test_spki
+        && let Ok(spki) = validate_test_spki_pin(spki_raw)
+    {
+        parts.push(format!("--ignore-certificate-errors-spki-list={spki}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
 /// Launch and run the Wavical production shell with custom asset root and window config.
 pub fn run_with_config(asset_root: PathBuf, config: WindowConfig) {
     run_with_config_inner(
         asset_root,
         config,
         #[cfg(feature = "dev-shell")]
+        None,
+        #[cfg(feature = "test-probe")]
         None,
     );
 }
@@ -1012,13 +1110,36 @@ pub fn run_dev_with_config(
     config: WindowConfig,
     dev_session: dev_channel::DevSessionHandle,
 ) {
-    run_with_config_inner(asset_root, config, Some(dev_session));
+    run_with_config_inner(
+        asset_root,
+        config,
+        Some(dev_session),
+        #[cfg(feature = "test-probe")]
+        None,
+    );
+}
+
+/// Launch and run the Wavical test-only probe shell against a built application.
+#[cfg(feature = "test-probe")]
+pub fn run_test_probe_with_config(
+    asset_root: PathBuf,
+    config: WindowConfig,
+    probe_port_file: Option<PathBuf>,
+) {
+    run_with_config_inner(
+        asset_root,
+        config,
+        #[cfg(feature = "dev-shell")]
+        None,
+        probe_port_file,
+    );
 }
 
 fn run_with_config_inner(
     asset_root: PathBuf,
     mut config: WindowConfig,
     #[cfg(feature = "dev-shell")] dev_session: Option<dev_channel::DevSessionHandle>,
+    #[cfg(feature = "test-probe")] probe_port_file: Option<PathBuf>,
 ) {
     config.asset_root = Some(asset_root.clone());
 
@@ -1390,8 +1511,13 @@ fn run_with_config_inner(
             .with_browser_accelerator_keys(true);
     }
 
+    #[cfg(not(any(feature = "dev-shell", feature = "test-probe")))]
     if config.network_policy.mode == wavical_netpolicy::NetworkMode::UltraSafe {
         builder = builder.with_additional_browser_args(net_policy::ULTRA_SAFE_BROWSER_ARGS);
+    }
+    #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+    if let Some(browser_args) = build_effective_browser_args(&config) {
+        builder = builder.with_additional_browser_args(&browser_args);
     }
 
     let webview = match builder
@@ -1544,6 +1670,14 @@ fn run_with_config_inner(
         session.activate(proxy.clone(), shell_version, csp_summary);
     }
 
+    #[cfg(feature = "test-probe")]
+    if let Some(ref port_file) = probe_port_file
+        && let Err(err) = test_probe::start_probe_server(proxy.clone(), port_file)
+    {
+        eprintln!("error: {err}");
+        process::exit(1);
+    }
+
     #[cfg(feature = "dev-shell")]
     let mut dev_restart_policy =
         wavical_protocol::backend_restart_policy::BackendRestartPolicy::new();
@@ -1559,6 +1693,21 @@ fn run_with_config_inner(
                 tracing::debug!("Evaluating response script in webview");
                 if let Err(err) = webview.evaluate_script(&script) {
                     tracing::error!("Failed to evaluate script in webview: {err}");
+                }
+            }
+            #[cfg(feature = "test-probe")]
+            Event::UserEvent(UserEvent::EvalProbe { script, reply_tx }) => {
+                let tx_cb = reply_tx.clone();
+                if let Err(err) = webview.evaluate_script_with_callback(&script, move |res| {
+                    if let Ok(mut guard) = tx_cb.lock()
+                        && let Some(tx) = guard.take()
+                    {
+                        let _ = tx.send(Ok(res));
+                    }
+                }) && let Ok(mut guard) = reply_tx.lock()
+                    && let Some(tx) = guard.take()
+                {
+                    let _ = tx.send(Err(format!("evaluate_script_with_callback failed: {err}")));
                 }
             }
             Event::UserEvent(UserEvent::RendererProcessFailed(reason_code)) => {

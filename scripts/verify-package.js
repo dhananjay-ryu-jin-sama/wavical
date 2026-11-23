@@ -7,6 +7,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+const { runReferenceAppE2E } = require("./e2e-reference-app");
+
 const REQUIRED_CLI_COMMANDS = [
   "dev",
   "dev-safe",
@@ -26,6 +28,10 @@ const FORBIDDEN_PROD_SHELL_FLAGS = [
   "--dev-url",
   "--record",
   "--listen-stdin",
+  "--remote-debugging-port",
+  "--probe-port-file",
+  "--test-proxy",
+  "--test-spki",
 ];
 
 const REQUIRED_DEV_SHELL_FLAGS = [
@@ -39,6 +45,11 @@ const REQUIRED_DEV_SHELL_FLAGS = [
 const DEV_BINARY_MARKERS = [
   "WAVICAL_DEV_SHELL_CHANNEL_V1_MARKER",
   "WAVICAL_DEV_SESSION_TOKEN",
+];
+
+const TEST_PROBE_BINARY_MARKERS = [
+  "WAVICAL_TEST_PROBE_V1_MARKER",
+  "WAVICAL_TEST_PROBE_PORT_FILE",
 ];
 
 function binaryFilename(base) {
@@ -584,12 +595,19 @@ function verifyPackageDir({
     }
   }
 
-  // 3c. Negative binary string scan on production wavical-shell.exe
+  // 3c. Negative binary string scan on production wavical-shell.exe (and test-probe isolation)
   const prodShellBytes = fs.readFileSync(shellBin);
   for (const marker of DEV_BINARY_MARKERS) {
     if (prodShellBytes.includes(Buffer.from(marker, "utf8"))) {
       throw new Error(
         `Security error: production ${shellBinName} contains dev command-channel marker "${marker}"`
+      );
+    }
+  }
+  for (const marker of TEST_PROBE_BINARY_MARKERS) {
+    if (prodShellBytes.includes(Buffer.from(marker, "utf8"))) {
+      throw new Error(
+        `Security error: production ${shellBinName} contains test-probe marker "${marker}"`
       );
     }
   }
@@ -599,6 +617,13 @@ function verifyPackageDir({
       throw new Error(
         `${devShellBinName} is missing expected dev marker "${DEV_BINARY_MARKERS[0]}"`
       );
+    }
+    for (const marker of TEST_PROBE_BINARY_MARKERS) {
+      if (devShellBytes.includes(Buffer.from(marker, "utf8"))) {
+        throw new Error(
+          `Security error: ${devShellBinName} contains test-probe marker "${marker}"`
+        );
+      }
     }
   }
   console.log("Help, option, and dev-marker isolation checks OK.");
@@ -637,7 +662,7 @@ function verifyPackageDir({
   };
 }
 
-function verifyTarball({
+async function verifyTarball({
   tarballPath,
   expectedCommit,
   allowDirty,
@@ -645,15 +670,19 @@ function verifyTarball({
   previousVersion,
   skipPreviousCheck,
   skipDocsCheck,
+  skipE2e = false,
+  e2eOnline = false,
+  testProbeBin = null,
 }) {
   const absTarball = path.resolve(tarballPath);
   if (!fs.existsSync(absTarball)) {
     throw new Error(`Tarball not found: ${absTarball}`);
   }
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "wavical-verify-tgz-"));
+  let pkgResult;
   try {
     const pkgDir = extractTarball(absTarball, tempDir);
-    return verifyPackageDir({
+    pkgResult = verifyPackageDir({
       packageDir: pkgDir,
       expectedCommit:
         expectedCommit !== undefined
@@ -669,6 +698,16 @@ function verifyTarball({
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+
+  if (!skipE2e) {
+    await runReferenceAppE2E({
+      tarballPath: absTarball,
+      online: e2eOnline,
+      testProbeBin,
+    });
+  }
+
+  return pkgResult;
 }
 
 function parseCliArgs(argv) {
@@ -680,6 +719,9 @@ function parseCliArgs(argv) {
     previousVersion: null,
     skipPreviousCheck: false,
     writeChecksums: true,
+    skipE2e: false,
+    e2eOnline: false,
+    testProbeBin: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -698,6 +740,12 @@ function parseCliArgs(argv) {
       opts.skipPreviousCheck = true;
     } else if (arg === "--verify-checksums-only") {
       opts.writeChecksums = false;
+    } else if (arg === "--skip-e2e") {
+      opts.skipE2e = true;
+    } else if (arg === "--online") {
+      opts.e2eOnline = true;
+    } else if (arg === "--test-probe-bin" && i + 1 < argv.length) {
+      opts.testProbeBin = path.resolve(argv[++i]);
     } else if (!arg.startsWith("-") && arg.endsWith(".tgz")) {
       opts.tarball = arg;
     } else {
@@ -708,16 +756,19 @@ function parseCliArgs(argv) {
   return opts;
 }
 
-function main() {
+async function main() {
   try {
     const opts = parseCliArgs(process.argv.slice(2));
     if (opts.tarball) {
-      verifyTarball({
+      await verifyTarball({
         tarballPath: opts.tarball,
         expectedCommit: opts.expectedCommit,
         previousTarball: opts.previousTarball,
         previousVersion: opts.previousVersion,
         skipPreviousCheck: opts.skipPreviousCheck,
+        skipE2e: opts.skipE2e,
+        e2eOnline: opts.e2eOnline,
+        testProbeBin: opts.testProbeBin,
       });
     } else {
       verifyPackageDir({
@@ -746,6 +797,7 @@ module.exports = {
   REQUIRED_CLI_COMMANDS,
   REQUIRED_DEV_SHELL_FLAGS,
   REQUIRED_PROD_SHELL_FLAGS,
+  TEST_PROBE_BINARY_MARKERS,
   extractDocCliReferences,
   parseHelpCommands,
   parseHelpFlags,

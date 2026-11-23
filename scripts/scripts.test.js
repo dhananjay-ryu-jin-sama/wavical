@@ -13,7 +13,11 @@ const {
   validatePrepackBuildInvocations,
 } = require("./prepack");
 const { parseWorkspaceVersion, syncVersion } = require("./sync-version");
-const { DEV_BINARY_MARKERS, verifyPackageDir } = require("./verify-package");
+const {
+  DEV_BINARY_MARKERS,
+  TEST_PROBE_BINARY_MARKERS,
+  verifyPackageDir,
+} = require("./verify-package");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 
@@ -391,6 +395,43 @@ describe("scripts/verify-package.js", () => {
             skipDocsCheck: true,
           }),
         /contains dev command-channel marker/
+      );
+
+      // 2b. Production shell lists --remote-debugging-port or contains test-probe marker -> rejected
+      buildFakeBinSet(tmp, binDir, {
+        cliHelp: validCliHelp,
+        prodShellHelp:
+          "Options:\n  --network-mode <M>\n  --remote-url <U>\n  --remote-debugging-port <P>",
+        devShellHelp: validDevHelp,
+      });
+      assert.throws(
+        () =>
+          verifyPackageDir({
+            packageDir: tmp,
+            expectedCommit: "deadbee",
+            writeChecksums: false,
+            skipPreviousCheck: true,
+            skipDocsCheck: true,
+          }),
+        /must NOT expose dev-only option "--remote-debugging-port"/
+      );
+
+      buildFakeBinSet(tmp, binDir, {
+        cliHelp: validCliHelp,
+        prodShellHelp: "Options:\n  --network-mode <M>\n  --remote-url <U>",
+        devShellHelp: validDevHelp,
+        prodMarker: TEST_PROBE_BINARY_MARKERS[0],
+      });
+      assert.throws(
+        () =>
+          verifyPackageDir({
+            packageDir: tmp,
+            expectedCommit: "deadbee",
+            writeChecksums: false,
+            skipPreviousCheck: true,
+            skipDocsCheck: true,
+          }),
+        /contains test-probe marker/
       );
 
       // 3. Missing wavical-shell-dev -> rejected
