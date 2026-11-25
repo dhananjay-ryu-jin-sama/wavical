@@ -369,7 +369,7 @@ const res = await window.wavical.invoke('backend.invoke', {
 | **2** | Native Tier 1 APIs: scoped file grants, clipboard, notifications, tray, menus, shortcuts | ✅ Completed |
 | **3** | AI-native: local GGUF engine, cloud fallback + consent, local RAG (`ai.index`/`ai.search`) | ✅ Completed |
 | **4** | Opt-in sandboxed Node.js backend runtime (`wavical runtime`), Ed25519 signed updates | ✅ Completed |
-| **4.5** | Network Modes (`open` / `safe` / `ultra-safe`), `wavical vendor`, `allowlist suggest`, Remote UI (`window.remoteUrl`) | ✅ Implemented (see [`docs/NETWORK_MODES.md`](docs/NETWORK_MODES.md) & [`docs/VENDOR.md`](docs/VENDOR.md)) |
+| **4.5** | Network Modes (`open` / `safe` / `ultra-safe`), `wavical vendor`, `allowlist suggest`, Remote UI (`window.remoteUrl`) | In progress |
 | **5** | Windows installers (`.exe`/`.msi`), code signing, portable builds, public benchmarks | 📋 Planned |
 | **6** | Enterprise: structured audit logging, SBOM generation, `wavical audit`, private registries | 📋 Planned |
 
