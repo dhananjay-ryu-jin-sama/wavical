@@ -75,7 +75,7 @@ fn main() {
             if !expected_tok.is_empty() && trimmed.contains(&expected_tok) {
                 let _ = writeln!(
                     stdout,
-                    "{{\"id\":{id},\"ok\":true,\"elapsedMs\":1,\"shellVersion\":\"1.1.1 (test123)\",\"cspSummary\":\"default-src 'self'; script-src 'self'\"}}"
+                    "{{\"id\":{id},\"ok\":true,\"elapsedMs\":1,\"shellVersion\":\"1.2.0 (test123)\",\"cspSummary\":\"default-src 'self'; script-src 'self'\"}}"
                 );
                 let _ = stdout.flush();
 
@@ -269,13 +269,13 @@ fn dev_startup_line_and_diagnostic_forwarding_dedup_and_rate_limit() {
         "default-src 'self'; script-src 'self'",
         Some("wavical.allowlist.json"),
         Some("http://localhost:5173"),
-        "1.1.1 (abc1234)",
+        "1.2.0 (abc1234)",
     );
     assert!(line.contains("mode=safe"));
     assert!(line.contains("csp=default-src 'self'; script-src 'self'"));
     assert!(line.contains("allowlist=wavical.allowlist.json"));
     assert!(line.contains("dev.url=http://localhost:5173"));
-    assert!(line.contains("shell=1.1.1 (abc1234)"));
+    assert!(line.contains("shell=1.2.0 (abc1234)"));
 
     // 2. Burst test via `wavical dev-ultra-safe`: startup line + all 4 event types + dedup [x3] + query stripping + 500-char limit
     let proj_burst = temp.path().join("proj-burst");
@@ -331,7 +331,7 @@ fn dev_startup_line_and_diagnostic_forwarding_dedup_and_rate_limit() {
     assert!(startup.contains("mode=ultra-safe"));
     assert!(startup.contains("csp="));
     assert!(startup.contains("dev.url=http://localhost:5173"));
-    assert!(startup.contains("shell=1.1.1 (test123)"));
+    assert!(startup.contains("shell=1.2.0 (test123)"));
 
     let stderr_joined = all_stderr.join("\n");
     assert!(stderr_joined.contains("blocked script https://cdn.tailwindcss.com (script-src) — allowed in \"wavical dev\"; in dev-safe add it to scripts in wavical.allowlist.json"));

@@ -3292,7 +3292,7 @@ pub fn run_secret(args: &SecretArgs) -> Result<(), CliError> {
     }
 }
 
-/// Parsed binary version and git provenance string (e.g., `wavical 1.1.1 (a1b2c3d)`).
+/// Parsed binary version and git provenance string (e.g., `wavical 1.2.0 (a1b2c3d)`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinaryVersionInfo {
     pub version: String,
@@ -3990,21 +3990,21 @@ mod tests {
 
     #[test]
     fn test_parse_binary_version_output_and_doctor_cli() {
-        let clean = parse_binary_version_output("wavical-shell 1.1.1 (a1b2c3d)\n");
+        let clean = parse_binary_version_output("wavical-shell 1.2.0 (a1b2c3d)\n");
         assert_eq!(
             clean,
             BinaryVersionInfo {
-                version: "1.1.1".to_string(),
+                version: "1.2.0".to_string(),
                 commit: "a1b2c3d".to_string(),
                 dirty: false,
             }
         );
 
-        let dirty = parse_binary_version_output("wavical 1.1.1 (a1b2c3d-dirty)");
+        let dirty = parse_binary_version_output("wavical 1.2.0 (a1b2c3d-dirty)");
         assert_eq!(
             dirty,
             BinaryVersionInfo {
-                version: "1.1.1".to_string(),
+                version: "1.2.0".to_string(),
                 commit: "a1b2c3d".to_string(),
                 dirty: true,
             }

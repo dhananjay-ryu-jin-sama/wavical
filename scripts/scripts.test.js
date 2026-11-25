@@ -51,7 +51,7 @@ function buildFakeBinSet(tmp, binDir, { cliHelp, prodShellHelp, devShellHelp, pr
       `fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version") {
-        println!("wavical 1.1.1 (deadbee)");
+        println!("wavical 1.2.0 (deadbee)");
     } else {
         println!(${JSON.stringify(cliHelp)});
     }
@@ -67,7 +67,7 @@ function buildFakeBinSet(tmp, binDir, { cliHelp, prodShellHelp, devShellHelp, pr
         println!("{}", _marker);
     }
     if args.iter().any(|a| a == "--version") {
-        println!("wavical-shell 1.1.1 (deadbee)");
+        println!("wavical-shell 1.2.0 (deadbee)");
     } else {
         println!(${JSON.stringify(prodShellHelp)});
     }
@@ -83,7 +83,7 @@ function buildFakeBinSet(tmp, binDir, { cliHelp, prodShellHelp, devShellHelp, pr
         println!("{}", _marker);
     }
     if args.iter().any(|a| a == "--version") {
-        println!("wavical-shell-dev 1.1.1 (deadbee)");
+        println!("wavical-shell-dev 1.2.0 (deadbee)");
     } else {
         println!(${JSON.stringify(devShellHelp)});
     }
@@ -97,19 +97,19 @@ function buildFakeBinSet(tmp, binDir, { cliHelp, prodShellHelp, devShellHelp, pr
   } else {
     createFakeExecutable(
       cliPath,
-      `if (process.argv.includes('--version')) console.log('wavical 1.1.1 (deadbee)');
+      `if (process.argv.includes('--version')) console.log('wavical 1.2.0 (deadbee)');
 else console.log(${JSON.stringify(cliHelp)});`
     );
     createFakeExecutable(
       shellPath,
       `const _m = ${JSON.stringify(prodMarker)};
-if (process.argv.includes('--version')) console.log('wavical-shell 1.1.1 (deadbee)');
+if (process.argv.includes('--version')) console.log('wavical-shell 1.2.0 (deadbee)');
 else console.log(${JSON.stringify(prodShellHelp)});`
     );
     createFakeExecutable(
       devShellPath,
       `const _m = ${JSON.stringify(DEV_BINARY_MARKERS[0])};
-if (process.argv.includes('--version')) console.log('wavical-shell-dev 1.1.1 (deadbee)');
+if (process.argv.includes('--version')) console.log('wavical-shell-dev 1.2.0 (deadbee)');
 else console.log(${JSON.stringify(devShellHelp)});`
     );
   }
@@ -122,7 +122,7 @@ function setupTempPkgDir(tmp) {
   fs.mkdirSync(binDir, { recursive: true });
   const pkgJson = {
     name: "wavical",
-    version: "1.1.1",
+    version: "1.2.0",
     bin: { wavical: "bin/wavical.js", wca: "bin/wavical.js" },
   };
   fs.writeFileSync(
@@ -160,7 +160,7 @@ edition = "2024"
 
       fs.writeFileSync(
         cargoPath,
-        '[workspace.package]\nversion = "1.1.1"\nedition = "2024"\n',
+        '[workspace.package]\nversion = "1.2.0"\nedition = "2024"\n',
         "utf8"
       );
       fs.writeFileSync(
@@ -177,7 +177,7 @@ edition = "2024"
             packageJsonPath: pkgPath,
             check: true,
           }),
-        /Version mismatch.*1\.1\.1.*1\.1\.0/
+        /Version mismatch.*1\.2\.0.*1\.1\.0/
       );
 
       const synced = syncVersion({
@@ -187,7 +187,7 @@ edition = "2024"
         check: false,
       });
       assert.equal(synced.changed, true);
-      assert.equal(synced.version, "1.1.1");
+      assert.equal(synced.version, "1.2.0");
 
       const checked = syncVersion({
         rootDir: tmp,
@@ -196,7 +196,7 @@ edition = "2024"
         check: true,
       });
       assert.equal(checked.changed, false);
-      assert.equal(checked.version, "1.1.1");
+      assert.equal(checked.version, "1.2.0");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -271,12 +271,12 @@ describe("scripts/prepack.js", () => {
     try {
       fs.writeFileSync(
         path.join(tmp, "Cargo.toml"),
-        '[workspace.package]\nversion = "1.1.1"\nedition = "2024"\n',
+        '[workspace.package]\nversion = "1.2.0"\nedition = "2024"\n',
         "utf8"
       );
       fs.writeFileSync(
         path.join(tmp, "package.json"),
-        JSON.stringify({ name: "wavical", version: "1.1.1" }),
+        JSON.stringify({ name: "wavical", version: "1.2.0" }),
         "utf8"
       );
       execFileSync("git", ["init"], { cwd: tmp, stdio: "pipe" });
@@ -526,7 +526,7 @@ describe("scripts/verify-package.js", () => {
         skipPreviousCheck: true,
       });
 
-      assert.equal(res.version, "1.1.1");
+      assert.equal(res.version, "1.2.0");
       assert.ok(fs.existsSync(path.join(binDir, "checksums.txt")));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

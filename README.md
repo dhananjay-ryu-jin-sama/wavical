@@ -63,7 +63,7 @@ npx wavical --version
 npx wavical doctor --version-info
 ```
 
-- `npx wavical --version` prints the release version and git commit (for example, `1.1.1 (<commit>)`).
+- `npx wavical --version` prints the release version and git commit (for example, `1.2.0 (<commit>)`).
 - `npx wavical doctor --version-info` prints the CLI version/commit, resolved shell path, shell version/commit, and `Match: yes` when both binaries come from the same clean build.
 - To inspect a built app's manifest `mode`, effective CSP, log path, and shell provenance, run `npx wavical doctor --app dist`.
 
