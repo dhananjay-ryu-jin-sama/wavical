@@ -34,7 +34,7 @@ bin/checksums.txt
 *.log
 
 # Documentation (excluded from repo)
-docs/
+
 test_app/
 
 # Node / npm
