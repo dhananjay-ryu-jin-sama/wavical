@@ -109,8 +109,22 @@ function validatePrepackBuildInvocations(invocations) {
     const hasDevFeature = args.some(
       (a, i) => a === "--features" && typeof args[i + 1] === "string" && args[i + 1].split(",").includes("dev-shell")
     );
+    const hasForbiddenTestFeature = args.some(
+      (a, i) =>
+        a === "--features" &&
+        typeof args[i + 1] === "string" &&
+        args[i + 1]
+          .split(",")
+          .some((f) => f === "test-hooks" || f === "test-probe")
+    );
     const targetDirIdx = args.indexOf("--target-dir");
     const targetDir = targetDirIdx >= 0 ? args[targetDirIdx + 1] : null;
+
+    if (hasForbiddenTestFeature) {
+      throw new Error(
+        "Invalid build plan: shipped binaries must NEVER enable test-hooks or test-probe features"
+      );
+    }
 
     if (hasProd && hasDev) {
       throw new Error(
@@ -151,9 +165,16 @@ function prepack({
   rootDir = path.resolve(__dirname, ".."),
   strict = false,
   allowDirty = process.env.WAVICAL_ALLOW_DIRTY === "1",
+  npmCommand = process.env.npm_command,
   runCheckedFn = runChecked,
   verifyPackageFn = verifyPackageDir,
 } = {}) {
+  if (npmCommand === "publish") {
+    throw new Error(
+      'Refusing to rebuild during "npm publish". Build once with "npm pack", run A10 on that .tgz, and then publish with "npm publish <that>.tgz".'
+    );
+  }
+
   if (strict && allowDirty) {
     throw new Error(
       "Refusing publish: WAVICAL_ALLOW_DIRTY=1 is only allowed for local dry-run `npm pack`, never for publishing."
@@ -213,12 +234,13 @@ function prepack({
     console.log(`Copied ${src} -> ${dst}`);
   }
 
-  // d. Run full package verification against bin/
+  // d. Run full package verification against bin/ (A10 report does not exist until after npm pack)
   verifyPackageFn({
     packageDir: rootDir,
     expectedCommit: commit,
     allowDirty: allowDirty && !strict,
     writeChecksums: true,
+    skipA10Check: true,
   });
 }
 

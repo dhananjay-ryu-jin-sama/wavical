@@ -73,7 +73,7 @@ Wavical separates developer conveniences from hardened production execution acro
 
 | Binary | Used By | Capabilities & Hardening |
 |---|---|---|
-| `wavical-shell-dev.exe` (**dev shell**) | `wavical dev`, `wavical dev-safe`, `wavical dev-ultra-safe` | Dev-only conveniences: hot reload, live config reload, backend auto-restart, DevTools, `--record` event capture, `dev.url` support, and terminal blocked-resource diagnostics. Never copied into `dist/` builds. |
+| `wavical-shell-dev.exe` (**dev shell**) | `wavical dev`, `wavical dev-safe`, `wavical dev-ultra-safe` | Dev-only conveniences: hot reload, live config reload, backend auto-restart, DevTools, loopback-only CDP (`wavical-shell-dev --remote-debugging-port`, dev-only), `--record` event capture, `dev.url` support, and terminal blocked-resource diagnostics. Never copied into `dist/` builds. |
 | `wavical-shell.exe` (**production shell**) | Built apps (`wavical build --allow-open`, `wavical build-safe`, `wavical build-ultra-safe`) | Phase 4 production hardening: no DevTools, no remote debugging, no `stdin` command channel, and no `dev.url`. Reads `mode` from `wavical-manifest.json` (verifies `allowlistSha256` before window creation in `safe` mode; falls closed to `ultra-safe` if `mode` is missing) and writes logs to `%LOCALAPPDATA%\Wavical\apps\<appId>\logs\shell.log`. |
 
 ### Network Modes & Browser Differences
@@ -219,9 +219,9 @@ export default {
     // Requires `backend.enabled: true`
     'backend.invoke': true,
 
-    // Requires `updater.enabled: true`
-    'updater.check': true,
-    'updater.apply': true,
+    // Requires `updater.enabled: true` and a valid Ed25519 public key in `updater.publicKeys`
+    // 'updater.check': true,
+    // 'updater.apply': true,
   },
 
   // Optional: Local / Cloud AI configuration

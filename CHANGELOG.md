@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.1] - 2026-11-26
+
+### Fixed
+- **Publish exact audited binaries (`prepublishOnly`):** Changed `prepublishOnly` so it never rebuilds during publish; it runs `scripts/verify-package.js` (`--strict` / `--verify-checksums-only`) on the staged files, verifies `bin/checksums.txt`, checks `LICENSE*` presence, requires a matching `v<version>` git tag at `HEAD` on a clean tree, and refuses publishing if binary SHA-256 hashes differ from `docs/audits/A10_release_<version>.md`. Updated `docs/RELEASING.md` with the build-once (`npm pack`), audit (A10), and `npm publish <tarball>.tgz` workflow.
+- **Removed test hooks from shipped binaries:** Moved test-proxy and test-spki options behind a Cargo `test-hooks` feature that `prepack` never enables. Shipped `wavical-shell-dev.exe` retains loopback-only `wavical-shell-dev --remote-debugging-port` for dev-only inspection; the F6 E2E harness builds its own `test-hooks` dev shell for offline proxy tests.
+- **Missing license files:** Added `LICENSE-MIT` and `LICENSE-APACHE` (`Copyright (c) 2026 Dhananjay`) and enforced `LICENSE*` presence in `scripts/verify-package.js`.
+- **Dev cold-start UX and performance:** `wavical dev`, `wavical dev-safe`, and `wavical dev-ultra-safe` now print `Starting Wavical dev…` immediately at launch, pre-warm `wavical-shell-dev.exe` concurrently in `bin/wavical.js`, eliminate the redundant `node --version` subprocess in `wavical-config`, enable symbol stripping/thin LTO in release builds, and report per-stage `startup=...ms` timings on the F3 dev startup line.
+- **README example `wavical.config.js`:** Commented out `updater.check` / `updater.apply` while `updater.enabled` is `false` so the example config passes validation cleanly, enforced by a new test in `wavical-config`.
+
 ## [1.2.0] - 2026-11-25
 
 ### Fixed

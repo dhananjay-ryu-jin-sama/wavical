@@ -9,10 +9,13 @@ use wavical_shell::dev_channel::{
     DEV_SESSION_TOKEN_ENV, DEV_SHELL_BINARY_MARKER, start_dev_stdin_session,
     validate_dev_startup_requirements,
 };
+#[cfg(feature = "test-hooks")]
 use wavical_shell::{
-    WindowConfig, get_asset_root, hardening, run_dev_with_config, validate_test_proxy_url,
-    validate_test_spki_pin,
+    TEST_HOOKS_BINARY_MARKER, WindowConfig, get_asset_root, hardening, run_dev_with_config,
+    validate_test_proxy_url, validate_test_spki_pin,
 };
+#[cfg(not(feature = "test-hooks"))]
+use wavical_shell::{WindowConfig, get_asset_root, hardening, run_dev_with_config};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -102,10 +105,12 @@ pub struct DevShellCli {
     pub remote_debugging_port: Option<u16>,
 
     /// Loopback HTTP CONNECT proxy (`http://127.0.0.1:<port>`) for offline multi-origin tests.
+    #[cfg(feature = "test-hooks")]
     #[arg(long, env = "WAVICAL_DEV_TEST_PROXY")]
     pub test_proxy: Option<String>,
 
     /// Base64 SHA-256 SPKI pin for the offline test proxy certificate.
+    #[cfg(feature = "test-hooks")]
     #[arg(long, env = "WAVICAL_DEV_TEST_SPKI")]
     pub test_spki: Option<String>,
 }
@@ -127,6 +132,7 @@ fn main() {
         eprintln!("error: --remote-debugging-port must be between 1 and 65535");
         process::exit(1);
     }
+    #[cfg(feature = "test-hooks")]
     let test_proxy = match args.test_proxy.as_deref() {
         Some(raw) => match validate_test_proxy_url(raw) {
             Ok(p) => Some(p),
@@ -137,6 +143,7 @@ fn main() {
         },
         None => None,
     };
+    #[cfg(feature = "test-hooks")]
     let test_spki = match args.test_spki.as_deref() {
         Some(raw) => match validate_test_spki_pin(raw) {
             Ok(s) => Some(s),
@@ -174,6 +181,11 @@ fn main() {
     tracing::info!(
         marker = DEV_SHELL_BINARY_MARKER,
         "Authenticated dev shell session"
+    );
+    #[cfg(feature = "test-hooks")]
+    tracing::info!(
+        test_hooks_marker = TEST_HOOKS_BINARY_MARKER,
+        "Test hooks feature enabled in wavical-shell-dev"
     );
 
     let mut capabilities = wavical_ipc::Capabilities::new();
@@ -305,7 +317,9 @@ fn main() {
         asset_root: None,
         network_policy,
         remote_debugging_port: args.remote_debugging_port,
+        #[cfg(feature = "test-hooks")]
         test_proxy,
+        #[cfg(feature = "test-hooks")]
         test_spki,
         ..Default::default()
     };

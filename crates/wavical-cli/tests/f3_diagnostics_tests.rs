@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
-use wavical_cli::{format_dev_startup_line, inspect_built_app, run_init};
+use wavical_cli::{
+    DevStartupTimings, format_dev_startup_line, format_dev_startup_line_with_timing,
+    inspect_built_app, run_init,
+};
 use wavical_netpolicy::csp::ULTRA_SAFE_CSP;
 use wavical_netpolicy::html::hash_inline_script;
 
@@ -276,6 +279,22 @@ fn dev_startup_line_and_diagnostic_forwarding_dedup_and_rate_limit() {
     assert!(line.contains("allowlist=wavical.allowlist.json"));
     assert!(line.contains("dev.url=http://localhost:5173"));
     assert!(line.contains("shell=1.2.0 (abc1234)"));
+
+    let timed_line = format_dev_startup_line_with_timing(
+        "open",
+        "default-src 'self' https:",
+        None,
+        None,
+        "1.2.1 (abc1234)",
+        DevStartupTimings {
+            total_ms: 850,
+            cli_ms: Some(150),
+            config_ms: 140,
+            shell_ms: 120,
+            webview_ms: 440,
+        },
+    );
+    assert!(timed_line.contains("startup=850ms (cli=150ms, config=140ms, shell=120ms, webview=440ms)"));
 
     // 2. Burst test via `wavical dev-ultra-safe`: startup line + all 4 event types + dedup [x3] + query stripping + 500-char limit
     let proj_burst = temp.path().join("proj-burst");

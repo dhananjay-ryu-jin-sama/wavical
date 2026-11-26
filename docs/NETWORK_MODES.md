@@ -90,6 +90,10 @@ Configure `dev: { url: 'http://localhost:5173' }` in `wavical.config.js` (only `
 - Used **only** by `dev`, `dev-safe`, and `dev-ultra-safe` (and their WebSocket HMR).
 - **Never** used by builds; built apps load from `build.frontendDir` (default `src`).
 
+### Dev Shell Remote Debugging (`--remote-debugging-port`)
+- `wavical-shell-dev` (`dev-shell` feature) keeps `--remote-debugging-port` (`WAVICAL_DEV_REMOTE_DEBUGGING_PORT`) for loopback-only (`127.0.0.1`), dev-only DevTools/CDP attachment.
+- Production `wavical-shell.exe` and `dist/` builds never include `--remote-debugging-port`, DevTools, or test hooks (`test-hooks`).
+
 ---
 
 ## `wavical allowlist suggest`

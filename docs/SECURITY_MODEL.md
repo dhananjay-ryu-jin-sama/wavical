@@ -75,6 +75,7 @@ Wavical enforces a strict two-tier security model with a clear isolation boundar
 - **Popup & New-Window Blocking**: Intercepts `window.open()` and popup requests, returning `NewWindowResponse::Deny` by default.
 - **Content-Security-Policy (CSP)**: Injected on every protocol response (default: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self';`). Zero inline scripts (`'unsafe-inline'`) required.
 - **Devtools Restrictions**: Devtools are compiled in only during debug builds (`cfg!(debug_assertions)`) and strictly disabled in release builds.
+- **Dev Shell CDP (`wavical-shell-dev`)**: The separate development shell (`wavical-shell-dev.exe`, `dev-shell` feature only) keeps `--remote-debugging-port` (`WAVICAL_DEV_REMOTE_DEBUGGING_PORT`) for loopback-only, dev-only inspection. Production `wavical-shell.exe` compiles out DevTools, `--remote-debugging-port`, and test hooks (`test-hooks`).
 
 ---
 

@@ -40,6 +40,12 @@ const REQUIRED_DEV_SHELL_FLAGS = [
   "--record",
   "--network-mode",
   "--remote-url",
+  "--remote-debugging-port",
+];
+
+const FORBIDDEN_DEV_SHELL_FLAGS = [
+  "--test-proxy",
+  "--test-spki",
 ];
 
 const DEV_BINARY_MARKERS = [
@@ -50,6 +56,15 @@ const DEV_BINARY_MARKERS = [
 const TEST_PROBE_BINARY_MARKERS = [
   "WAVICAL_TEST_PROBE_V1_MARKER",
   "WAVICAL_TEST_PROBE_PORT_FILE",
+];
+
+const TEST_HOOKS_BINARY_MARKERS = [
+  "WAVICAL_TEST_HOOKS_V1_MARKER",
+  "WAVICAL_DEV_TEST_PROXY",
+  "WAVICAL_DEV_TEST_SPKI",
+  "--test-proxy",
+  "--test-spki",
+  "--ignore-certificate-errors-spki-list",
 ];
 
 function binaryFilename(base) {
@@ -84,6 +99,163 @@ function getCurrentGitCommit(cwd) {
     return null;
   }
   return res.stdout.trim();
+}
+
+function checkStrictGitReleaseProvenance(gitRoot, expectedVersion) {
+  const statusRes = runCommand("git", ["status", "--porcelain"], { cwd: gitRoot });
+  if (statusRes.status !== 0) {
+    throw new Error(
+      `Strict verification failed: git status failed in "${gitRoot}": ${(statusRes.stderr || "").trim()}`
+    );
+  }
+  const dirty = (statusRes.stdout || "").trim();
+  if (dirty.length > 0) {
+    throw new Error(
+      `Strict verification failed: git working tree is dirty:\n${dirty}`
+    );
+  }
+
+  const headRes = runCommand("git", ["rev-parse", "HEAD"], { cwd: gitRoot });
+  if (headRes.status !== 0 || !(headRes.stdout || "").trim()) {
+    throw new Error("Strict verification failed: could not resolve git HEAD");
+  }
+  const headSha = headRes.stdout.trim();
+
+  const tagName = `v${expectedVersion}`;
+  const tagRes = runCommand("git", ["rev-parse", "--verify", `refs/tags/${tagName}^{commit}`], {
+    cwd: gitRoot,
+  });
+  if (tagRes.status !== 0 || !(tagRes.stdout || "").trim()) {
+    throw new Error(
+      `Strict verification failed: required git tag "${tagName}" does not exist (run: git tag ${tagName})`
+    );
+  }
+  const tagSha = tagRes.stdout.trim();
+  if (tagSha !== headSha) {
+    throw new Error(
+      `Strict verification failed: git tag "${tagName}" points at ${tagSha.slice(0, 7)}, expected HEAD (${headSha.slice(0, 7)})`
+    );
+  }
+  console.log(`Strict git tag check OK: ${tagName} -> ${headSha.slice(0, 7)} (clean tree).`);
+}
+
+function checkLicenseFilesPresent(packageDir) {
+  const entries = fs.readdirSync(packageDir, { withFileTypes: true });
+  const licenses = entries
+    .filter((e) => e.isFile() && /^LICENSE/i.test(e.name))
+    .map((e) => e.name)
+    .sort();
+  if (licenses.length === 0) {
+    throw new Error(
+      `Missing LICENSE file in package "${packageDir}" (expected LICENSE, LICENSE-MIT, or LICENSE-APACHE)`
+    );
+  }
+  for (const name of licenses) {
+    const stat = fs.statSync(path.join(packageDir, name));
+    if (stat.size === 0) {
+      throw new Error(`License file "${name}" in "${packageDir}" is empty`);
+    }
+  }
+  console.log(`License check OK: ${licenses.join(", ")}`);
+  return licenses;
+}
+
+function parseA10HashesFromMarkdown(mdText) {
+  const hashes = {};
+  const lines = mdText.split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(
+      /\|\s*`(?:bin\/)?([^`|]+)`\s*\|\s*[^|]+\|\s*`([0-9a-f]{64})`\s*\|/i
+    );
+    if (match) {
+      const name = path.basename(match[1].trim());
+      hashes[name] = match[2].toLowerCase();
+    }
+  }
+  return hashes;
+}
+
+function loadA10ReportHashes(auditsDir, expectedVersion) {
+  const jsonPath = path.join(auditsDir, `A10_release_${expectedVersion}.json`);
+  const mdPath = path.join(auditsDir, `A10_release_${expectedVersion}.md`);
+
+  let jsonHashes = null;
+  if (fs.existsSync(jsonPath)) {
+    const parsed = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+    if (parsed.version && parsed.version !== expectedVersion) {
+      throw new Error(
+        `A10 report "${jsonPath}" version mismatch: expected ${expectedVersion}, got ${parsed.version}`
+      );
+    }
+    const rawBins = parsed.binaries || parsed.hashes || {};
+    jsonHashes = {};
+    for (const [k, v] of Object.entries(rawBins)) {
+      if (typeof v === "string" && /^[0-9a-f]{64}$/i.test(v.trim())) {
+        jsonHashes[path.basename(k)] = v.trim().toLowerCase();
+      }
+    }
+  }
+
+  let mdHashes = null;
+  if (fs.existsSync(mdPath)) {
+    mdHashes = parseA10HashesFromMarkdown(fs.readFileSync(mdPath, "utf8"));
+  }
+
+  if (!jsonHashes && !mdHashes) {
+    return null;
+  }
+
+  if (jsonHashes && mdHashes) {
+    for (const [name, digest] of Object.entries(jsonHashes)) {
+      if (mdHashes[name] && mdHashes[name] !== digest) {
+        throw new Error(
+          `Inconsistent A10 hashes for ${name} between ${jsonPath} (${digest}) and ${mdPath} (${mdHashes[name]})`
+        );
+      }
+    }
+  }
+
+  return {
+    source: jsonHashes ? jsonPath : mdPath,
+    hashes: jsonHashes || mdHashes,
+  };
+}
+
+function verifyAgainstA10Report({
+  auditsDir,
+  expectedVersion,
+  binaryNames,
+  currentHashes,
+  requireReport,
+  skipA10Check,
+}) {
+  if (skipA10Check) {
+    return;
+  }
+  const report = loadA10ReportHashes(auditsDir, expectedVersion);
+  if (!report) {
+    if (requireReport) {
+      throw new Error(
+        `Refusing publish/verification: missing A10 audit report for version ${expectedVersion} (expected ${path.join(auditsDir, `A10_release_${expectedVersion}.md`)} or .json)`
+      );
+    }
+    return;
+  }
+
+  for (const name of binaryNames) {
+    const auditedHash = report.hashes[name];
+    if (!auditedHash) {
+      throw new Error(
+        `A10 report (${report.source}) does not record a SHA-256 hash for ${name}`
+      );
+    }
+    if (auditedHash !== currentHashes[name]) {
+      throw new Error(
+        `Refusing publish: ${name} SHA-256 (${currentHashes[name]}) differs from A10 audited hash (${auditedHash}) in ${report.source}`
+      );
+    }
+  }
+  console.log(`A10 hash provenance check OK (${report.source}).`);
 }
 
 function parseHelpCommands(helpOutput) {
@@ -442,7 +614,17 @@ function verifyPackageDir({
   skipPreviousCheck = false,
   skipDocsCheck = false,
   skipDevMarkerCheck = false,
+  strict = false,
+  checkA10 = false,
+  skipA10Check = false,
+  gitDir = null,
+  auditsDir = null,
 }) {
+  if (strict && allowDirty) {
+    throw new Error(
+      "Refusing strict verification: WAVICAL_ALLOW_DIRTY=1 is not allowed in --strict mode."
+    );
+  }
   const pkgJsonPath = path.join(packageDir, "package.json");
   if (!fs.existsSync(pkgJsonPath)) {
     throw new Error(`Missing package.json at ${pkgJsonPath}`);
@@ -581,7 +763,7 @@ function verifyPackageDir({
     }
   }
 
-  // 3b. Check wavical-shell-dev.exe --help: positive dev flags check
+  // 3b. Check wavical-shell-dev.exe --help: positive dev flags + negative test-hooks check
   const devShellHelpRes = runCommand(devShellBin, ["--help"]);
   if (devShellHelpRes.status !== 0) {
     throw new Error(`${devShellBinName} --help failed`);
@@ -594,8 +776,15 @@ function verifyPackageDir({
       );
     }
   }
+  for (const forbiddenDevFlag of FORBIDDEN_DEV_SHELL_FLAGS) {
+    if (devShellFlags.has(forbiddenDevFlag)) {
+      throw new Error(
+        `Security error: shipped ${devShellBinName} --help must NOT expose test-only option "${forbiddenDevFlag}"`
+      );
+    }
+  }
 
-  // 3c. Negative binary string scan on production wavical-shell.exe (and test-probe isolation)
+  // 3c. Negative binary string scan on production wavical-shell.exe & shipped wavical-shell-dev.exe
   const prodShellBytes = fs.readFileSync(shellBin);
   for (const marker of DEV_BINARY_MARKERS) {
     if (prodShellBytes.includes(Buffer.from(marker, "utf8"))) {
@@ -608,6 +797,13 @@ function verifyPackageDir({
     if (prodShellBytes.includes(Buffer.from(marker, "utf8"))) {
       throw new Error(
         `Security error: production ${shellBinName} contains test-probe marker "${marker}"`
+      );
+    }
+  }
+  for (const marker of TEST_HOOKS_BINARY_MARKERS) {
+    if (prodShellBytes.includes(Buffer.from(marker, "utf8"))) {
+      throw new Error(
+        `Security error: production ${shellBinName} contains test-hooks marker "${marker}"`
       );
     }
   }
@@ -625,8 +821,18 @@ function verifyPackageDir({
         );
       }
     }
+    for (const marker of TEST_HOOKS_BINARY_MARKERS) {
+      if (devShellBytes.includes(Buffer.from(marker, "utf8"))) {
+        throw new Error(
+          `Security error: shipped ${devShellBinName} contains test-hooks marker "${marker}"`
+        );
+      }
+    }
   }
   console.log("Help, option, and dev-marker isolation checks OK.");
+
+  // 3d. Check LICENSE* file(s) exist in package
+  checkLicenseFilesPresent(packageDir);
 
   // 4. Check docs parity (README.md & CHANGELOG.md)
   if (!skipDocsCheck) {
@@ -640,6 +846,24 @@ function verifyPackageDir({
     binDir,
     binaryNames,
     writeChecksums,
+  });
+
+  // 5b. Strict git release tag + clean-tree provenance check
+  const resolvedGitDir = gitDir || packageDir;
+  if (strict) {
+    checkStrictGitReleaseProvenance(resolvedGitDir, expectedVersion);
+  }
+
+  // 5c. Verify against A10 release audit report hashes
+  const resolvedAuditsDir =
+    auditsDir || path.join(gitDir || path.resolve(__dirname, ".."), "docs", "audits");
+  verifyAgainstA10Report({
+    auditsDir: resolvedAuditsDir,
+    expectedVersion,
+    binaryNames,
+    currentHashes: hashes,
+    requireReport: strict || checkA10,
+    skipA10Check,
   });
 
   // 6. Check against previously published npm version
@@ -673,11 +897,18 @@ async function verifyTarball({
   skipE2e = false,
   e2eOnline = false,
   testProbeBin = null,
+  testHooksDevShellBin = null,
+  strict = false,
+  checkA10 = false,
+  skipA10Check = false,
+  gitDir = null,
+  auditsDir = null,
 }) {
   const absTarball = path.resolve(tarballPath);
   if (!fs.existsSync(absTarball)) {
     throw new Error(`Tarball not found: ${absTarball}`);
   }
+  const repoRoot = gitDir || path.resolve(__dirname, "..");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "wavical-verify-tgz-"));
   let pkgResult;
   try {
@@ -687,16 +918,21 @@ async function verifyTarball({
       expectedCommit:
         expectedCommit !== undefined
           ? expectedCommit
-          : process.env.WAVICAL_GIT_COMMIT || getCurrentGitCommit(path.resolve(__dirname, "..")),
+          : process.env.WAVICAL_GIT_COMMIT || getCurrentGitCommit(repoRoot),
       allowDirty,
       writeChecksums: false,
       previousTarball,
       previousVersion,
       skipPreviousCheck,
       skipDocsCheck,
+      strict,
+      checkA10,
+      skipA10Check,
+      gitDir: repoRoot,
+      auditsDir,
     });
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
   }
 
   if (!skipE2e) {
@@ -704,6 +940,7 @@ async function verifyTarball({
       tarballPath: absTarball,
       online: e2eOnline,
       testProbeBin,
+      testHooksDevShellBin,
     });
   }
 
@@ -722,6 +959,10 @@ function parseCliArgs(argv) {
     skipE2e: false,
     e2eOnline: false,
     testProbeBin: null,
+    testHooksDevShellBin: null,
+    strict: false,
+    checkA10: false,
+    skipA10Check: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -744,8 +985,16 @@ function parseCliArgs(argv) {
       opts.skipE2e = true;
     } else if (arg === "--online") {
       opts.e2eOnline = true;
+    } else if (arg === "--strict") {
+      opts.strict = true;
+    } else if (arg === "--check-a10") {
+      opts.checkA10 = true;
+    } else if (arg === "--skip-a10-check") {
+      opts.skipA10Check = true;
     } else if (arg === "--test-probe-bin" && i + 1 < argv.length) {
       opts.testProbeBin = path.resolve(argv[++i]);
+    } else if (arg === "--test-hooks-dev-shell-bin" && i + 1 < argv.length) {
+      opts.testHooksDevShellBin = path.resolve(argv[++i]);
     } else if (!arg.startsWith("-") && arg.endsWith(".tgz")) {
       opts.tarball = arg;
     } else {
@@ -769,6 +1018,10 @@ async function main() {
         skipE2e: opts.skipE2e,
         e2eOnline: opts.e2eOnline,
         testProbeBin: opts.testProbeBin,
+        testHooksDevShellBin: opts.testHooksDevShellBin,
+        strict: opts.strict,
+        checkA10: opts.checkA10,
+        skipA10Check: opts.skipA10Check,
       });
     } else {
       verifyPackageDir({
@@ -778,6 +1031,9 @@ async function main() {
         previousTarball: opts.previousTarball,
         previousVersion: opts.previousVersion,
         skipPreviousCheck: opts.skipPreviousCheck,
+        strict: opts.strict,
+        checkA10: opts.checkA10,
+        skipA10Check: opts.skipA10Check,
       });
     }
     console.log("Package verification passed.");
@@ -793,14 +1049,21 @@ if (require.main === module) {
 
 module.exports = {
   DEV_BINARY_MARKERS,
+  FORBIDDEN_DEV_SHELL_FLAGS,
   FORBIDDEN_PROD_SHELL_FLAGS,
   REQUIRED_CLI_COMMANDS,
   REQUIRED_DEV_SHELL_FLAGS,
   REQUIRED_PROD_SHELL_FLAGS,
+  TEST_HOOKS_BINARY_MARKERS,
   TEST_PROBE_BINARY_MARKERS,
+  checkLicenseFilesPresent,
+  checkStrictGitReleaseProvenance,
   extractDocCliReferences,
+  loadA10ReportHashes,
+  parseA10HashesFromMarkdown,
   parseHelpCommands,
   parseHelpFlags,
+  verifyAgainstA10Report,
   verifyPackageDir,
   verifyTarball,
 };

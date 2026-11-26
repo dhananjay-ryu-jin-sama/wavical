@@ -1,6 +1,6 @@
 {
   "name": "wavical",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A lightweight, security-first, AI-native desktop app framework built in Rust using OS WebView2, capability-gated IPC, optional sandboxed Node.js backends, and signed auto-updates.",
   "bin": {
     "wavical": "bin/wavical.js",
@@ -22,7 +22,7 @@
     "sync:version": "node scripts/sync-version.js",
     "verify:package": "node scripts/verify-package.js",
     "prepack": "node scripts/prepack.js",
-    "prepublishOnly": "node scripts/prepack.js --strict"
+    "prepublishOnly": "node scripts/verify-package.js --strict --verify-checksums-only"
   },
   "repository": {
     "type": "git",

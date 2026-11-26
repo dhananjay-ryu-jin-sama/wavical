@@ -657,11 +657,50 @@ function buildTestProbeBinaryIfNeeded(explicitPath) {
   return releaseBin;
 }
 
+function buildTestHooksDevShellIfNeeded(explicitPath) {
+  if (explicitPath) {
+    const abs = path.resolve(explicitPath);
+    if (!fs.existsSync(abs)) {
+      throw new Error(`Test-hooks dev shell binary not found at ${abs}`);
+    }
+    return abs;
+  }
+  const exe = process.platform === "win32" ? "wavical-shell-dev.exe" : "wavical-shell-dev";
+  const releaseBin = path.join(ROOT_DIR, "target", "dev-shell-test-hooks", "release", exe);
+  const debugBin = path.join(ROOT_DIR, "target", "dev-shell-test-hooks", "debug", exe);
+  if (fs.existsSync(releaseBin)) return releaseBin;
+  if (fs.existsSync(debugBin)) return debugBin;
+
+  console.log("Building test-hooks dev shell (wavical-shell-dev with test-hooks)...");
+  const res = spawnSync(
+    "cargo",
+    [
+      "build",
+      "--release",
+      "--locked",
+      "-p",
+      "wavical-shell",
+      "--bin",
+      "wavical-shell-dev",
+      "--features",
+      "dev-shell,test-hooks",
+      "--target-dir",
+      "target/dev-shell-test-hooks",
+    ],
+    { cwd: ROOT_DIR, stdio: "inherit", windowsHide: true }
+  );
+  if (res.status !== 0 || !fs.existsSync(releaseBin)) {
+    throw new Error(`Failed to build test-hooks wavical-shell-dev (exit ${res.status})`);
+  }
+  return releaseBin;
+}
+
 async function runDevCommandSession({
   appDir,
   subcommand,
   localAppData,
   offlineServer,
+  testHooksDevShellBin,
   onlineMode,
   fn,
 }) {
@@ -672,7 +711,8 @@ async function runDevCommandSession({
     WAVICAL_HEADLESS_TEST: "1",
     WAVICAL_DEV_REMOTE_DEBUGGING_PORT: String(cdpPort),
   };
-  if (offlineServer) {
+  if (offlineServer && testHooksDevShellBin) {
+    env.WAVICAL_DEV_SHELL_BIN = testHooksDevShellBin;
     env.WAVICAL_DEV_TEST_PROXY = offlineServer.proxyUrl;
     env.WAVICAL_DEV_TEST_SPKI = offlineServer.spkiPin;
   }
@@ -821,7 +861,12 @@ async function assertRealNetworkReachable() {
   }
 }
 
-async function runReferenceAppE2E({ tarballPath, online = false, testProbeBin = null } = {}) {
+async function runReferenceAppE2E({
+  tarballPath,
+  online = false,
+  testProbeBin = null,
+  testHooksDevShellBin = null,
+} = {}) {
   const absTarball = path.resolve(tarballPath);
   if (!fs.existsSync(absTarball)) {
     throw new Error(`Tarball not found: ${absTarball}`);
@@ -835,6 +880,7 @@ async function runReferenceAppE2E({ tarballPath, online = false, testProbeBin = 
   }
 
   const probeBin = buildTestProbeBinaryIfNeeded(testProbeBin);
+  const devHooksBin = online ? null : buildTestHooksDevShellIfNeeded(testHooksDevShellBin);
   const offlineServer = online ? null : await startMultiOriginTestServer();
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "wavical-e2e-ref-"));
   const appDir = path.join(tempRoot, "app");
@@ -893,6 +939,24 @@ async function runReferenceAppE2E({ tarballPath, online = false, testProbeBin = 
         out.includes(expectedVersion),
         `Expected version '${expectedVersion}' in '${out}'`
       );
+
+      const devShellBin = path.join(
+        appDir,
+        "node_modules",
+        "wavical",
+        "bin",
+        process.platform === "win32" ? "wavical-shell-dev.exe" : "wavical-shell-dev"
+      );
+      const devHelpRes = spawnSync(devShellBin, ["--help"], { encoding: "utf8", windowsHide: true });
+      assert.equal(devHelpRes.status, 0, "installed wavical-shell-dev --help failed");
+      assert.ok(
+        devHelpRes.stdout.includes("--remote-debugging-port"),
+        "installed wavical-shell-dev --help must keep --remote-debugging-port"
+      );
+      assert.ok(
+        !devHelpRes.stdout.includes("--test-proxy") && !devHelpRes.stdout.includes("--test-spki"),
+        `installed wavical-shell-dev --help must NOT expose --test-proxy or --test-spki:\n${devHelpRes.stdout}`
+      );
     });
 
     await runStep(`dev (open) + hot reload (${modeTag})`, async () => {
@@ -908,8 +972,19 @@ async function runReferenceAppE2E({ tarballPath, online = false, testProbeBin = 
           subcommand: "dev",
           localAppData,
           offlineServer,
+          testHooksDevShellBin: devHooksBin,
           onlineMode: online,
           fn: async ({ cdp, getStdout }) => {
+            const startupOut = getStdout();
+            assert.ok(
+              startupOut.includes("Starting Wavical dev"),
+              `Expected 'Starting Wavical dev' banner in stdout, got: ${startupOut}`
+            );
+            assert.match(
+              startupOut,
+              /startup=\d+ms/,
+              `Expected timing breakdown in F3 startup line, got: ${startupOut}`
+            );
             await assertFullPageWorks((expr) => cdp.evaluate(expr), {
               offlineServer,
               onlineMode: online,
@@ -970,6 +1045,7 @@ async function runReferenceAppE2E({ tarballPath, online = false, testProbeBin = 
         subcommand: "dev-safe",
         localAppData,
         offlineServer,
+        testHooksDevShellBin: devHooksBin,
         onlineMode: online,
         fn: async ({ cdp }) => {
           await assertFullPageWorks((expr) => cdp.evaluate(expr), {
@@ -986,11 +1062,13 @@ async function runReferenceAppE2E({ tarballPath, online = false, testProbeBin = 
       const localAppData = path.join(tempRoot, "lad-dev-ultra");
       fs.mkdirSync(localAppData, { recursive: true });
 
+      // dev-ultra-safe blocks all external origins at CSP, so it runs directly against the shipped wavical-shell-dev.exe
       await runDevCommandSession({
         appDir,
         subcommand: "dev-ultra-safe",
         localAppData,
         offlineServer,
+        testHooksDevShellBin: null,
         onlineMode: online,
         fn: async ({ cdp, getStderr }) => {
           await assertUltraSafeFallback((expr) => cdp.evaluate(expr), {
@@ -1143,7 +1221,7 @@ async function runReferenceAppE2E({ tarballPath, online = false, testProbeBin = 
     return results;
   } finally {
     if (offlineServer) await offlineServer.close();
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
   }
 }
 
@@ -1152,6 +1230,7 @@ function parseArgs(argv) {
     tarball: null,
     online: false,
     testProbeBin: null,
+    testHooksDevShellBin: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -1161,6 +1240,8 @@ function parseArgs(argv) {
       opts.online = true;
     } else if (a === "--test-probe-bin" && i + 1 < argv.length) {
       opts.testProbeBin = argv[++i];
+    } else if (a === "--test-hooks-dev-shell-bin" && i + 1 < argv.length) {
+      opts.testHooksDevShellBin = argv[++i];
     } else if (!a.startsWith("-") && a.endsWith(".tgz")) {
       opts.tarball = a;
     } else {
@@ -1181,6 +1262,7 @@ if (require.main === module) {
         tarballPath: opts.tarball,
         online: opts.online,
         testProbeBin: opts.testProbeBin,
+        testHooksDevShellBin: opts.testHooksDevShellBin,
       });
     } catch (err) {
       console.error(`error: ${err.message}`);

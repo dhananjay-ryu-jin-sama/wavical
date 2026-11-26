@@ -222,10 +222,10 @@ pub struct WindowConfig {
     #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
     pub remote_debugging_port: Option<u16>,
     /// Optional loopback HTTP CONNECT proxy (`http://127.0.0.1:<port>`) for offline tests.
-    #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+    #[cfg(feature = "test-hooks")]
     pub test_proxy: Option<String>,
     /// Optional base64 SHA-256 SPKI pin for the offline test proxy certificate.
-    #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+    #[cfg(feature = "test-hooks")]
     pub test_spki: Option<String>,
 }
 
@@ -265,9 +265,9 @@ impl Default for WindowConfig {
             network_policy: net_policy::ShellNetworkPolicy::default(),
             #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
             remote_debugging_port: None,
-            #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+            #[cfg(feature = "test-hooks")]
             test_proxy: None,
-            #[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+            #[cfg(feature = "test-hooks")]
             test_spki: None,
         }
     }
@@ -1018,8 +1018,13 @@ pub fn is_devtools_enabled() -> bool {
     hardening::DEVTOOLS_COMPILED_ENABLED
 }
 
+/// Binary marker embedded only when the `test-hooks` feature is enabled.
+/// Shipped `wavical-shell` and `wavical-shell-dev` binaries must never contain this marker.
+#[cfg(feature = "test-hooks")]
+pub const TEST_HOOKS_BINARY_MARKER: &str = "WAVICAL_TEST_HOOKS_V1_MARKER";
+
 /// Validates a loopback-only HTTP test proxy URL (`http://127.0.0.1:<port>`).
-#[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+#[cfg(feature = "test-hooks")]
 pub fn validate_test_proxy_url(raw: &str) -> Result<String, String> {
     let parsed = url::Url::parse(raw.trim()).map_err(|e| format!("malformed proxy URL: {e}"))?;
     if parsed.scheme() != "http" {
@@ -1047,7 +1052,7 @@ pub fn validate_test_proxy_url(raw: &str) -> Result<String, String> {
 }
 
 /// Validates a base64 SHA-256 SPKI pin (44 chars `[A-Za-z0-9+/]{43}=`).
-#[cfg(any(feature = "dev-shell", feature = "test-probe"))]
+#[cfg(feature = "test-hooks")]
 pub fn validate_test_spki_pin(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     let bytes = trimmed.as_bytes();
@@ -1073,16 +1078,19 @@ fn build_effective_browser_args(config: &WindowConfig) -> Option<String> {
     {
         parts.push(format!("--remote-debugging-port={port}"));
     }
-    if let Some(ref proxy_raw) = config.test_proxy
-        && let Ok(proxy) = validate_test_proxy_url(proxy_raw)
+    #[cfg(feature = "test-hooks")]
     {
-        parts.push(format!("--proxy-server={proxy}"));
-        parts.push("--proxy-bypass-list=<-loopback>;wavical.localhost".to_string());
-    }
-    if let Some(ref spki_raw) = config.test_spki
-        && let Ok(spki) = validate_test_spki_pin(spki_raw)
-    {
-        parts.push(format!("--ignore-certificate-errors-spki-list={spki}"));
+        if let Some(ref proxy_raw) = config.test_proxy
+            && let Ok(proxy) = validate_test_proxy_url(proxy_raw)
+        {
+            parts.push(format!("--proxy-server={proxy}"));
+            parts.push("--proxy-bypass-list=<-loopback>;wavical.localhost".to_string());
+        }
+        if let Some(ref spki_raw) = config.test_spki
+            && let Ok(spki) = validate_test_spki_pin(spki_raw)
+        {
+            parts.push(format!("--ignore-certificate-errors-spki-list={spki}"));
+        }
     }
     if parts.is_empty() {
         None

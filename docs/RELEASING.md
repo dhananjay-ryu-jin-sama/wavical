@@ -52,7 +52,35 @@ Stable promotion is **manual only** via [`.github/workflows/release-stable.yml`]
 
 ---
 
-## 4. Rolling Back a Release
+## 4. npm Release Flow (Build Once, Audit, Publish Tarball)
+
+Wavical publishes to npm using an immutable-tarball flow so the published binaries are byte-identical to what A10 audited:
+
+1. **Bump & Commit:** Update `[workspace.package].version` in `Cargo.toml`, run `node scripts/sync-version.js` to sync `package.json`, add the `CHANGELOG.md` entry, and commit on `main`.
+2. **Tag the Release Commit:** Create the annotated/lightweight tag on `HEAD` before packing:
+   ```powershell
+   git tag v<version>
+   ```
+3. **Build Once with `npm pack`:**
+   ```powershell
+   npm pack
+   ```
+   `scripts/prepack.js` builds `wavical.exe`, `wavical-shell.exe` (no dev/test features), and `wavical-shell-dev.exe` (`dev-shell` feature only; never `test-hooks` or `test-probe`), runs `scripts/verify-package.js`, writes `bin/checksums.txt`, and produces `wavical-<version>.tgz`.
+4. **Audit That Exact `.tgz` (A10):** Run the independent A10 release audit against `wavical-<version>.tgz` and record the verified SHA-256 hashes in `docs/audits/A10_release_<version>.md` (and optional `docs/audits/A10_release_<version>.json`).
+5. **Verify Against A10 Before Publishing:**
+   ```powershell
+   node scripts/verify-package.js --tarball wavical-<version>.tgz --check-a10
+   ```
+   Publishing a package whose binary SHA-256 hashes differ from the A10 report for `<version>` is refused.
+6. **Publish That Exact `.tgz`:**
+   ```powershell
+   npm publish wavical-<version>.tgz
+   ```
+   Never run bare `npm publish` from the repository directory: `prepack` refuses to rebuild during `npm publish`, and `prepublishOnly` runs `node scripts/verify-package.js --strict --verify-checksums-only` (which refuses to build, fails if `bin/checksums.txt` mismatches, requires clean git tree + `v<version>` tag at `HEAD` + `LICENSE*`, and refuses if binary hashes differ from the A10 report).
+
+---
+
+## 5. Rolling Back a Release
 
 ### Framework Release Rollback
 1. **Do not delete or overwrite the bad tag.** Mark the faulty GitHub Release as a pre-release (or edit its release notes with a clear `[RECALLED]` notice).
@@ -65,7 +93,7 @@ Stable promotion is **manual only** via [`.github/workflows/release-stable.yml`]
 
 ---
 
-## 5. Verifying a Release
+## 6. Verifying a Release
 
 Download the release archive, `SHA256SUMS.txt`, `manifest.json`, `manifest.json.sig`, and verify locally:
 
@@ -83,7 +111,7 @@ gh attestation verify .\wavical-v0.5.0-windows-x86_64.zip --owner <OWNER>
 
 ---
 
-## 6. Signing Key Compromise Response
+## 7. Signing Key Compromise Response
 
 If a signing private key is suspected leaked or compromised:
 

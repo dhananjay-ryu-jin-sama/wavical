@@ -1698,22 +1698,9 @@ pub fn execute_node_config_script(
     project_root: &Path,
     timeout: Duration,
 ) -> Result<NodeExecutionOutput, ValidationError> {
-    let node_binary = match resolve_managed_node_binary() {
-        Ok(managed) => managed.to_string_lossy().to_string(),
-        Err(_) => {
-            let system_node = Command::new("node").arg("--version").output();
-            if system_node.is_ok() {
-                eprintln!(
-                    "notice: managed Node runtime not found in cache; using system Node.js fallback.\n\
-                     To use the managed runtime, run: wavical runtime install 22.11.0"
-                );
-                "node".to_string()
-            } else {
-                return Err(ValidationError::NodeError(
-                    "Node subprocess failed: managed Node runtime not found in cache. Run 'wavical runtime install 22.11.0' to install it, or install Node.js (>= 14.8.0).".to_string(),
-                ));
-            }
-        }
+    let (node_binary, used_system_fallback) = match resolve_managed_node_binary() {
+        Ok(managed) => (managed.to_string_lossy().to_string(), false),
+        Err(_) => ("node".to_string(), true),
     };
 
     let mut cmd = Command::new(&node_binary);
@@ -1741,9 +1728,30 @@ pub fn execute_node_config_script(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| ValidationError::NodeError(format!("Failed to spawn Node process: {e}")))?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => {
+            if used_system_fallback {
+                static NOTICE_ONCE: std::sync::Once = std::sync::Once::new();
+                NOTICE_ONCE.call_once(|| {
+                    eprintln!(
+                        "notice: managed Node runtime not found in cache; using system Node.js fallback.\n\
+                         To use the managed runtime, run: wavical runtime install 22.11.0"
+                    );
+                });
+            }
+            child
+        }
+        Err(e) if used_system_fallback && e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ValidationError::NodeError(
+                "Node subprocess failed: managed Node runtime not found in cache. Run 'wavical runtime install 22.11.0' to install it, or install Node.js (>= 14.8.0).".to_string(),
+            ));
+        }
+        Err(e) => {
+            return Err(ValidationError::NodeError(format!(
+                "Failed to spawn Node process: {e}"
+            )));
+        }
+    };
 
     let stdout_pipe = child.stdout.take();
     let stderr_pipe = child.stderr.take();

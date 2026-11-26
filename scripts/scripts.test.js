@@ -15,7 +15,9 @@ const {
 const { parseWorkspaceVersion, syncVersion } = require("./sync-version");
 const {
   DEV_BINARY_MARKERS,
+  TEST_HOOKS_BINARY_MARKERS,
   TEST_PROBE_BINARY_MARKERS,
+  parseA10HashesFromMarkdown,
   verifyPackageDir,
 } = require("./verify-package");
 
@@ -30,7 +32,11 @@ function createFakeExecutable(filePath, nodeScriptSource) {
   });
 }
 
-function buildFakeBinSet(tmp, binDir, { cliHelp, prodShellHelp, devShellHelp, prodMarker = "" }) {
+function buildFakeBinSet(
+  tmp,
+  binDir,
+  { cliHelp, prodShellHelp, devShellHelp, prodMarker = "", devMarker = DEV_BINARY_MARKERS[0] }
+) {
   const cliName = process.platform === "win32" ? "wavical.exe" : "wavical";
   const shellName =
     process.platform === "win32" ? "wavical-shell.exe" : "wavical-shell";
@@ -78,7 +84,7 @@ function buildFakeBinSet(tmp, binDir, { cliHelp, prodShellHelp, devShellHelp, pr
       fakeDevShellRs,
       `fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let _marker = ${JSON.stringify(DEV_BINARY_MARKERS[0])};
+    let _marker = ${JSON.stringify(devMarker)};
     if args.iter().any(|a| a == "--never") {
         println!("{}", _marker);
     }
@@ -108,7 +114,7 @@ else console.log(${JSON.stringify(prodShellHelp)});`
     );
     createFakeExecutable(
       devShellPath,
-      `const _m = ${JSON.stringify(DEV_BINARY_MARKERS[0])};
+      `const _m = ${JSON.stringify(devMarker)};
 if (process.argv.includes('--version')) console.log('wavical-shell-dev 1.2.0 (deadbee)');
 else console.log(${JSON.stringify(devShellHelp)});`
     );
@@ -117,7 +123,7 @@ else console.log(${JSON.stringify(devShellHelp)});`
   return { cliPath, shellPath, devShellPath };
 }
 
-function setupTempPkgDir(tmp) {
+function setupTempPkgDir(tmp, { includeLicense = true } = {}) {
   const binDir = path.join(tmp, "bin");
   fs.mkdirSync(binDir, { recursive: true });
   const pkgJson = {
@@ -136,6 +142,10 @@ function setupTempPkgDir(tmp) {
     path.join(ROOT_DIR, "CHANGELOG.md"),
     path.join(tmp, "CHANGELOG.md")
   );
+  if (includeLicense) {
+    fs.copyFileSync(path.join(ROOT_DIR, "LICENSE-MIT"), path.join(tmp, "LICENSE-MIT"));
+    fs.copyFileSync(path.join(ROOT_DIR, "LICENSE-APACHE"), path.join(tmp, "LICENSE-APACHE"));
+  }
   return binDir;
 }
 
@@ -331,7 +341,7 @@ describe("scripts/verify-package.js", () => {
         cliHelp: "Usage: wavical <COMMAND>\n\nCommands:\n  init\n  dev\n  build\n  help",
         prodShellHelp: "Options:\n  --network-mode <M>\n  --remote-url <U>",
         devShellHelp:
-          "Options:\n  --dev\n  --dev-url <U>\n  --record\n  --network-mode <M>\n  --remote-url <U>",
+          "Options:\n  --dev\n  --dev-url <U>\n  --record\n  --network-mode <M>\n  --remote-url <U>\n  --remote-debugging-port <P>",
       });
 
       assert.throws(
@@ -356,7 +366,7 @@ describe("scripts/verify-package.js", () => {
       const validCliHelp =
         "Usage: wavical <COMMAND>\n\nCommands:\n  init\n  dev\n  dev-safe\n  dev-ultra-safe\n  allowlist\n  vendor\n  build\n  help";
       const validDevHelp =
-        "Options:\n  --dev\n  --dev-url <U>\n  --record\n  --network-mode <M>\n  --remote-url <U>";
+        "Options:\n  --dev\n  --dev-url <U>\n  --record\n  --network-mode <M>\n  --remote-url <U>\n  --remote-debugging-port <P>";
 
       // 1. Production shell lists --dev in --help -> rejected
       buildFakeBinSet(tmp, binDir, {
@@ -503,6 +513,8 @@ describe("scripts/verify-package.js", () => {
         path.join(ROOT_DIR, "CHANGELOG.md"),
         path.join(tmp, "CHANGELOG.md")
       );
+      fs.copyFileSync(path.join(ROOT_DIR, "LICENSE-MIT"), path.join(tmp, "LICENSE-MIT"));
+      fs.copyFileSync(path.join(ROOT_DIR, "LICENSE-APACHE"), path.join(tmp, "LICENSE-APACHE"));
       fs.copyFileSync(releaseCli, path.join(binDir, path.basename(releaseCli)));
       fs.copyFileSync(
         releaseShell,
@@ -524,12 +536,224 @@ describe("scripts/verify-package.js", () => {
         allowDirty: true,
         writeChecksums: true,
         skipPreviousCheck: true,
+        skipA10Check: true,
       });
 
-      assert.equal(res.version, "1.2.0");
+      const currentPkg = JSON.parse(
+        fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf8")
+      );
+      assert.equal(res.version, currentPkg.version);
       assert.ok(fs.existsSync(path.join(binDir, "checksums.txt")));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces package.json prepublishOnly never builds, refuses prepack during publish, and rejects test-hooks/missing LICENSE/untagged/A10 mismatch", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, "package.json"), "utf8"));
+    assert.ok(
+      pkg.scripts.prepublishOnly.includes("verify-package.js") &&
+        pkg.scripts.prepublishOnly.includes("--strict") &&
+        pkg.scripts.prepublishOnly.includes("--verify-checksums-only") &&
+        !pkg.scripts.prepublishOnly.includes("prepack") &&
+        !pkg.scripts.prepublishOnly.includes("cargo"),
+      `prepublishOnly must only run verify-package.js --strict --verify-checksums-only, got: ${pkg.scripts.prepublishOnly}`
+    );
+
+    assert.throws(
+      () => prepack({ npmCommand: "publish" }),
+      /Refusing to rebuild during "npm publish"/
+    );
+
+    assert.throws(
+      () =>
+        validatePrepackBuildInvocations([
+          {
+            cmd: "cargo",
+            args: ["build", "--release", "--bin", "wavical-shell"],
+          },
+          {
+            cmd: "cargo",
+            args: [
+              "build",
+              "--release",
+              "--bin",
+              "wavical-shell-dev",
+              "--features",
+              "dev-shell,test-hooks",
+              "--target-dir",
+              "target/dev-shell",
+            ],
+          },
+        ]),
+      /must NEVER enable test-hooks or test-probe/
+    );
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wavical-strict-test-"));
+    try {
+      const binDir = setupTempPkgDir(tmp, { includeLicense: false });
+      const validCliHelp =
+        "Usage: wavical <COMMAND>\n\nCommands:\n  init\n  dev\n  dev-safe\n  dev-ultra-safe\n  allowlist\n  vendor\n  build\n  help";
+      const validProdHelp = "Options:\n  --network-mode <M>\n  --remote-url <U>";
+      const validDevHelp =
+        "Options:\n  --dev\n  --dev-url <U>\n  --record\n  --network-mode <M>\n  --remote-url <U>\n  --remote-debugging-port <P>";
+
+      // 1. Missing LICENSE rejected
+      buildFakeBinSet(tmp, binDir, {
+        cliHelp: validCliHelp,
+        prodShellHelp: validProdHelp,
+        devShellHelp: validDevHelp,
+      });
+      assert.throws(
+        () =>
+          verifyPackageDir({
+            packageDir: tmp,
+            expectedCommit: "deadbee",
+            writeChecksums: false,
+            skipPreviousCheck: true,
+            skipDocsCheck: true,
+            skipA10Check: true,
+          }),
+        /Missing LICENSE file/
+      );
+
+      fs.copyFileSync(path.join(ROOT_DIR, "LICENSE-MIT"), path.join(tmp, "LICENSE-MIT"));
+
+      // 2. Shipped wavical-shell-dev exposing --test-proxy or marker rejected
+      buildFakeBinSet(tmp, binDir, {
+        cliHelp: validCliHelp,
+        prodShellHelp: validProdHelp,
+        devShellHelp: `${validDevHelp}\n  --test-proxy <U>`,
+      });
+      assert.throws(
+        () =>
+          verifyPackageDir({
+            packageDir: tmp,
+            expectedCommit: "deadbee",
+            writeChecksums: false,
+            skipPreviousCheck: true,
+            skipDocsCheck: true,
+            skipA10Check: true,
+          }),
+        /must NOT expose test-only option "--test-proxy"/
+      );
+
+      buildFakeBinSet(tmp, binDir, {
+        cliHelp: validCliHelp,
+        prodShellHelp: validProdHelp,
+        devShellHelp: validDevHelp,
+        devMarker: `${DEV_BINARY_MARKERS[0]} ${TEST_HOOKS_BINARY_MARKERS[0]}`,
+      });
+      assert.throws(
+        () =>
+          verifyPackageDir({
+            packageDir: tmp,
+            expectedCommit: "deadbee",
+            writeChecksums: false,
+            skipPreviousCheck: true,
+            skipDocsCheck: true,
+            skipA10Check: true,
+          }),
+        /contains test-hooks marker/
+      );
+
+      // 3. Clean git repo + tag v1.2.0 + A10 hash check
+      buildFakeBinSet(tmp, binDir, {
+        cliHelp: validCliHelp,
+        prodShellHelp: validProdHelp,
+        devShellHelp: validDevHelp,
+      });
+      const initialRes = verifyPackageDir({
+        packageDir: tmp,
+        expectedCommit: "deadbee",
+        writeChecksums: true,
+        skipPreviousCheck: true,
+        skipDocsCheck: true,
+        skipA10Check: true,
+      });
+
+      const auditsDir = path.join(tmp, "docs", "audits");
+      fs.mkdirSync(auditsDir, { recursive: true });
+      const a10MdPath = path.join(auditsDir, "A10_release_1.2.0.md");
+      fs.writeFileSync(
+        a10MdPath,
+        `| File | Size (bytes) | SHA-256 |\n|---|---:|---|\n` +
+          `| \`bin/wavical.exe\` | 1 | \`${initialRes.hashes["wavical.exe"] || initialRes.hashes["wavical"]}\` |\n` +
+          `| \`bin/wavical-shell.exe\` | 1 | \`${initialRes.hashes["wavical-shell.exe"] || initialRes.hashes["wavical-shell"]}\` |\n` +
+          `| \`bin/wavical-shell-dev.exe\` | 1 | \`${"0".repeat(64)}\` |\n`,
+        "utf8"
+      );
+
+      const parsedA10 = parseA10HashesFromMarkdown(fs.readFileSync(a10MdPath, "utf8"));
+      assert.equal(parsedA10["wavical-shell-dev.exe"], "0".repeat(64));
+
+      execFileSync("git", ["init"], { cwd: tmp, stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tmp, stdio: "pipe" });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: tmp, stdio: "pipe" });
+      execFileSync("git", ["add", "."], { cwd: tmp, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "release"], { cwd: tmp, stdio: "pipe" });
+
+      // Missing tag -> fails strict
+      assert.throws(
+        () =>
+          verifyPackageDir({
+            packageDir: tmp,
+            expectedCommit: "deadbee",
+            allowDirty: false,
+            writeChecksums: false,
+            skipPreviousCheck: true,
+            skipDocsCheck: true,
+            strict: true,
+            auditsDir,
+          }),
+        /required git tag "v1\.2\.0" does not exist/
+      );
+
+      execFileSync("git", ["tag", "v1.2.0"], { cwd: tmp, stdio: "pipe" });
+
+      // Tag exists, but A10 hash mismatches -> refused
+      assert.throws(
+        () =>
+          verifyPackageDir({
+            packageDir: tmp,
+            expectedCommit: "deadbee",
+            allowDirty: false,
+            writeChecksums: false,
+            skipPreviousCheck: true,
+            skipDocsCheck: true,
+            strict: true,
+            auditsDir,
+          }),
+        /differs from A10 audited hash/
+      );
+
+      // Update A10 report with matching hash, commit, re-tag -> passes strict!
+      fs.writeFileSync(
+        a10MdPath,
+        `| File | Size (bytes) | SHA-256 |\n|---|---:|---|\n` +
+          Object.entries(initialRes.hashes)
+            .map(([n, h]) => `| \`bin/${n}\` | 1 | \`${h}\` |`)
+            .join("\n") +
+          "\n",
+        "utf8"
+      );
+      execFileSync("git", ["add", "."], { cwd: tmp, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "a10"], { cwd: tmp, stdio: "pipe" });
+      execFileSync("git", ["tag", "-f", "v1.2.0"], { cwd: tmp, stdio: "pipe" });
+
+      const strictOk = verifyPackageDir({
+        packageDir: tmp,
+        expectedCommit: "deadbee",
+        allowDirty: false,
+        writeChecksums: false,
+        skipPreviousCheck: true,
+        skipDocsCheck: true,
+        strict: true,
+        auditsDir,
+      });
+      assert.equal(strictOk.version, "1.2.0");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
     }
   });
 });

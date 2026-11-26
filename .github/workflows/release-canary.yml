@@ -118,12 +118,14 @@ jobs:
           "tag=v$canaryVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "dry_run=$($isDryRun.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Build release binaries and test-only built-app probe
+      - name: Build release binaries, test-hooks dev shell, and test-only built-app probe
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           cargo build --release --locked -p wavical-cli -p wavical-shell
           if ($LASTEXITCODE -ne 0) { throw "release build failed" }
+          cargo build --release --locked -p wavical-shell --bin wavical-shell-dev --features dev-shell,test-hooks --target-dir target/dev-shell-test-hooks
+          if ($LASTEXITCODE -ne 0) { throw "test-hooks dev shell build failed" }
           cargo build --release --locked -p wavical-shell --bin wavical-shell-test-probe --features test-probe --target-dir target/test-probe
           if ($LASTEXITCODE -ne 0) { throw "test-probe build failed" }
 

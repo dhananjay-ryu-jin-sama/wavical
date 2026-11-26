@@ -1450,6 +1450,16 @@ pub fn spawn_dev_stream_reader(
     (reply_rx, diag_rx)
 }
 
+/// Timing breakdown (milliseconds) for a `wavical dev` startup sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DevStartupTimings {
+    pub total_ms: u64,
+    pub cli_ms: Option<u64>,
+    pub config_ms: u64,
+    pub shell_ms: u64,
+    pub webview_ms: u64,
+}
+
 /// Format the one-line startup summary printed by every dev command.
 #[must_use]
 pub fn format_dev_startup_line(
@@ -1468,6 +1478,31 @@ pub fn format_dev_startup_line(
     }
     parts.push(format!("shell={shell_version}"));
     format!("dev: {}", parts.join(" | "))
+}
+
+/// Format the one-line startup summary printed by every dev command, including timing breakdown.
+#[must_use]
+pub fn format_dev_startup_line_with_timing(
+    mode: &str,
+    csp_summary: &str,
+    allowlist_file: Option<&str>,
+    dev_url: Option<&str>,
+    shell_version: &str,
+    timings: DevStartupTimings,
+) -> String {
+    let base = format_dev_startup_line(mode, csp_summary, allowlist_file, dev_url, shell_version);
+    let breakdown = if let Some(cli_ms) = timings.cli_ms {
+        format!(
+            "cli={}ms, config={}ms, shell={}ms, webview={}ms",
+            cli_ms, timings.config_ms, timings.shell_ms, timings.webview_ms
+        )
+    } else {
+        format!(
+            "config={}ms, shell={}ms, webview={}ms",
+            timings.config_ms, timings.shell_ms, timings.webview_ms
+        )
+    };
+    format!("{base} | startup={}ms ({breakdown})", timings.total_ms)
 }
 
 /// Send a JSON dev command line to the shell and block until the matching `id` reply
@@ -1592,6 +1627,12 @@ pub fn run_dev(dir: &Path) -> Result<(), CliError> {
 
 /// Launch development server with explicit network mode and optional `--record`.
 pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), CliError> {
+    let cli_entry = Instant::now();
+    if std::env::var_os("WAVICAL_DEV_BANNER_PRINTED").is_none() {
+        println!("Starting Wavical dev\u{2026}");
+        let _ = std::io::stdout().flush();
+    }
+
     let project_root = if dir == Path::new(".") {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else if dir.is_relative() {
@@ -1608,8 +1649,10 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
     }
 
     // 1. Parse and validate config at startup
+    let config_start = Instant::now();
     let config =
         wavical_config::validate_config(&project_root).map_err(CliError::ConfigValidation)?;
+    let config_ms = config_start.elapsed().as_millis() as u64;
 
     // 2. Ensure asset directory exists (prefer src/ if index.html exists, fallback to project_root if index.html is there)
     let src_dir = if project_root.join("src").join("index.html").is_file() {
@@ -1716,6 +1759,7 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         cmd.arg("--record");
     }
 
+    let shell_start = Instant::now();
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1755,6 +1799,9 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
             )));
         }
     };
+    let total_shell_ms = shell_start.elapsed().as_millis() as u64;
+    let webview_ms = auth_reply.elapsed_ms;
+    let shell_ms = total_shell_ms.saturating_sub(webview_ms);
 
     let parsed_mode = match mode {
         "open" => wavical_netpolicy::NetworkMode::Open,
@@ -1794,12 +1841,33 @@ pub fn run_dev_with_mode(dir: &Path, mode: &str, record: bool) -> Result<(), Cli
         None
     };
     let shell_version = auth_reply.shell_version.as_deref().unwrap_or("unknown");
-    let startup_line = format_dev_startup_line(
+    let cli_elapsed_ms = cli_entry.elapsed().as_millis() as u64;
+    let wrapper_elapsed_ms = std::env::var("WAVICAL_DEV_WRAPPER_START_MS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u128>().ok())
+        .and_then(|start_ms| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_millis().saturating_sub(start_ms) as u64)
+        });
+    let (total_ms, cli_ms) = match wrapper_elapsed_ms {
+        Some(w_ms) if w_ms >= cli_elapsed_ms => (w_ms, Some(w_ms.saturating_sub(cli_elapsed_ms))),
+        _ => (cli_elapsed_ms, None),
+    };
+    let startup_line = format_dev_startup_line_with_timing(
         mode,
         &csp_summary,
         allowlist_display,
         config.dev_url(),
         shell_version,
+        DevStartupTimings {
+            total_ms,
+            cli_ms,
+            config_ms,
+            shell_ms,
+            webview_ms,
+        },
     );
     println!("{startup_line}");
 
